@@ -1,0 +1,60 @@
+name: Feature request
+description: Propose a new provider, orchestrator backend, capability, or other addition.
+title: "[Feature]: "
+labels: ["enhancement", "needs-triage"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Requisite grows mainly by new implementations of existing
+        interfaces (a new provider, a new orchestrator backend, a new
+        capability resolver) — see `CONTRIBUTING.md` for the shape each
+        of those takes. If your idea fits one of those, say so below;
+        it'll usually mean a smaller, faster-to-review PR.
+
+  - type: dropdown
+    id: category
+    attributes:
+      label: What kind of addition is this?
+      options:
+        - New provider (e.g. Anthropic, Azure OpenAI, Ollama, Groq, ...)
+        - New orchestrator backend (e.g. CrewAI, AutoGen)
+        - New multi-agent strategy (supervisor, planner, reflection, ...)
+        - New capability resolver (e.g. a real internet_search provider)
+        - Core framework change (affects the public API shape)
+        - Documentation
+        - Other
+    validations:
+      required: true
+
+  - type: textarea
+    id: problem
+    attributes:
+      label: What problem does this solve?
+      description: What can't you do today that this would enable?
+    validations:
+      required: true
+
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposed API / shape
+      description: >
+        Sketch the API you'd want to use, even roughly. For new
+        providers/orchestrators/capabilities, note which interface
+        (`BaseProvider`, `BaseOrchestrator`, a capability name) this maps to.
+      render: python
+
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives considered
+      description: Other approaches you thought about, and why you didn't pick them.
+
+  - type: checkboxes
+    id: contribution
+    attributes:
+      label: Contribution
+      options:
+        - label: I'd be willing to open a PR for this.
+          required: false

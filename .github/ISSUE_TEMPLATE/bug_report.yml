@@ -1,0 +1,94 @@
+name: Bug report
+description: Something isn't working the way the docs/docstrings say it should.
+title: "[Bug]: "
+labels: ["bug", "needs-triage"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for taking the time to report a bug! Please fill out as much
+        as you can — a minimal, runnable reproduction is the single most
+        useful thing you can include.
+
+  - type: textarea
+    id: description
+    attributes:
+      label: What happened?
+      description: A clear description of the bug.
+    validations:
+      required: true
+
+  - type: textarea
+    id: expected
+    attributes:
+      label: What did you expect to happen?
+    validations:
+      required: true
+
+  - type: textarea
+    id: repro
+    attributes:
+      label: Minimal reproduction
+      description: >
+        A small, self-contained code snippet that reproduces the issue.
+        Use a fake/dummy provider if the bug isn't provider-specific, so
+        others can run it without API keys.
+      render: python
+      placeholder: |
+        from requisite import AI
+
+        ai = AI(provider="openai")
+        ai.chat("...")
+    validations:
+      required: true
+
+  - type: textarea
+    id: traceback
+    attributes:
+      label: Full error / traceback (if any)
+      render: shell
+
+  - type: input
+    id: version
+    attributes:
+      label: requisite-ai version
+      placeholder: "e.g. 0.3.0 (run: pip show requisite-ai)"
+    validations:
+      required: true
+
+  - type: input
+    id: python-version
+    attributes:
+      label: Python version
+      placeholder: "e.g. 3.12.4"
+    validations:
+      required: true
+
+  - type: dropdown
+    id: os
+    attributes:
+      label: Operating system
+      options:
+        - Linux
+        - macOS
+        - Windows
+        - Other (specify below)
+    validations:
+      required: true
+
+  - type: dropdown
+    id: providers
+    attributes:
+      label: Provider(s) involved (if applicable)
+      multiple: true
+      options:
+        - OpenAI
+        - Gemini
+        - N/A / not provider-specific
+        - Other (specify below)
+
+  - type: textarea
+    id: context
+    attributes:
+      label: Additional context
+      description: Anything else relevant — related issues, workarounds you've tried, etc.

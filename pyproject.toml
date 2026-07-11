@@ -1,0 +1,52 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "requisite-ai"
+version = "0.3.0"
+description = "A provider-agnostic, plugin-based framework for building AI applications and agents. Declare what you need -- providers, tools, capabilities -- not which SDK provides it."
+readme = "README.md"
+requires-python = ">=3.10"
+license = { text = "MIT" }
+keywords = ["ai", "agents", "llm", "openai", "gemini", "agentic", "orchestration", "mcp"]
+dependencies = [
+    "pydantic>=2.7",
+    "pydantic-settings>=2.3",
+]
+
+[project.urls]
+Homepage = "https://github.com/requisite-ai/requisite-ai"
+Repository = "https://github.com/requisite-ai/requisite-ai"
+
+[project.optional-dependencies]
+openai = ["openai>=1.35"]
+gemini = ["google-genai>=1.0"]
+langgraph = ["langgraph>=0.2"]
+all = ["openai>=1.35", "google-genai>=1.0", "langgraph>=0.2"]
+dev = ["pytest>=8.0", "pytest-asyncio>=0.23", "pytest-cov>=5.0", "ruff>=0.5", "mypy>=1.10"]
+
+[tool.setuptools.packages.find]
+include = ["requisite*"]
+
+[tool.setuptools.package-data]
+requisite = ["py.typed"]
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+testpaths = ["tests"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py310"
+
+[tool.mypy]
+python_version = "3.10"
+strict = true
+
+# These SDKs are optional (installed only if you use that provider/backend)
+# and imported lazily inside a try/except at call time -- don't fail
+# type-checking for users who haven't installed all of them.
+[[tool.mypy.overrides]]
+module = ["openai.*", "google.*", "langgraph.*"]
+ignore_missing_imports = true
