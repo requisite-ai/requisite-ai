@@ -163,7 +163,19 @@ class GeminiProvider(BaseProvider):
             config_kwargs["response_mime_type"] = "application/json"
             config_kwargs["response_schema"] = response_model
         elif tools:
-            function_declarations = [t.to_gemini_schema() for t in tools]
+            function_declarations = [
+                types.FunctionDeclaration(
+                    name=t.name,
+                    description=t.description,
+                    # parameters_json_schema accepts a raw JSON Schema dict directly
+                    # (typed Any upstream) -- unlike `parameters`, which expects a
+                    # fully-built `types.Schema` object. Using the JSON-schema field
+                    # lets us pass Tool.parameters_schema as-is.
+                    parameters_json_schema=t.parameters_schema
+                    or {"type": "object", "properties": {}},
+                )
+                for t in tools
+            ]
             config_kwargs["tools"] = [types.Tool(function_declarations=function_declarations)]
 
         return types.GenerateContentConfig(

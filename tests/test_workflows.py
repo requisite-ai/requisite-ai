@@ -4,6 +4,7 @@ native orchestrator's sequential/parallel execution strategies.
 
 from __future__ import annotations
 
+import sys
 from collections.abc import AsyncIterator, Iterator, Sequence
 from typing import Any
 
@@ -114,11 +115,56 @@ def test_workflow_run_without_agents_raises() -> None:
         workflow.run("hello")
 
 
-def test_workflow_use_langgraph_without_dependency_raises_helpful_error() -> None:
+def test_workflow_use_langgraph_without_dependency_raises_helpful_error(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # Force the lazy `from langgraph.graph import ...` import inside
+    # LangGraphOrchestrator to fail, regardless of whether langgraph is
+    # actually installed in the environment running this test (CI installs
+    # it via the `all` extra, so this can't rely on it being absent).
+    monkeypatch.setitem(sys.modules, "langgraph", None)
+    monkeypatch.setitem(sys.modules, "langgraph.graph", None)
+
     workflow = Workflow()
     workflow.add(make_agent("A", "a"))
     workflow.use_langgraph()
     with pytest.raises(ConfigurationException, match="langgraph"):
+        workflow.run("hello")
+
+
+def test_workflow_use_langgraph_runs_a_real_sequential_pipeline() -> None:
+    pytest.importorskip("langgraph")
+
+    workflow = Workflow()
+    workflow.add(make_agent("Researcher", "research")).add(make_agent("Writer", "write"))
+    workflow.use_langgraph()
+
+    result = workflow.run("AI trends")
+    assert result.content == "write:research:AI trends"
+    assert result.orchestrator == "langgraph"
+    assert result.strategy == "sequential"
+    assert len(result.steps) == 2
+
+
+@pytest.mark.asyncio
+async def test_workflow_use_langgraph_arun_real_sequential_pipeline() -> None:
+    pytest.importorskip("langgraph")
+
+    workflow = Workflow()
+    workflow.add(make_agent("Researcher", "research")).add(make_agent("Writer", "write"))
+    workflow.use_langgraph()
+
+    result = await workflow.arun("AI trends")
+    assert result.content == "write:research:AI trends"
+
+
+def test_workflow_use_langgraph_rejects_parallel_strategy() -> None:
+    pytest.importorskip("langgraph")
+
+    workflow = Workflow().parallel()
+    workflow.add(make_agent("A", "a"))
+    workflow.use_langgraph()
+    with pytest.raises(ConfigurationException, match="sequential"):
         workflow.run("hello")
 
 

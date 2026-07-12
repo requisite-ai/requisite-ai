@@ -5,6 +5,14 @@ contributor can extend it without first reverse-engineering the pattern
 from source. It complements `ROADMAP.md` (what's planned) and
 `CONTRIBUTING.md` (how to submit a change).
 
+> For the formal record of *why* this shape was chosen over the
+> alternatives — including interfaces specified but not yet implemented
+> (`BaseMemory`, `BaseMCPClient`), the plugin discovery model, and the
+> `requisite-core` vs. optional-integrations boundary — see
+> [`docs/adr/0001-core-architecture-and-interfaces.md`](docs/adr/0001-core-architecture-and-interfaces.md).
+> This document and that ADR should never contradict each other; if they
+> drift, the ADR is amended (or superseded) and this file is updated to match.
+
 ## The one idea everything else follows from
 
 > Every major capability is: a small abstract **interface**, one or more

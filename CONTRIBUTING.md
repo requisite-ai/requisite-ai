@@ -8,6 +8,13 @@ doc that covers your specific question:
 - **[`ARCHITECTURE.md`](ARCHITECTURE.md)** — how the framework fits
   together and why (the interface + registry pattern, request flows,
   design decisions). Read this before writing non-trivial code.
+- **[`docs/adr/`](docs/adr/)** — Architecture Decision Records: the formal
+  rationale behind core interfaces, extension points, plugin discovery,
+  and package boundaries. Start with
+  [ADR-0001](docs/adr/0001-core-architecture-and-interfaces.md). Changes
+  that fit the criteria in `docs/adr/README.md` (new core interface,
+  new package boundary, a convention future contributions must follow)
+  should come with a new ADR in the same PR.
 - **[`DEVELOPMENT.md`](DEVELOPMENT.md)** — the detailed engineering
   reference: docstring format, testing philosophy, logging/error-handling
   conventions, versioning & deprecation policy.

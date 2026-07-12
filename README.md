@@ -333,6 +333,10 @@ Contributions are welcome:
 - [`ARCHITECTURE.md`](ARCHITECTURE.md) — how the framework fits together
   and why: the interface + registry pattern, request-flow walkthroughs,
   design decisions.
+- [`docs/adr/`](docs/adr/) — Architecture Decision Records: the formal
+  rationale behind core interfaces, extension points, plugin discovery,
+  configuration model, and the `requisite-core` vs. optional-integrations
+  boundary. Start with [ADR-0001](docs/adr/0001-core-architecture-and-interfaces.md).
 - [`DEVELOPMENT.md`](DEVELOPMENT.md) — coding standards, testing
   philosophy, docstring format, logging/error-handling conventions,
   versioning policy.

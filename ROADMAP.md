@@ -89,6 +89,7 @@ Each new strategy is a `_run_<strategy>` / `_arun_<strategy>` pair on
 
 | Item | Status |
 |---|---|
+| `BaseMCPClient` interface + registry — **interface specified in [ADR-0001](docs/adr/0001-core-architecture-and-interfaces.md)** | 📋 |
 | MCP client integration (consume remote/local MCP tool servers as capabilities) | 📋 |
 | MCP server integration (expose Requisite tools/agents as an MCP server) | 📋 |
 | First-party MCP servers as capability providers (filesystem, GitHub, databases) | 📋 |
@@ -101,8 +102,8 @@ or care whether `"github"` is resolved by a native tool or an MCP server.
 
 | Item | Status |
 |---|---|
-| `BaseMemory` interface + registry | 📋 |
-| Conversation memory (in-process) | 📋 |
+| `BaseMemory` interface + registry — **interface specified in [ADR-0001](docs/adr/0001-core-architecture-and-interfaces.md)** | 📋 |
+| Conversation memory (in-process, ships as the default in core) | 📋 |
 | Redis-backed memory | 📋 |
 | SQLite-backed memory | 📋 |
 | Vector-database-backed memory | 📋 |
