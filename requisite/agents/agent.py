@@ -30,8 +30,10 @@ from requisite.ai import AI
 from requisite.capabilities.registry import CapabilityRegistry
 from requisite.capabilities import default_registry as default_capability_registry
 from requisite.config.settings import Settings
-from requisite.core.exceptions import AgentException
+from requisite.core.exceptions import AgentException, ConfigurationException
 from requisite.core.interfaces import ChatResponse, Message
+from requisite.memory.base import BaseMemory
+from requisite.memory.policies import BaseConversationPolicy
 from requisite.providers.base import BaseProvider
 from requisite.providers.factory import ProviderRegistry
 from requisite.skills.base import BaseSkill
@@ -110,6 +112,28 @@ class Agent:
         for ``"filesystem"``, ``"weather"``, and ``"internet_search"``.
     system_prompt:
         System prompt establishing the agent's role/persona.
+    memory:
+        A :class:`~requisite.memory.base.BaseMemory` backend for
+        persisting conversation history across separate ``run()`` calls
+        (e.g. across HTTP requests in a chat application). Requires
+        ``session_id``. When set, ``run(prompt)``/``arun(prompt)`` must
+        be called with a plain string (the new turn) -- the prior
+        history is loaded from ``memory`` automatically, not passed in
+        by the caller. Only the user's turn and the agent's final answer
+        are persisted; intermediate tool-call round-trips are not, since
+        they're specific to one run and not meaningful to replay later.
+    session_id:
+        Identifies which stored conversation to load/append to. Required
+        if ``memory`` is set; ignored otherwise.
+    conversation_policy:
+        Optional :class:`~requisite.memory.policies.BaseConversationPolicy`
+        (e.g. :class:`~requisite.memory.policies.MessageCountPolicy`,
+        :class:`~requisite.memory.policies.SummarizingPolicy`) applied
+        once to the initial message list before the tool-calling loop
+        starts -- trims or summarizes history that's grown too long.
+        Applied regardless of whether ``memory`` is set. What gets
+        persisted back to ``memory`` (if configured) is unaffected by
+        this policy; each future load re-applies it fresh.
     settings:
         Configuration source; defaults to a fresh
         :class:`~requisite.config.settings.Settings`.
@@ -130,6 +154,22 @@ class Agent:
     >>> agent = Agent(name="Assistant", provider="openai")  # doctest: +SKIP
     >>> agent.requires("weather", "internet_search", "filesystem")  # doctest: +SKIP
     >>> agent.run("What's the weather in Tokyo?")  # doctest: +SKIP
+
+    Persisting conversation history across calls:
+
+    >>> from requisite.memory import InProcessMemory
+    >>> memory = InProcessMemory()
+    >>> agent = Agent(name="Assistant", provider="openai", memory=memory, session_id="user-42")  # doctest: +SKIP
+    >>> agent.run("My name is Alex.")  # doctest: +SKIP
+    >>> agent.run("What's my name?")  # doctest: +SKIP  -- remembers "Alex" via `memory`
+
+    Keeping long-running conversations bounded:
+
+    >>> from requisite.memory import MessageCountPolicy
+    >>> bounded = Agent(
+    ...     name="Assistant", provider="openai", memory=memory, session_id="user-42",
+    ...     conversation_policy=MessageCountPolicy(max_messages=20),
+    ... )  # doctest: +SKIP
     """
 
     def __init__(
@@ -143,6 +183,9 @@ class Agent:
         requires: Optional[Sequence[str]] = None,
         capability_registry: Optional[CapabilityRegistry] = None,
         system_prompt: Optional[str] = None,
+        memory: Optional[BaseMemory] = None,
+        session_id: Optional[str] = None,
+        conversation_policy: Optional[BaseConversationPolicy] = None,
         settings: Optional[Settings] = None,
         registry: Optional[ProviderRegistry] = None,
         max_iterations: int = 5,
@@ -150,6 +193,15 @@ class Agent:
         self.name = name
         self.max_iterations = max_iterations
         self._capability_registry = capability_registry or default_capability_registry
+        self._conversation_policy = conversation_policy
+
+        if memory is not None and not session_id:
+            raise ConfigurationException(
+                f"Agent '{name}' was given memory but no session_id. A session_id "
+                f"is required so memory knows which conversation to load/append to.",
+            )
+        self._memory = memory
+        self._session_id = session_id
 
         self._tool_registry = ToolRegistry()
         for tool_like in tools or []:
@@ -177,6 +229,16 @@ class Agent:
     def tools(self) -> ToolRegistry:
         """The tool registry backing this agent's tool-calling loop."""
         return self._tool_registry
+
+    @property
+    def memory(self) -> Optional[BaseMemory]:
+        """The memory backend this agent persists conversation history to, if any."""
+        return self._memory
+
+    @property
+    def conversation_policy(self) -> Optional[BaseConversationPolicy]:
+        """The retention policy applied to message history before each run, if any."""
+        return self._conversation_policy
 
     def requires(self, *capabilities: str) -> "Agent":
         """Declare capabilities this agent needs, resolved to whichever
@@ -223,6 +285,15 @@ class Agent:
             self._tool_registry.register(resolved_tool)
         return self
 
+    def _require_str_prompt_for_memory(self, prompt: Union[str, Sequence[Message]]) -> str:
+        if not isinstance(prompt, str):
+            raise ConfigurationException(
+                f"Agent '{self.name}' has memory configured, so run()/arun() must be "
+                f"called with a plain string (the new turn) -- prior history is loaded "
+                f"from memory automatically, not passed in as a Message sequence.",
+            )
+        return prompt
+
     def run(self, prompt: Union[str, Sequence[Message]], **kwargs: Any) -> AgentResult:
         """Run the agent on a task, looping through tool calls until a final answer.
 
@@ -244,9 +315,17 @@ class Agent:
             If ``max_iterations`` tool-calling round-trips are exhausted
             without the model returning a final answer.
         """
-        messages: list[Message] = (
-            [Message.user(prompt)] if isinstance(prompt, str) else list(prompt)
-        )
+        if self._memory is not None:
+            user_text = self._require_str_prompt_for_memory(prompt)
+            history = self._memory.load(self._session_id)  # type: ignore[arg-type]
+            messages: list[Message] = [*history, Message.user(user_text)]
+        else:
+            user_text = None
+            messages = [Message.user(prompt)] if isinstance(prompt, str) else list(prompt)
+
+        if self._conversation_policy is not None:
+            messages = self._conversation_policy.apply(messages)
+
         available_tools = self._tool_registry.all() or None
         tools_executed: list[str] = []
 
@@ -254,6 +333,11 @@ class Agent:
             response = self._ai.chat_response(messages, tools=available_tools, **kwargs)
 
             if not response.has_tool_calls:
+                if self._memory is not None and user_text is not None:
+                    # Only the user's turn and the final answer are persisted --
+                    # not the intermediate tool-call round-trip (see class docstring).
+                    self._memory.append(self._session_id, Message.user(user_text))  # type: ignore[arg-type]
+                    self._memory.append(self._session_id, Message.assistant(response.content))  # type: ignore[arg-type]
                 return AgentResult(
                     content=response.content,
                     agent_name=self.name,
@@ -280,9 +364,17 @@ class Agent:
 
     async def arun(self, prompt: Union[str, Sequence[Message]], **kwargs: Any) -> AgentResult:
         """Async counterpart to :meth:`run`."""
-        messages: list[Message] = (
-            [Message.user(prompt)] if isinstance(prompt, str) else list(prompt)
-        )
+        if self._memory is not None:
+            user_text = self._require_str_prompt_for_memory(prompt)
+            history = await self._memory.aload(self._session_id)  # type: ignore[arg-type]
+            messages: list[Message] = [*history, Message.user(user_text)]
+        else:
+            user_text = None
+            messages = [Message.user(prompt)] if isinstance(prompt, str) else list(prompt)
+
+        if self._conversation_policy is not None:
+            messages = await self._conversation_policy.aapply(messages)
+
         available_tools = self._tool_registry.all() or None
         tools_executed: list[str] = []
 
@@ -290,6 +382,12 @@ class Agent:
             response = await self._ai.achat_response(messages, tools=available_tools, **kwargs)
 
             if not response.has_tool_calls:
+                if self._memory is not None and user_text is not None:
+                    await self._memory.aappend(self._session_id, Message.user(user_text))  # type: ignore[arg-type]
+                    await self._memory.aappend(
+                        self._session_id,  # type: ignore[arg-type]
+                        Message.assistant(response.content),
+                    )
                 return AgentResult(
                     content=response.content,
                     agent_name=self.name,

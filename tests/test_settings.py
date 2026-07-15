@@ -22,6 +22,32 @@ def test_reads_api_keys_from_environment(monkeypatch) -> None:
     assert settings.api_key_for("gemini") == "g-abc"
 
 
+def test_reads_new_provider_api_keys_from_environment(monkeypatch) -> None:
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-ant-abc")
+    monkeypatch.setenv("GROQ_API_KEY", "gsk-abc")
+    monkeypatch.setenv("AZURE_OPENAI_API_KEY", "az-abc")
+    settings = Settings(_env_file=None)  # type: ignore[call-arg]
+    assert settings.api_key_for("anthropic") == "sk-ant-abc"
+    assert settings.api_key_for("groq") == "gsk-abc"
+    assert settings.api_key_for("azure_openai") == "az-abc"
+
+
+def test_provider_kwargs_returns_azure_endpoint_for_azure_openai() -> None:
+    settings = Settings(
+        azure_openai_endpoint="https://my-resource.openai.azure.com", _env_file=None
+    )  # type: ignore[call-arg]
+    assert settings.provider_kwargs("azure_openai") == {
+        "azure_endpoint": "https://my-resource.openai.azure.com"
+    }
+
+
+def test_provider_kwargs_empty_for_providers_without_extra_config() -> None:
+    settings = Settings(_env_file=None)  # type: ignore[call-arg]
+    assert settings.provider_kwargs("openai") == {}
+    assert settings.provider_kwargs("anthropic") == {}
+    assert settings.provider_kwargs("groq") == {}
+
+
 def test_api_key_for_unknown_provider_returns_none() -> None:
     settings = Settings(_env_file=None)  # type: ignore[call-arg]
     assert settings.api_key_for("does-not-exist") is None

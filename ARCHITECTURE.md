@@ -7,11 +7,20 @@ from source. It complements `ROADMAP.md` (what's planned) and
 
 > For the formal record of *why* this shape was chosen over the
 > alternatives — including interfaces specified but not yet implemented
-> (`BaseMemory`, `BaseMCPClient`), the plugin discovery model, and the
+> (`BaseMCPClient`), the plugin discovery model, and the
 > `requisite-core` vs. optional-integrations boundary — see
 > [`docs/adr/0001-core-architecture-and-interfaces.md`](docs/adr/0001-core-architecture-and-interfaces.md).
-> This document and that ADR should never contradict each other; if they
-> drift, the ADR is amended (or superseded) and this file is updated to match.
+> Provider-specific configuration, the OpenAI-wire-compatible provider
+> pattern (Groq, Azure OpenAI), and the `Memory`/`Agent` integration
+> design are covered in
+> [`docs/adr/0002-provider-kwargs-and-memory-integration.md`](docs/adr/0002-provider-kwargs-and-memory-integration.md).
+> Prompt template design, why structured logging is opt-in rather than
+> automatic, and how conversation policies integrate with `Agent` are
+> covered in
+> [`docs/adr/0003-prompt-templates-structured-logging-conversation-policy.md`](docs/adr/0003-prompt-templates-structured-logging-conversation-policy.md).
+> This document and those ADRs should never contradict each other; if
+> they drift, the ADR is amended (or superseded) and this file is
+> updated to match.
 
 ## The one idea everything else follows from
 
@@ -78,11 +87,17 @@ requisite/
 ├── core/           # Message, ChatResponse, ToolCall, Usage, Role, StreamChunk
 │                   # + the AIException hierarchy. Pure data + errors, no I/O.
 ├── config/         # Settings: pydantic-settings, reads .env, masks secrets
-├── providers/      # BaseProvider + OpenAI/Gemini + ProviderRegistry
+├── providers/      # BaseProvider + OpenAI, Anthropic, Gemini, Groq, Azure OpenAI
+│                   # + ProviderRegistry
 ├── tools/          # Tool, @tool, ToolRegistry, JSON Schema derivation
 ├── skills/         # BaseSkill, SkillRegistry (reusable, higher-level capabilities)
 ├── capabilities/   # CapabilityRegistry -- name -> best available Tool
-├── agents/         # Agent (owns an AI + a ToolRegistry + the tool-calling loop)
+├── memory/         # BaseMemory + InProcessMemory + MemoryRegistry, plus
+│                   # BaseConversationPolicy (MessageCountPolicy, SummarizingPolicy)
+├── prompts/        # PromptTemplate, ChatPromptTemplate, PromptTemplateRegistry
+├── telemetry/      # Structured (JSON) logging -- opt-in, never automatic
+├── agents/         # Agent (owns an AI + a ToolRegistry + the tool-calling loop
+│                   # + optionally a BaseMemory + a BaseConversationPolicy) + AgentRegistry
 ├── orchestrators/  # BaseOrchestrator + native/langgraph + OrchestratorRegistry
 ├── workflows/      # Workflow -- the ergonomic facade over orchestrators
 └── ai.py           # AI -- the facade most application code touches directly
@@ -90,8 +105,12 @@ requisite/
 
 Dependencies point strictly downward: `workflows` depends on
 `orchestrators` and `agents`; `agents` depends on `ai`, `tools`, `skills`,
-`capabilities`; `ai` depends on `providers`; `providers` and `tools` depend
-on `core`. Nothing in `core` imports from any other layer. This is what
+`capabilities`, `memory`; `ai` depends on `providers`; `providers` and
+`tools` depend on `core`. `prompts` depends only on `core` (it produces
+`Message` objects, nothing consumes it downstream by requirement).
+`telemetry` depends on nothing in the framework -- every module logs
+through the standard library directly; `telemetry` only adds an optional
+formatter on top. Nothing in `core` imports from any other layer. This is what
 keeps, e.g., adding a capability resolver from ever requiring a change to
 `ai.py`.
 
@@ -220,5 +239,9 @@ one node per agent, wired linearly, and compiles/invokes it. The
 | A new capability implementation | any callable / `Tool` | `capabilities.default_registry.register(name, ...)` |
 | A new multi-agent strategy | a `_run_<name>` / `_arun_<name>` pair on an orchestrator | strategy string passed to `Workflow(strategy=...)` |
 | A new reusable capability (vs. a one-off tool) | `skills.base.BaseSkill` | pass to `Agent(skills=[...])` |
+| A new memory backend | `memory.base.BaseMemory` | `memory.factory.default_registry`, or pass directly to `Agent(memory=...)` |
+| A new conversation policy (trim/summarize differently) | `memory.policies.BaseConversationPolicy` | pass directly to `Agent(conversation_policy=...)` |
+| A named, reusable prompt template | `prompts.template.PromptTemplate` / `ChatPromptTemplate` | `prompts.default_prompt_registry`, or use standalone |
+| An OpenAI-wire-compatible provider (OpenRouter, Together AI, ...) | subclass `providers.openai_provider.OpenAIProvider` with a `base_url` override -- see [ADR-0002](docs/adr/0002-provider-kwargs-and-memory-integration.md) | `providers.factory.default_registry` |
 
 See `CONTRIBUTING.md` for the step-by-step for each of these.

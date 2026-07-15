@@ -74,7 +74,7 @@ class ProviderRegistry:
         if not key:
             raise ConfigurationException("Provider name must be a non-empty string.")
         self._builders[key] = builder
-        logger.debug("Registered provider '%s'", key)
+        logger.debug("Registered provider '%s'", key, extra={"provider": key})
 
     def unregister(self, name: str) -> None:
         """Remove a provider registration, if present. No-op if absent."""
@@ -136,8 +136,26 @@ def _register_builtin_providers(registry: ProviderRegistry) -> None:
 
         return GeminiProvider(**kwargs)
 
+    def _build_anthropic(**kwargs: Any) -> BaseProvider:
+        from requisite.providers.anthropic_provider import AnthropicProvider
+
+        return AnthropicProvider(**kwargs)
+
+    def _build_groq(**kwargs: Any) -> BaseProvider:
+        from requisite.providers.groq_provider import GroqProvider
+
+        return GroqProvider(**kwargs)
+
+    def _build_azure_openai(**kwargs: Any) -> BaseProvider:
+        from requisite.providers.azure_openai_provider import AzureOpenAIProvider
+
+        return AzureOpenAIProvider(**kwargs)
+
     registry.register("openai", _build_openai)
     registry.register("gemini", _build_gemini)
+    registry.register("anthropic", _build_anthropic)
+    registry.register("groq", _build_groq)
+    registry.register("azure_openai", _build_azure_openai)
 
 
 default_registry = ProviderRegistry()

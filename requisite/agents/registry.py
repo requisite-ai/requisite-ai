@@ -28,7 +28,11 @@ class AgentRegistry:
     def register(self, agent: Agent) -> Agent:
         """Register an agent under its ``.name``. Returns the agent for chaining."""
         if agent.name in self._agents:
-            logger.debug("Overwriting existing agent registration: '%s'", agent.name)
+            logger.debug(
+                "Overwriting existing agent registration: '%s'",
+                agent.name,
+                extra={"agent": agent.name},
+            )
         self._agents[agent.name] = agent
         return agent
 

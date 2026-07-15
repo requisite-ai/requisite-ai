@@ -114,3 +114,9 @@ class CapabilityException(AIException):
     for the ``"weather"`` capability, or when every registered provider
     for it reports itself unavailable (e.g. missing an API key).
     """
+
+
+class PromptException(AIException):
+    """Raised when a prompt template is misused: rendered without a
+    required variable, or a named template isn't found in a registry.
+    """

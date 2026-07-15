@@ -6,6 +6,10 @@ interface + implementation(s) + a plain registry.** Everything below is a
 module riding that same pattern — nothing on this roadmap requires
 changing the core shape of the framework to add.
 
+> See [`FEATURES.md`](FEATURES.md) for the same status information
+> organized as a line-by-line checklist against the original project
+> vision, rather than by framework layer.
+
 Status legend: ✅ Shipped · 🚧 In progress · 📋 Planned · 💭 Under discussion
 
 ## Core
@@ -24,12 +28,12 @@ Status legend: ✅ Shipped · 🚧 In progress · 📋 Planned · 💭 Under dis
 |---|---|
 | OpenAI (`openai>=1.35` client SDK) | ✅ |
 | Gemini (`google-genai` unified SDK) | ✅ |
-| Anthropic Claude | 📋 |
-| Azure OpenAI | 📋 |
+| Anthropic Claude (`anthropic>=0.116`, native structured output + tool calling) | ✅ |
+| Azure OpenAI (v1 GA API, `OpenAIProvider` subclass) | ✅ |
+| Groq (OpenAI-wire-compatible, `OpenAIProvider` subclass) | ✅ |
 | Ollama (local models) | 📋 |
-| Groq | 📋 |
-| OpenRouter | 📋 |
-| Together AI | 📋 |
+| OpenRouter — candidate for the `OpenAIProvider` subclass pattern (see [ADR-0002](docs/adr/0002-provider-kwargs-and-memory-integration.md)) | 📋 |
+| Together AI — same candidate pattern | 📋 |
 
 Each is an implementation of `BaseProvider` — see `CONTRIBUTING.md` for the
 exact steps. **Community-contributed providers are one of the highest-value,
@@ -102,8 +106,9 @@ or care whether `"github"` is resolved by a native tool or an MCP server.
 
 | Item | Status |
 |---|---|
-| `BaseMemory` interface + registry — **interface specified in [ADR-0001](docs/adr/0001-core-architecture-and-interfaces.md)** | 📋 |
-| Conversation memory (in-process, ships as the default in core) | 📋 |
+| `BaseMemory` interface + registry — specified in [ADR-0001](docs/adr/0001-core-architecture-and-interfaces.md), implemented per [ADR-0002](docs/adr/0002-provider-kwargs-and-memory-integration.md) | ✅ |
+| Conversation memory (in-process, ships as the default in core) | ✅ |
+| `Agent(memory=..., session_id=...)` integration | ✅ |
 | Redis-backed memory | 📋 |
 | SQLite-backed memory | 📋 |
 | Vector-database-backed memory | 📋 |
@@ -121,10 +126,15 @@ or care whether `"github"` is resolved by a native tool or an MCP server.
 
 ## Prompt templates & conversation management
 
-| Item | Status |
-|---|---|
-| Prompt template objects (beyond raw `system_prompt=` strings) | 📋 |
-| Conversation/session objects wrapping `Message` history + persistence | 📋 |
+| Item | Status | Notes |
+|---|---|---|
+| `PromptTemplate` (single string, `{named}` variables) | ✅ | `requisite/prompts/template.py` |
+| `ChatPromptTemplate` (renders to `list[Message]`) | ✅ | |
+| `PromptTemplateRegistry` | ✅ | |
+| Conversation history storage | ✅ | `BaseMemory` — see Memory section above |
+| Conversation retention policy (truncation) | ✅ | `MessageCountPolicy` — see [ADR-0003](docs/adr/0003-prompt-templates-structured-logging-conversation-policy.md) |
+| Conversation retention policy (LLM summarization) | ✅ | `SummarizingPolicy` |
+| `Agent(conversation_policy=...)` integration | ✅ | |
 
 ## Plugin architecture
 
@@ -133,6 +143,14 @@ or care whether `"github"` is resolved by a native tool or an MCP server.
 | Plugins register providers/tools/capabilities via the existing registries | ✅ — already possible today; no plugin-specific API needed since every registry is a plain, importable class |
 | A `requisite-plugin-*` naming/discovery convention (entry points) | 📋 |
 | Official plugin listing / directory in the docs | 📋 |
+
+## Telemetry
+
+| Item | Status | Notes |
+|---|---|---|
+| Structured (JSON) logging | ✅ | `requisite.telemetry.JSONFormatter` + `configure_logging()` — opt-in, never automatic; see [ADR-0003](docs/adr/0003-prompt-templates-structured-logging-conversation-policy.md) |
+| Tracing (e.g. OpenTelemetry spans around provider calls) | 📋 | |
+| Metrics (request counts, latency, token usage aggregation) | 📋 | |
 
 ## CLI
 

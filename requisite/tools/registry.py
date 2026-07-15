@@ -68,7 +68,11 @@ class ToolRegistry:
         """
         resolved = resolve_tool_like(tool_or_func)
         if resolved.name in self._tools:
-            logger.debug("Overwriting existing tool registration: '%s'", resolved.name)
+            logger.debug(
+                "Overwriting existing tool registration: '%s'",
+                resolved.name,
+                extra={"tool": resolved.name},
+            )
         self._tools[resolved.name] = resolved
         return resolved
 

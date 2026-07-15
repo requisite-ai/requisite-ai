@@ -17,7 +17,9 @@ engine, or the implementation behind a capability like `"weather"` or
 from requisite import AI
 
 ai = AI()  # provider="openai" by default
-ai = AI(provider="gemini", model="gemini-2.5-flash")  # same API, different provider
+ai = AI(provider="anthropic", model="claude-sonnet-4-6")  # same API, different provider
+ai = AI(provider="gemini", model="gemini-2.5-flash")
+ai = AI(provider="groq", model="llama-3.3-70b-versatile")
 ```
 
 ```python
@@ -31,10 +33,13 @@ agent.run("What's the weather in Tokyo?")
 ## Install
 
 ```bash
-pip install -e .[all]       # both providers + langgraph
-pip install -e .[openai]    # OpenAI only
-pip install -e .[gemini]    # Gemini only
-pip install -e .[langgraph] # native + langgraph orchestration
+pip install -e .[all]         # every provider + langgraph
+pip install -e .[openai]      # OpenAI only
+pip install -e .[anthropic]   # Anthropic (Claude) only
+pip install -e .[gemini]      # Gemini only
+pip install -e .[groq]        # Groq only (uses the openai package -- wire-compatible)
+pip install -e .[azure_openai] # Azure OpenAI only (uses the openai package)
+pip install -e .[langgraph]   # native + langgraph orchestration
 ```
 
 Or with the plain requirements file: `pip install -r requirements.txt`
@@ -42,6 +47,10 @@ Or with the plain requirements file: `pip install -r requirements.txt`
 > **Note on the Gemini SDK:** this framework uses the current, unified
 > `google-genai` package (`from google import genai`). Do not install the
 > deprecated `google-generativeai` package — the two conflict.
+>
+> **Note on Azure OpenAI:** uses Azure's current **v1 GA API** (the plain
+> `openai` client pointed at your endpoint) — no separate SDK, no dated
+> `api-version` string. See [ADR-0002](docs/adr/0002-provider-kwargs-and-memory-integration.md).
 
 ## Configuration
 
@@ -49,14 +58,20 @@ Copy `.env.example` to `.env` and fill in the key(s) for the provider(s) you use
 
 ```env
 OPENAI_API_KEY=
+ANTHROPIC_API_KEY=
 GEMINI_API_KEY=
+GROQ_API_KEY=
+AZURE_OPENAI_API_KEY=
+AZURE_OPENAI_ENDPOINT=
 DEFAULT_PROVIDER=openai
 MODEL=gpt-4o-mini
 TEMPERATURE=0.2
 ```
 
 `Settings` (`requisite/config/settings.py`) reads this automatically — you
-never call `os.environ.get` yourself.
+never call `os.environ.get` yourself. `.env.example` also reserves
+placeholders for planned integrations (GitHub, Hugging Face, AWS, Azure
+general-purpose credentials, Pinecone, Weaviate) — see `ROADMAP.md`.
 
 ## Usage
 
@@ -68,6 +83,22 @@ from requisite import AI
 ai = AI()
 print(ai.chat("Explain LangGraph in one sentence."))
 ```
+
+### Supported providers
+
+| Provider | `provider=` | Model examples | Notes |
+|---|---|---|---|
+| OpenAI | `"openai"` | `gpt-4o-mini`, `gpt-4o` | |
+| Anthropic | `"anthropic"` | `claude-sonnet-4-6`, `claude-opus-4-8` | Native structured output via `messages.parse` |
+| Gemini | `"gemini"` | `gemini-2.5-flash`, `gemini-2.5-pro` | Uses the unified `google-genai` SDK |
+| Groq | `"groq"` | `llama-3.3-70b-versatile`, `openai/gpt-oss-20b` | OpenAI-wire-compatible; uses the `openai` package |
+| Azure OpenAI | `"azure_openai"` | your deployment name | Requires `azure_endpoint` (or `AZURE_OPENAI_ENDPOINT`); current v1 GA API, no `api-version` needed |
+
+Switching between any of these is the `provider=`/`AZURE_OPENAI_ENDPOINT`
+change shown above — no other code changes. See
+[ADR-0002](docs/adr/0002-provider-kwargs-and-memory-integration.md) for
+why Groq and Azure OpenAI are implemented as thin `OpenAIProvider`
+subclasses rather than separate SDKs.
 
 ### Structured output
 
@@ -217,6 +248,133 @@ orchestrators, one layer up: `CapabilityRegistry.resolve(name)` picks the
 highest-priority provider whose `is_available()` currently returns
 `True`, raising `CapabilityException` if none are.
 
+### Memory: conversation history across separate calls
+
+```python
+from requisite import Agent
+from requisite.memory import InProcessMemory
+
+memory = InProcessMemory()
+agent = Agent(name="Assistant", provider="openai", memory=memory, session_id="user-42")
+
+agent.run("My name is Alex.")
+result = agent.run("What's my name?")  # remembers "Alex" via `memory`
+print(result.content)
+```
+
+`session_id` is required whenever `memory` is set — there's no implicit
+"current user," so an agent with memory but no session_id fails at
+construction time rather than silently sharing one conversation across
+callers. When memory is configured, `run()`/`arun()` must be called with
+a plain string (the new turn); prior history is loaded from `memory`
+automatically. Only the user's turn and the agent's final answer are
+persisted, not intermediate tool-call round-trips — see
+[ADR-0002](docs/adr/0002-provider-kwargs-and-memory-integration.md) for
+the reasoning.
+
+`InProcessMemory` (dict-backed, lost on restart) is the zero-dependency
+default. Implement `requisite.memory.base.BaseMemory` for a persistent
+backend (Redis, SQLite, ...) — see `ROADMAP.md`.
+
+### Conversation policies: keeping long histories bounded
+
+A conversation that grows unbounded eventually blows past the model's
+context window (or just gets expensive). `conversation_policy=` trims or
+summarizes history once, before each `run()`/`arun()` call — independent
+of whether `memory` is configured:
+
+```python
+from requisite import Agent
+from requisite.memory import InProcessMemory, MessageCountPolicy
+
+agent = Agent(
+    name="Assistant",
+    provider="openai",
+    memory=InProcessMemory(),
+    session_id="user-42",
+    conversation_policy=MessageCountPolicy(max_messages=20),  # keep the most recent 20
+)
+```
+
+For long-running conversations where you'd rather compress old context
+than drop it, `SummarizingPolicy` collapses older messages into one
+LLM-generated summary, keeping the most recent few verbatim:
+
+```python
+from requisite import AI
+from requisite.memory import SummarizingPolicy
+
+# A separate, cheaper AI instance for summarization is a reasonable choice --
+# summarization quality requirements are usually lower than the agent's own task.
+summarizer = AI(provider="groq", model="llama-3.3-70b-versatile")
+
+agent = Agent(
+    name="Assistant",
+    provider="openai",
+    memory=InProcessMemory(),
+    session_id="user-42",
+    conversation_policy=SummarizingPolicy(summarizer, max_messages=20, keep_recent=6),
+)
+```
+
+See [ADR-0003](docs/adr/0003-prompt-templates-structured-logging-conversation-policy.md)
+for why the policy is applied once per call rather than mid-tool-loop,
+and why it doesn't change what gets persisted to `memory`.
+
+### Prompt templates
+
+```python
+from requisite.prompts import ChatPromptTemplate
+
+chat_template = ChatPromptTemplate.from_messages([
+    ("system", "You are a {persona}."),
+    ("user", "{question}"),
+])
+
+messages = chat_template.format_messages(persona="pirate", question="Where's the treasure?")
+print(ai.chat(messages))
+```
+
+`ChatPromptTemplate.format_messages(...)` returns a plain `list[Message]`
+— pass it to `ai.chat(...)` or `agent.run(...)` exactly like any other
+message sequence. For a single string instead of a full conversation,
+use `PromptTemplate`:
+
+```python
+from requisite.prompts import PromptTemplate
+
+translate = PromptTemplate.from_template("Translate to {language}: {text}")
+print(ai.chat(translate.format(language="French", text="Good morning")))
+
+# Pre-fill some variables now, leave the rest for later:
+french_translator = translate.partial(language="French")
+print(ai.chat(french_translator.format(text="Good night")))
+```
+
+Register named templates for reuse across an application with
+`PromptTemplateRegistry`.
+
+### Structured logging
+
+Every framework module logs through the standard library
+(`logging.getLogger("requisite.<subpackage>")`). Opt into JSON output
+with one call, wherever your application configures logging — this is
+never done automatically by the framework:
+
+```python
+from requisite.telemetry import configure_logging
+
+configure_logging(level="INFO", json_format=True)
+```
+
+```json
+{"timestamp": "...", "level": "DEBUG", "logger": "requisite.capabilities", "message": "Resolved capability 'weather' -> 'open-meteo'", "capability": "weather", "provider_name": "open-meteo"}
+```
+
+Any `extra={...}` fields passed to a log call are merged into the JSON
+payload automatically — the same log call produces a readable line with
+the default formatter and a structured payload with `json_format=True`.
+
 ### Streaming & async
 
 ```python
@@ -253,13 +411,17 @@ requisite/
 ├── core/           # Provider-agnostic data models (Message, ChatResponse,
 │                   # ToolCall, ...) and the AIException hierarchy
 ├── config/         # Settings (pydantic-settings, reads .env)
-├── providers/      # BaseProvider interface + OpenAI/Gemini implementations
-│                   # + ProviderRegistry (extensible, DI-friendly factory)
+├── providers/      # BaseProvider interface + OpenAI, Anthropic, Gemini, Groq,
+│                   # Azure OpenAI + ProviderRegistry (extensible, DI-friendly)
 ├── tools/          # Tool, @tool decorator, ToolRegistry, JSON Schema derivation
 ├── skills/         # BaseSkill, SkillRegistry -- reusable higher-level capabilities
 ├── capabilities/   # CapabilityRegistry -- resolve a named capability (e.g.
 │                   # "weather") to whichever implementation is available
-├── agents/         # Agent (tool-calling loop, .requires()) + AgentRegistry
+├── memory/         # BaseMemory + InProcessMemory + MemoryRegistry, plus
+│                   # BaseConversationPolicy (MessageCountPolicy, SummarizingPolicy)
+├── prompts/        # PromptTemplate, ChatPromptTemplate, PromptTemplateRegistry
+├── telemetry/      # Structured (JSON) logging -- opt-in, never automatic
+├── agents/         # Agent (tool-calling loop, .requires(), optional memory) + AgentRegistry
 ├── orchestrators/  # BaseOrchestrator interface + native (sequential/parallel)
 │                   # and langgraph backends + OrchestratorRegistry
 ├── workflows/      # Workflow -- the small, ergonomic multi-agent facade
@@ -295,6 +457,7 @@ AIException
 ├── SkillException           # a skill wasn't found, or raised while executing
 ├── AgentException           # agent execution failed (e.g. max_iterations exceeded)
 ├── CapabilityException      # a required capability has no available provider
+├── PromptException          # a prompt template was rendered without a required variable
 └── MCPException              # reserved for the upcoming MCP integration
 ```
 
@@ -314,14 +477,18 @@ tested against fully in-memory fake providers.
 
 ## Roadmap
 
-Implemented: provider connectivity (OpenAI, Gemini), structured outputs,
-tool calling, skills, capability resolution (`agent.requires(...)`),
-agents + registry, multi-agent workflows (sequential/parallel, native +
-langgraph backends).
+Implemented: 5 providers (OpenAI, Anthropic, Gemini, Groq, Azure OpenAI),
+structured outputs, tool calling, skills, capability resolution
+(`agent.requires(...)`), memory + conversation policies
+(`Agent(memory=..., conversation_policy=...)`), prompt templates,
+structured logging, agents + registry, multi-agent workflows
+(sequential/parallel, native + langgraph backends).
 
 See [`ROADMAP.md`](ROADMAP.md) for the full, per-layer status table
 (providers, orchestration strategies, MCP, memory, RAG, ...) and what's
-explicitly out of scope.
+explicitly out of scope. See [`FEATURES.md`](FEATURES.md) for the same
+information organized as a line-by-line checklist against the original
+project vision.
 
 ## Contributing
 

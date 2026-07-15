@@ -22,7 +22,7 @@ Override anything via keyword arguments (useful in tests):
 from __future__ import annotations
 
 from functools import lru_cache
-from typing import Optional
+from typing import Any, Optional
 
 from pydantic import Field, SecretStr
 from pydantic_settings import BaseSettings, SettingsConfigDict
@@ -57,6 +57,12 @@ class Settings(BaseSettings):
         Default number of retries for transient provider failures.
     log_level:
         Standard library logging level name (e.g. ``"INFO"``, ``"DEBUG"``).
+    log_format:
+        ``"plain"`` (default) or ``"json"``. Passed to
+        ``requisite.telemetry.configure_logging(json_format=...)`` if the
+        application opts into it -- Settings only stores the preference,
+        it never configures logging itself (see that function's
+        docstring for why).
 
     Notes
     -----
@@ -74,6 +80,17 @@ class Settings(BaseSettings):
 
     openai_api_key: Optional[SecretStr] = Field(default=None)
     gemini_api_key: Optional[SecretStr] = Field(default=None)
+    anthropic_api_key: Optional[SecretStr] = Field(default=None)
+    groq_api_key: Optional[SecretStr] = Field(default=None)
+    azure_openai_api_key: Optional[SecretStr] = Field(default=None)
+    azure_openai_endpoint: Optional[str] = Field(
+        default=None,
+        description=(
+            "Your Azure OpenAI resource endpoint, e.g. "
+            "'https://your-resource.openai.azure.com'. Required only if "
+            "provider='azure_openai' is used."
+        ),
+    )
 
     default_provider: str = Field(default="openai")
     model: str = Field(default="gpt-4o-mini")
@@ -83,6 +100,7 @@ class Settings(BaseSettings):
     max_retries: int = Field(default=2, ge=0)
 
     log_level: str = Field(default="INFO")
+    log_format: str = Field(default="plain")
 
     def api_key_for(self, provider: str) -> Optional[str]:
         """Return the plaintext API key for the given provider name.
@@ -90,7 +108,8 @@ class Settings(BaseSettings):
         Parameters
         ----------
         provider:
-            Provider identifier, e.g. ``"openai"`` or ``"gemini"``.
+            Provider identifier, e.g. ``"openai"``, ``"gemini"``,
+            ``"anthropic"``, ``"groq"``, or ``"azure_openai"``.
 
         Returns
         -------
@@ -100,9 +119,38 @@ class Settings(BaseSettings):
         mapping: dict[str, Optional[SecretStr]] = {
             "openai": self.openai_api_key,
             "gemini": self.gemini_api_key,
+            "anthropic": self.anthropic_api_key,
+            "groq": self.groq_api_key,
+            "azure_openai": self.azure_openai_api_key,
         }
         secret = mapping.get(provider.lower())
         return secret.get_secret_value() if secret else None
+
+    def provider_kwargs(self, provider: str) -> dict[str, Any]:
+        """Return extra, provider-specific constructor kwargs beyond the
+        common ``api_key``/``model``/``timeout``/``max_retries`` set.
+
+        Most providers need nothing extra here. This exists specifically
+        for providers whose constructor requires configuration that has
+        no equivalent on other providers -- today, only
+        ``azure_openai``'s ``azure_endpoint``. See ADR-0002 for the
+        reasoning behind keeping this generic rather than special-casing
+        Azure inside :class:`~requisite.ai.AI`.
+
+        Parameters
+        ----------
+        provider:
+            Provider identifier.
+
+        Returns
+        -------
+        dict
+            Extra keyword arguments to merge into the provider's
+            constructor call. Empty for providers with no extra config.
+        """
+        if provider.lower() == "azure_openai":
+            return {"azure_endpoint": self.azure_openai_endpoint}
+        return {}
 
 
 @lru_cache(maxsize=1)

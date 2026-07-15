@@ -40,3 +40,5 @@ need one — `CONTRIBUTING.md` already covers those.
 | ADR | Title | Status |
 |---|---|---|
 | [0001](0001-core-architecture-and-interfaces.md) | Core architecture, interfaces, and extension model | Accepted |
+| [0002](0002-provider-kwargs-and-memory-integration.md) | Provider-specific configuration, OpenAI-compatible providers, and Memory integration | Accepted |
+| [0003](0003-prompt-templates-structured-logging-conversation-policy.md) | Prompt templates, structured logging, and conversation policies | Accepted |

@@ -26,7 +26,11 @@ class SkillRegistry:
     def register(self, skill: BaseSkill) -> BaseSkill:
         """Register a skill instance. Returns the skill for convenient chaining."""
         if skill.name in self._skills:
-            logger.debug("Overwriting existing skill registration: '%s'", skill.name)
+            logger.debug(
+                "Overwriting existing skill registration: '%s'",
+                skill.name,
+                extra={"skill": skill.name},
+            )
         self._skills[skill.name] = skill
         return skill
 

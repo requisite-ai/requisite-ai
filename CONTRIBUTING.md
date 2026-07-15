@@ -62,11 +62,16 @@ fake provider — no real network calls, ever).
 requisite/
 ├── core/           # Message, ChatResponse, ToolCall, ... + AIException hierarchy
 ├── config/         # Settings (pydantic-settings, reads .env)
-├── providers/      # BaseProvider + OpenAI/Gemini + ProviderRegistry
+├── providers/      # BaseProvider + OpenAI, Anthropic, Gemini, Groq, Azure OpenAI
+│                   # + ProviderRegistry
 ├── tools/          # Tool, @tool, ToolRegistry, JSON Schema derivation
 ├── skills/         # BaseSkill, SkillRegistry
 ├── capabilities/   # CapabilityRegistry -- agent.requires("weather") resolution
-├── agents/         # Agent (tool-calling loop) + AgentRegistry
+├── memory/         # BaseMemory + InProcessMemory + MemoryRegistry, plus
+│                   # BaseConversationPolicy (MessageCountPolicy, SummarizingPolicy)
+├── prompts/        # PromptTemplate, ChatPromptTemplate, PromptTemplateRegistry
+├── telemetry/      # Structured (JSON) logging -- opt-in, never automatic
+├── agents/         # Agent (tool-calling loop, .requires(), optional memory) + AgentRegistry
 ├── orchestrators/  # BaseOrchestrator + native/langgraph + OrchestratorRegistry
 ├── workflows/      # Workflow -- the multi-agent facade
 └── ai.py           # The `AI` facade

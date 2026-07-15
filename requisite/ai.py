@@ -118,6 +118,7 @@ class AI:
 
         resolved_model = model or self._settings.model
         api_key = self._settings.api_key_for(provider_name)
+        extra_kwargs = self._settings.provider_kwargs(provider_name)
 
         return self._registry.create(
             provider_name,
@@ -125,6 +126,7 @@ class AI:
             model=resolved_model,
             timeout=self._settings.request_timeout,
             max_retries=self._settings.max_retries,
+            **extra_kwargs,
         )
 
     @property

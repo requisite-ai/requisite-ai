@@ -132,5 +132,17 @@ class Tool(BaseModel):
             "parameters": self.parameters_schema or {"type": "object", "properties": {}},
         }
 
+    def to_anthropic_schema(self) -> dict[str, Any]:
+        """Return this tool's definition in Anthropic's tool-use wire format.
+
+        Anthropic names the schema field ``input_schema`` rather than
+        OpenAI/Gemini's ``parameters`` -- otherwise the same JSON Schema.
+        """
+        return {
+            "name": self.name,
+            "description": self.description,
+            "input_schema": self.parameters_schema or {"type": "object", "properties": {}},
+        }
+
     def __repr__(self) -> str:  # pragma: no cover - trivial
         return f"Tool(name={self.name!r})"

@@ -118,9 +118,28 @@ enforced by convention, not tooling, so take it seriously:
 - Log registration/resolution events at `DEBUG` (e.g. "registered provider
   'openai'", "resolved capability 'weather' -> 'open-meteo'") — useful for
   debugging a misconfigured registry, too noisy for normal operation.
+- When a log event has an obvious structured shape (an entity name, a
+  count, a decision), pass it via `extra={...}` on the log call, e.g.
+  `logger.debug("Resolved capability '%s' -> '%s'", capability, name, extra={"capability": capability, "provider_name": name})`.
+  `requisite.telemetry.JSONFormatter` merges `extra` fields into the JSON
+  payload automatically; the same call still reads fine with the default
+  plain formatter. Not every log call needs this — a genuinely prose
+  message doesn't need invented structure — but do it for anything with
+  clear entity/count/decision shape. See
+  [ADR-0003](docs/adr/0003-prompt-templates-structured-logging-conversation-policy.md).
 - Never log secrets. `Settings` already stores API keys as `SecretStr`
   specifically so an accidental `logger.debug(settings)` doesn't leak one
   — don't work around that by logging `.get_secret_value()` anywhere.
+- When a log event has an obvious structured shape (an entity name, a
+  count, a decision made among alternatives), pass it via `extra={...}`
+  rather than only interpolating it into the message string:
+  `logger.debug("Resolved capability '%s' -> '%s'", capability, provider_name, extra={"capability": capability, "provider_name": provider_name})`.
+  This costs nothing when logs are consumed as plain text, and makes them
+  queryable when an application opts into
+  `requisite.telemetry.configure_logging(json_format=True)` (see
+  `docs/adr/0003-prompt-templates-structured-logging-conversation-policy.md`).
+  Not every log call needs this — a purely prose message doesn't need
+  `extra=` invented for it.
 
 ## Error handling
 

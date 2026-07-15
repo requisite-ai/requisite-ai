@@ -34,7 +34,7 @@ class OrchestratorRegistry:
         if not key:
             raise ConfigurationException("Orchestrator name must be a non-empty string.")
         self._builders[key] = builder
-        logger.debug("Registered orchestrator backend '%s'", key)
+        logger.debug("Registered orchestrator backend '%s'", key, extra={"orchestrator": key})
 
     def available(self) -> list[str]:
         """Return the sorted list of currently registered backend names."""

@@ -130,7 +130,7 @@ class OpenAIProvider(BaseProvider):
             from openai import AsyncOpenAI, OpenAI
         except ImportError as exc:  # pragma: no cover - exercised only without the dep
             raise ConfigurationException(
-                "The 'openai' package is required for OpenAIProvider. "
+                f"The 'openai' package is required for {type(self).__name__}. "
                 "Install it with: pip install openai",
             ) from exc
 

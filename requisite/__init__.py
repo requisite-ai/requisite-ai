@@ -22,6 +22,8 @@ Quick start
 
 Switching providers requires no code changes beyond configuration:
 >>> ai = AI(provider="gemini", model="gemini-2.5-flash")
+>>> ai = AI(provider="anthropic", model="claude-sonnet-4-6")
+>>> ai = AI(provider="groq", model="llama-3.3-70b-versatile")
 
 Tool calling:
 >>> from requisite.tools import tool
@@ -44,6 +46,29 @@ Declaring capabilities instead of binding to specific tool implementations:
 >>> assistant = Agent(name="Assistant", provider="openai")  # doctest: +SKIP
 >>> assistant.requires("weather", "internet_search", "filesystem")  # doctest: +SKIP
 >>> assistant.run("What's the weather in Tokyo?")  # doctest: +SKIP
+
+Persisting conversation history across separate run() calls, kept bounded
+with a conversation policy:
+>>> from requisite.memory import InProcessMemory, MessageCountPolicy
+>>> memory = InProcessMemory()
+>>> chatty = Agent(
+...     name="Assistant", provider="openai", memory=memory, session_id="user-42",
+...     conversation_policy=MessageCountPolicy(max_messages=20),
+... )  # doctest: +SKIP
+>>> chatty.run("My name is Alex.")  # doctest: +SKIP
+>>> chatty.run("What's my name?")  # doctest: +SKIP
+
+Reusable, parameterized prompts:
+>>> from requisite.prompts import ChatPromptTemplate
+>>> chat_template = ChatPromptTemplate.from_messages([
+...     ("system", "You are a {persona}."),
+...     ("user", "{question}"),
+... ])
+>>> ai.chat(chat_template.format_messages(persona="pirate", question="Where's the treasure?"))  # doctest: +SKIP
+
+Structured (JSON) logging, opt-in:
+>>> from requisite.telemetry import configure_logging
+>>> configure_logging(level="DEBUG", json_format=True)  # doctest: +SKIP
 """
 
 from requisite.agents.agent import Agent, AgentResult
@@ -59,11 +84,20 @@ from requisite.core.exceptions import (
     ConfigurationException,
     MCPException,
     ProviderException,
+    PromptException,
     SkillException,
     ToolException,
 )
 from requisite.core.interfaces import ChatResponse, Message, Role, ToolCall
+from requisite.memory.base import BaseMemory
+from requisite.memory.factory import MemoryRegistry
+from requisite.memory import default_registry as default_memory_registry
+from requisite.memory.in_process import InProcessMemory
+from requisite.memory.policies import BaseConversationPolicy, MessageCountPolicy, SummarizingPolicy
 from requisite.orchestrators.base import WorkflowResult
+from requisite.prompts.registry import PromptTemplateRegistry
+from requisite.prompts import default_prompt_registry
+from requisite.prompts.template import ChatPromptTemplate, PromptTemplate
 from requisite.providers.factory import ProviderRegistry, default_registry
 from requisite.skills.base import BaseSkill
 from requisite.skills.registry import SkillRegistry
@@ -96,6 +130,19 @@ __all__ = [
     "CapabilityRegistry",
     "CapabilityProvider",
     "default_capability_registry",
+    # Memory + conversation management
+    "BaseMemory",
+    "InProcessMemory",
+    "MemoryRegistry",
+    "default_memory_registry",
+    "BaseConversationPolicy",
+    "MessageCountPolicy",
+    "SummarizingPolicy",
+    # Prompt templates
+    "PromptTemplate",
+    "ChatPromptTemplate",
+    "PromptTemplateRegistry",
+    "default_prompt_registry",
     # Multi-agent workflows
     "Workflow",
     "WorkflowResult",
@@ -111,6 +158,7 @@ __all__ = [
     "AgentException",
     "MCPException",
     "CapabilityException",
+    "PromptException",
 ]
 
-__version__ = "0.3.0"
+__version__ = "0.5.0"

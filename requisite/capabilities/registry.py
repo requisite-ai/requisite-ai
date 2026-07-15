@@ -158,6 +158,11 @@ class CapabilityRegistry:
             provider.provider_name,
             capability,
             priority,
+            extra={
+                "capability": capability,
+                "provider_name": provider.provider_name,
+                "priority": priority,
+            },
         )
         return provider
 
@@ -184,7 +189,12 @@ class CapabilityRegistry:
         ranked = sorted(providers, key=lambda p: -p.priority)
         for provider in ranked:
             if provider.is_available():
-                logger.debug("Resolved capability '%s' -> '%s'", capability, provider.provider_name)
+                logger.debug(
+                    "Resolved capability '%s' -> '%s'",
+                    capability,
+                    provider.provider_name,
+                    extra={"capability": capability, "provider_name": provider.provider_name},
+                )
                 return provider.tool
 
         unavailable = [p.provider_name for p in ranked]
