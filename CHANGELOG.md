@@ -7,7 +7,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-## [0.5.0] - 2026-07-13
+## [0.1.0] - 2026-07-13
 
 ### Added
 
@@ -27,11 +27,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `Settings.log_format` (``"plain"`` or ``"json"``) — a stored preference
   only; does not itself configure logging (see ADR-0003).
 - ADR-0003, documenting the design decisions above.
-
-## [0.4.0] - 2026-07-12
-
-### Added
-
 - Three new providers: `AnthropicProvider` (native structured output via
   `messages.parse`, proper tool-use/tool-result multi-turn round-trip),
   `GroqProvider`, and `AzureOpenAIProvider` (current v1 GA API — no
@@ -52,22 +47,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   (core interfaces, dependency flow, extension points, plugin discovery,
   configuration model, public API principles, `requisite-core` vs.
   optional-integrations boundary) and ADR-0002 (this release's decisions).
-
-## [0.3.0] - 2026-07-11
-
-### Added
-
 - `CapabilityRegistry` and `Agent.requires(...)`: declare a named
   capability (e.g. `"weather"`, `"internet_search"`, `"filesystem"`)
   instead of binding to one specific tool implementation. Resolution
   picks the highest-priority currently-available provider; ships with
   three keyless default resolvers.
 - Project renamed to **Requisite** (PyPI: `requisite-ai`).
-
-## [0.2.0] - 2026-07-11
-
-### Added
-
 - Tool calling: `@tool` decorator, `Tool`, `ToolRegistry`, automatic
   JSON Schema derivation from function signatures. Wired into both the
   OpenAI and Gemini providers, including proper multi-turn tool-call /
@@ -82,20 +67,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   orchestrator backend, switchable via `.use_langgraph()` / `.use_native()`.
   `"crewai"` / `"autogen"` are registered as clear "not yet implemented"
   placeholders.
-
-## [0.1.0] - 2026-07-09
-
-### Added
-
 - Initial release: provider-agnostic `AI` facade, `BaseProvider`
   interface, `OpenAIProvider` (openai>=1.35 client-based SDK) and
   `GeminiProvider` (google-genai unified SDK), `ProviderRegistry`,
   `pydantic-settings`-based `Settings`, `Message`/`ChatResponse` models,
   and the `AIException` hierarchy.
 
-[Unreleased]: https://github.com/requisite-ai/requisite-ai/compare/v0.5.0...HEAD
-[0.5.0]: https://github.com/requisite-ai/requisite-ai/compare/v0.4.0...v0.5.0
-[0.4.0]: https://github.com/requisite-ai/requisite-ai/compare/v0.3.0...v0.4.0
-[0.3.0]: https://github.com/requisite-ai/requisite-ai/compare/v0.2.0...v0.3.0
-[0.2.0]: https://github.com/requisite-ai/requisite-ai/compare/v0.1.0...v0.2.0
+[Unreleased]: https://github.com/requisite-ai/requisite-ai/compare/v0.1.0...HEAD
 [0.1.0]: https://github.com/requisite-ai/requisite-ai/releases/tag/v0.1.0

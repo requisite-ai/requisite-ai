@@ -336,7 +336,7 @@ Status legend: ✅ Done · 🚧 Partial · 📋 Not started · N/A Deliberately 
 
 ---
 
-*Last updated alongside `CHANGELOG.md`'s 0.5.0 entry. When a roadmap item
+*Last updated alongside `CHANGELOG.md`'s 0.1.0 entry. When a roadmap item
 ships, update its row here **and** the corresponding row in
 `ROADMAP.md` — they're allowed to organize the same facts differently,
 but not to disagree about what's actually shipped.*

@@ -74,8 +74,8 @@ Structured (JSON) logging, opt-in:
 from requisite.agents.agent import Agent, AgentResult
 from requisite.agents.registry import AgentRegistry
 from requisite.ai import AI
-from requisite.capabilities.registry import CapabilityProvider, CapabilityRegistry
 from requisite.capabilities import default_registry as default_capability_registry
+from requisite.capabilities.registry import CapabilityProvider, CapabilityRegistry
 from requisite.config.settings import Settings
 from requisite.core.exceptions import (
     AgentException,
@@ -83,20 +83,20 @@ from requisite.core.exceptions import (
     CapabilityException,
     ConfigurationException,
     MCPException,
-    ProviderException,
     PromptException,
+    ProviderException,
     SkillException,
     ToolException,
 )
 from requisite.core.interfaces import ChatResponse, Message, Role, ToolCall
+from requisite.memory import default_registry as default_memory_registry
 from requisite.memory.base import BaseMemory
 from requisite.memory.factory import MemoryRegistry
-from requisite.memory import default_registry as default_memory_registry
 from requisite.memory.in_process import InProcessMemory
 from requisite.memory.policies import BaseConversationPolicy, MessageCountPolicy, SummarizingPolicy
 from requisite.orchestrators.base import WorkflowResult
-from requisite.prompts.registry import PromptTemplateRegistry
 from requisite.prompts import default_prompt_registry
+from requisite.prompts.registry import PromptTemplateRegistry
 from requisite.prompts.template import ChatPromptTemplate, PromptTemplate
 from requisite.providers.factory import ProviderRegistry, default_registry
 from requisite.skills.base import BaseSkill
@@ -161,4 +161,4 @@ __all__ = [
     "PromptException",
 ]
 
-__version__ = "0.5.0"
+__version__ = "0.1.0"
