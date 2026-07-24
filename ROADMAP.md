@@ -91,15 +91,19 @@ Each new strategy is a `_run_<strategy>` / `_arun_<strategy>` pair on
 
 ## MCP (Model Context Protocol)
 
-| Item | Status |
-|---|---|
-| `BaseMCPClient` interface + registry — **interface specified in [ADR-0001](docs/adr/0001-core-architecture-and-interfaces.md)** | 📋 |
-| MCP client integration (consume remote/local MCP tool servers as capabilities) | 📋 |
-| MCP server integration (expose Requisite tools/agents as an MCP server) | 📋 |
-| First-party MCP servers as capability providers (filesystem, GitHub, databases) | 📋 |
+| Item | Status | Notes |
+|---|---|---|
+| `BaseMCPClient` interface + registry | ✅ | `requisite/mcp/` — spec'd in [ADR-0001](docs/adr/0001-core-architecture-and-interfaces.md), implemented per [ADR-0004](docs/adr/0004-mcp-integration.md) |
+| MCP client: stdio transport | ✅ | `MCPClient.stdio(...)` |
+| MCP client: Streamable HTTP transport | ✅ | `MCPClient.http(...)` |
+| MCP client: persistent session mode (vs. today's per-call reconnect) | 📋 | Deferred until reconnect latency is a measured problem — ADR-0004 |
+| Bridge into `CapabilityRegistry` (`agent.requires("github")` -> MCP server) | ✅ | `BaseMCPClient.register_as_capability(...)` |
+| MCP resource / prompt discovery (beyond tools) | 📋 | Out of scope for the initial client — ADR-0004 |
+| MCP server integration (expose Requisite tools/agents as an MCP server) | 📋 | |
+| First-party MCP servers as default capability providers (GitHub, databases) | 📋 | `GITHUB_TOKEN` already reserved in `.env.example` |
 
-Planned shape: an MCP-backed tool becomes just another `CapabilityProvider`
-in `CapabilityRegistry` — `agent.requires("github")` shouldn't need to know
+Shipped shape: an MCP-backed tool is just another `CapabilityProvider`
+in `CapabilityRegistry` — `agent.requires("github")` doesn't need to know
 or care whether `"github"` is resolved by a native tool or an MCP server.
 
 ## Memory
@@ -116,13 +120,23 @@ or care whether `"github"` is resolved by a native tool or an MCP server.
 
 ## RAG
 
-| Item | Status |
-|---|---|
-| `BaseEmbeddingProvider` + `BaseVectorStore` interfaces | 📋 |
-| Chunking strategies | 📋 |
-| Retrievers (dense, hybrid) | 📋 |
-| Re-ranking | 📋 |
-| Context compression | 📋 |
+Design decided (see the roadmap-planning discussion in this repo's issue
+history / commit log); not yet implemented. Full architecture (interfaces,
+chunking strategy, retrieval algorithm details) will get its own ADR
+(ADR-0005) when implementation starts, per ADR-0001's note that RAG
+decomposes into several independent extension points rather than one.
+
+| Item | Status | Notes |
+|---|---|---|
+| `BaseEmbeddingProvider` interface + registry | 📋 | |
+| `BaseVectorStore` interface + registry | 📋 | |
+| In-memory vector store (default, zero dependencies) | 📋 | Same pattern as `InProcessMemory` — demonstrable with no external service |
+| Pinecone vector store | 📋 | `PINECONE_API_KEY` / `PINECONE_ENVIRONMENT` already reserved in `.env.example` |
+| Weaviate vector store | 📋 | `WEAVIATE_URL` / `WEAVIATE_API_KEY` already reserved in `.env.example` |
+| Chunking strategies | 📋 | |
+| Retrievers (dense, hybrid) | 📋 | Exposed to agents as a `CapabilityProvider` (`agent.requires("knowledge_base")`), reusing the existing capability-resolution mechanism rather than a new `Agent` constructor parameter |
+| Re-ranking | 📋 | |
+| Context compression | 📋 | |
 
 ## Prompt templates & conversation management
 

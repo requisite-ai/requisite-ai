@@ -6,6 +6,7 @@ pydantic-settings>=2.3
 openai>=1.35        # OpenAI provider, and Groq / Azure OpenAI (both OpenAI-wire-compatible)
 google-genai>=1.0   # Gemini provider (unified SDK; do NOT install google-generativeai)
 anthropic>=0.116    # Anthropic (Claude) provider
+mcp>=1.28            # MCP client integration
 
 # Orchestration backends (optional)
 langgraph>=0.2      # only needed if you use workflow.use_langgraph()

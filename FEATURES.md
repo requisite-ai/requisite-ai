@@ -40,7 +40,7 @@ Status legend: ✅ Done · 🚧 Partial · 📋 Not started · N/A Deliberately 
 | Agent registry | ✅ | `AgentRegistry` |
 | Multi-agent orchestration | 🚧 | `Workflow` ships sequential + parallel; see the Multi-Agent System table below for the rest |
 | Agentic execution | 🚧 | `Agent`'s own tool-calling loop is agentic (model decides which tool); full autonomous planning across agents/skills/MCP is 📋 — see Agentic Mode below |
-| MCP client integration | 📋 | Interface specified in ADR-0001 (`BaseMCPClient`), not yet implemented |
+| MCP client integration | ✅ | `MCPClient` (stdio + Streamable HTTP) — ADR-0004 |
 | MCP server integration | 📋 | |
 | Memory | ✅ | `BaseMemory`, `InProcessMemory`, wired into `Agent(memory=..., session_id=...)` |
 | Retrieval | 📋 | Part of RAG, not yet started |
@@ -159,23 +159,23 @@ Status legend: ✅ Done · 🚧 Partial · 📋 Not started · N/A Deliberately 
 | Model decides which tool to call | ✅ | `Agent`'s tool-calling loop |
 | Model decides which skill to use | ✅ | Skills are exposed as tools, so this falls out of the above |
 | Model decides which agent to delegate to (multi-agent) | 📋 | Requires a Supervisor/Planner strategy — see Multi-Agent System table |
-| Model decides whether MCP is needed | 📋 | Depends on MCP client integration |
+| Model decides whether MCP is needed | 🚧 | MCP tools are available via `agent.requires(...)` like any capability, but there's no dedicated "decide to use MCP" planning step beyond ordinary tool-calling |
 | Model decides whether retrieval is needed | 📋 | Depends on RAG |
 
 ## MCP (Model Context Protocol)
 
 | Requirement | Status | Notes |
 |---|---|---|
-| `BaseMCPClient` interface | 📋 | Specified in ADR-0001, not yet implemented |
-| MCP client integration | 📋 | |
-| MCP server integration | 📋 | |
-| Tool discovery | 📋 | Planned: `BaseMCPClient.discover_tools()` returns `Tool` objects |
-| Remote tools | 📋 | |
-| Local tools | 📋 | |
-| Filesystem MCP server | 📋 | A native (non-MCP) `"filesystem"` capability already ships — see Capabilities below |
-| GitHub MCP server | 📋 | `GITHUB_TOKEN` reserved in `.env.example` for this |
-| Databases MCP server | 📋 | |
-| Future MCP servers | 📋 | Design goal: any MCP tool surfaces as a `CapabilityProvider` — ADR-0001 |
+| `BaseMCPClient` interface | ✅ | ADR-0001 (spec) / ADR-0004 (implementation) |
+| MCP client integration | ✅ | `MCPClient` — both stdio and Streamable HTTP transports, verified against real MCP servers |
+| MCP server integration | 📋 | Reverse direction (exposing Requisite as an MCP server) — not started |
+| Tool discovery | ✅ | `BaseMCPClient.discover_tools()` / `.adiscover_tools()` |
+| Remote tools | ✅ | Streamable HTTP transport |
+| Local tools | ✅ | stdio transport |
+| Filesystem MCP server | 📋 | A native (non-MCP) `"filesystem"` capability already ships — see Capabilities below; an MCP-based one is a config away (`MCPClient.stdio(...)` pointed at any filesystem MCP server) but not shipped as a default |
+| GitHub MCP server | 📋 | `GITHUB_TOKEN` reserved in `.env.example`; works today via `MCPClient` + a GitHub MCP server, just not registered as a default capability yet |
+| Databases MCP server | 📋 | Same as above — usable today via `MCPClient`, not a shipped default |
+| Any MCP tool surfaces as a `CapabilityProvider` | ✅ | `BaseMCPClient.register_as_capability(...)` — verified `agent.requires(...)` can't tell native tool from MCP server |
 
 ## Memory
 
@@ -191,12 +191,17 @@ Status legend: ✅ Done · 🚧 Partial · 📋 Not started · N/A Deliberately 
 
 ## RAG
 
+Design decided (in-memory default + Pinecone/Weaviate as optional
+integrations; retriever exposed via `CapabilityProvider`); not yet
+implemented. Full architecture gets its own ADR (ADR-0005) when
+implementation starts.
+
 | Requirement | Status | Notes |
 |---|---|---|
 | Embedding providers | 📋 | |
-| Vector stores | 📋 | `PINECONE_API_KEY`, `WEAVIATE_URL`/`WEAVIATE_API_KEY` reserved in `.env.example` |
+| Vector stores | 📋 | In-memory default decided (zero deps, matches `InProcessMemory`); `PINECONE_API_KEY`, `WEAVIATE_URL`/`WEAVIATE_API_KEY` reserved in `.env.example` for the optional integrations |
 | Chunking | 📋 | |
-| Retrievers | 📋 | |
+| Retrievers | 📋 | Decided: exposed as a `CapabilityProvider` (`agent.requires("knowledge_base")`), not a new `Agent` constructor parameter |
 | Hybrid search | 📋 | |
 | Re-ranking | 📋 | |
 | Context compression | 📋 | |
@@ -238,7 +243,7 @@ Status legend: ✅ Done · 🚧 Partial · 📋 Not started · N/A Deliberately 
 | Skills | ✅ | Just construct and pass a `BaseSkill` — no registration ceremony needed |
 | Agents | ✅ | `AgentRegistry.register(agent)` |
 | Tools | ✅ | `ToolRegistry.register(...)` / `CapabilityRegistry.register(...)` |
-| MCP servers | 📋 | Depends on `BaseMCPClient` |
+| MCP servers | ✅ | `MCPClientRegistry.register(...)`, then `.register_as_capability(...)` into `CapabilityRegistry` |
 | Retrievers | 📋 | Depends on RAG |
 | Vector stores | 📋 | Depends on RAG |
 | Memory providers | ✅ | `MemoryRegistry.register(...)` |
@@ -268,10 +273,10 @@ Status legend: ✅ Done · 🚧 Partial · 📋 Not started · N/A Deliberately 
 
 | Requirement | Status | Notes |
 |---|---|---|
-| Unit tests | ✅ | 134 tests as of this writing |
+| Unit tests | ✅ | 151 tests as of this writing |
 | Integration tests | 🚧 | Real (installed, not faked) `langgraph` integration tests exist; real-network provider integration tests do not (deliberately — see `DEVELOPMENT.md`'s no-network-in-tests rule) |
 | Mock providers | ✅ | `sys.modules`-injected fakes for OpenAI/Gemini/Anthropic SDKs |
-| Mock MCP servers | 📋 | Depends on MCP client integration existing first |
+| Mock MCP servers | ✅ | `tests/test_mcp.py` fakes the `mcp` session object; a real stdio + Streamable HTTP server round-trip was verified manually during implementation (ADR-0004) but isn't part of CI |
 | Mock LLM responses | ✅ | Scripted fake providers throughout (`tests/test_agents.py`, `tests/test_workflows.py`, ...) |
 | High coverage | 🚧 | Coverage tracked via Codecov in CI; no enforced minimum threshold yet |
 
@@ -336,7 +341,7 @@ Status legend: ✅ Done · 🚧 Partial · 📋 Not started · N/A Deliberately 
 
 ---
 
-*Last updated alongside `CHANGELOG.md`'s 0.1.0 entry. When a roadmap item
+*Last updated alongside `CHANGELOG.md`'s 0.2.0 entry. When a roadmap item
 ships, update its row here **and** the corresponding row in
 `ROADMAP.md` — they're allowed to organize the same facts differently,
 but not to disagree about what's actually shipped.*

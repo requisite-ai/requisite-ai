@@ -18,6 +18,10 @@ from source. It complements `ROADMAP.md` (what's planned) and
 > automatic, and how conversation policies integrate with `Agent` are
 > covered in
 > [`docs/adr/0003-prompt-templates-structured-logging-conversation-policy.md`](docs/adr/0003-prompt-templates-structured-logging-conversation-policy.md).
+> MCP transport support, the per-call (not persistent-session) connection
+> model, and how MCP tools bridge into the capability system are covered
+> in
+> [`docs/adr/0004-mcp-integration.md`](docs/adr/0004-mcp-integration.md).
 > This document and those ADRs should never contradict each other; if
 > they drift, the ADR is amended (or superseded) and this file is
 > updated to match.
@@ -92,6 +96,8 @@ requisite/
 ├── tools/          # Tool, @tool, ToolRegistry, JSON Schema derivation
 ├── skills/         # BaseSkill, SkillRegistry (reusable, higher-level capabilities)
 ├── capabilities/   # CapabilityRegistry -- name -> best available Tool
+├── mcp/            # BaseMCPClient + MCPClient (stdio + Streamable HTTP)
+│                   # + MCPClientRegistry -- MCP tools bridge into capabilities
 ├── memory/         # BaseMemory + InProcessMemory + MemoryRegistry, plus
 │                   # BaseConversationPolicy (MessageCountPolicy, SummarizingPolicy)
 ├── prompts/        # PromptTemplate, ChatPromptTemplate, PromptTemplateRegistry
@@ -240,6 +246,7 @@ one node per agent, wired linearly, and compiles/invokes it. The
 | A new multi-agent strategy | a `_run_<name>` / `_arun_<name>` pair on an orchestrator | strategy string passed to `Workflow(strategy=...)` |
 | A new reusable capability (vs. a one-off tool) | `skills.base.BaseSkill` | pass to `Agent(skills=[...])` |
 | A new memory backend | `memory.base.BaseMemory` | `memory.factory.default_registry`, or pass directly to `Agent(memory=...)` |
+| A new MCP client/transport | `mcp.base.BaseMCPClient` | `mcp.registry.default_registry`, or bridge into `CapabilityRegistry` via `.register_as_capability()` |
 | A new conversation policy (trim/summarize differently) | `memory.policies.BaseConversationPolicy` | pass directly to `Agent(conversation_policy=...)` |
 | A named, reusable prompt template | `prompts.template.PromptTemplate` / `ChatPromptTemplate` | `prompts.default_prompt_registry`, or use standalone |
 | An OpenAI-wire-compatible provider (OpenRouter, Together AI, ...) | subclass `providers.openai_provider.OpenAIProvider` with a `base_url` override -- see [ADR-0002](docs/adr/0002-provider-kwargs-and-memory-integration.md) | `providers.factory.default_registry` |

@@ -39,6 +39,7 @@ pip install -e .[anthropic]   # Anthropic (Claude) only
 pip install -e .[gemini]      # Gemini only
 pip install -e .[groq]        # Groq only (uses the openai package -- wire-compatible)
 pip install -e .[azure_openai] # Azure OpenAI only (uses the openai package)
+pip install -e .[mcp]         # MCP client integration
 pip install -e .[langgraph]   # native + langgraph orchestration
 ```
 
@@ -248,6 +249,47 @@ orchestrators, one layer up: `CapabilityRegistry.resolve(name)` picks the
 highest-priority provider whose `is_available()` currently returns
 `True`, raising `CapabilityException` if none are.
 
+### MCP integration
+
+Connect to any MCP server (local via stdio, or remote via Streamable
+HTTP) and its tools become capabilities like any other:
+
+```python
+from requisite import Agent
+from requisite.mcp import MCPClient
+from requisite.capabilities import default_registry as capabilities
+
+# Local, subprocess-based MCP server
+filesystem = MCPClient.stdio(
+    name="filesystem",
+    command="npx",
+    args=["-y", "@modelcontextprotocol/server-filesystem", "/path/to/allow"],
+)
+filesystem.register_as_capability(capabilities, capability="read_file")
+
+# Remote MCP server
+github = MCPClient.http(name="github", url="https://api.example.com/mcp", headers={"Authorization": "Bearer ..."})
+github.register_as_capability(capabilities, capability="github")
+
+agent = Agent(name="Assistant", provider="openai")
+agent.requires("read_file", "github")  # agent can't tell these apart from native tools
+```
+
+You can also use an MCP server's tools directly, without going through
+capabilities:
+
+```python
+tools = filesystem.discover_tools()
+agent = Agent(name="Assistant", provider="openai", tools=tools)
+```
+
+Both transports were verified against real MCP servers during
+development; each tool call re-connects, calls, and disconnects rather
+than holding a persistent session — see
+[ADR-0004](docs/adr/0004-mcp-integration.md) for why, and the plan for an
+optional persistent-session mode if reconnect latency becomes a problem
+for your use case.
+
 ### Memory: conversation history across separate calls
 
 ```python
@@ -417,6 +459,8 @@ requisite/
 ├── skills/         # BaseSkill, SkillRegistry -- reusable higher-level capabilities
 ├── capabilities/   # CapabilityRegistry -- resolve a named capability (e.g.
 │                   # "weather") to whichever implementation is available
+├── mcp/            # BaseMCPClient + MCPClient (stdio + Streamable HTTP)
+│                   # + MCPClientRegistry -- bridges MCP tools into capabilities
 ├── memory/         # BaseMemory + InProcessMemory + MemoryRegistry, plus
 │                   # BaseConversationPolicy (MessageCountPolicy, SummarizingPolicy)
 ├── prompts/        # PromptTemplate, ChatPromptTemplate, PromptTemplateRegistry
@@ -458,7 +502,7 @@ AIException
 ├── AgentException           # agent execution failed (e.g. max_iterations exceeded)
 ├── CapabilityException      # a required capability has no available provider
 ├── PromptException          # a prompt template was rendered without a required variable
-└── MCPException              # reserved for the upcoming MCP integration
+└── MCPException              # an MCP server call/discovery failed, or a capability bridge found no matching tool
 ```
 
 Provider SDK errors are never swallowed — they're wrapped with `provider`
@@ -479,10 +523,11 @@ tested against fully in-memory fake providers.
 
 Implemented: 5 providers (OpenAI, Anthropic, Gemini, Groq, Azure OpenAI),
 structured outputs, tool calling, skills, capability resolution
-(`agent.requires(...)`), memory + conversation policies
-(`Agent(memory=..., conversation_policy=...)`), prompt templates,
-structured logging, agents + registry, multi-agent workflows
-(sequential/parallel, native + langgraph backends).
+(`agent.requires(...)`), MCP client integration (stdio + Streamable
+HTTP), memory + conversation policies (`Agent(memory=...,
+conversation_policy=...)`), prompt templates, structured logging, agents
++ registry, multi-agent workflows (sequential/parallel, native +
+langgraph backends).
 
 See [`ROADMAP.md`](ROADMAP.md) for the full, per-layer status table
 (providers, orchestration strategies, MCP, memory, RAG, ...) and what's

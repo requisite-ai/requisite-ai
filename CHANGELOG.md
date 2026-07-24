@@ -7,6 +7,34 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.2.0] - 2026-07-17
+
+### Added
+
+- MCP (Model Context Protocol) client integration: `BaseMCPClient`
+  interface (specified in ADR-0001) implemented as `MCPClient`, wrapping
+  the official `mcp` SDK (1.28+). Supports both `MCPClient.stdio(...)`
+  (local subprocess) and `MCPClient.http(...)` (remote, Streamable HTTP)
+  from day one, verified against real MCP servers on both transports.
+- `MCPClientRegistry` — keyed by server name, mirrors every other
+  registry's shape.
+- `BaseMCPClient.register_as_capability(...)` — bridges an MCP server's
+  tools into `CapabilityRegistry`, so `agent.requires("github")` can
+  resolve to an MCP server exactly like it resolves to a native tool.
+  Verified this holds with a real server: `Agent` cannot tell the
+  difference.
+- `mcp` added as an optional dependency (`pip install requisite-ai[mcp]`).
+- ADR-0004, documenting the transport decisions, the per-call (not
+  persistent-session) connection model and why, and result-handling
+  (`structuredContent` preferred over text, verified against a real
+  server's actual response shape).
+- Decided (not yet implemented) the RAG architecture direction: an
+  in-memory default vector store plus Pinecone/Weaviate as optional
+  integrations, with retrievers exposed to agents as a
+  `CapabilityProvider` rather than a new `Agent` constructor parameter --
+  tracked in `ROADMAP.md`, full design to land in ADR-0005 alongside
+  implementation.
+
 ## [0.1.0] - 2026-07-13
 
 ### Added
@@ -73,5 +101,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `pydantic-settings`-based `Settings`, `Message`/`ChatResponse` models,
   and the `AIException` hierarchy.
 
-[Unreleased]: https://github.com/requisite-ai/requisite-ai/compare/v0.1.0...HEAD
+[Unreleased]: https://github.com/requisite-ai/requisite-ai/compare/v0.2.0...HEAD
+[0.2.0]: https://github.com/requisite-ai/requisite-ai/compare/v0.1.0...v0.2.0
 [0.1.0]: https://github.com/requisite-ai/requisite-ai/releases/tag/v0.1.0

@@ -42,3 +42,4 @@ need one — `CONTRIBUTING.md` already covers those.
 | [0001](0001-core-architecture-and-interfaces.md) | Core architecture, interfaces, and extension model | Accepted |
 | [0002](0002-provider-kwargs-and-memory-integration.md) | Provider-specific configuration, OpenAI-compatible providers, and Memory integration | Accepted |
 | [0003](0003-prompt-templates-structured-logging-conversation-policy.md) | Prompt templates, structured logging, and conversation policies | Accepted |
+| [0004](0004-mcp-integration.md) | MCP client integration | Accepted |

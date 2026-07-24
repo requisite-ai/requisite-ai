@@ -47,6 +47,14 @@ Declaring capabilities instead of binding to specific tool implementations:
 >>> assistant.requires("weather", "internet_search", "filesystem")  # doctest: +SKIP
 >>> assistant.run("What's the weather in Tokyo?")  # doctest: +SKIP
 
+Connecting to an MCP server -- its tools become capabilities like any other:
+>>> from requisite.mcp import MCPClient, default_mcp_registry
+>>> from requisite.capabilities import default_registry as default_capability_registry
+>>> github = MCPClient.http(name="github", url="https://api.example.com/mcp")  # doctest: +SKIP
+>>> default_mcp_registry.register(github)  # doctest: +SKIP
+>>> github.register_as_capability(default_capability_registry, capability="github")  # doctest: +SKIP
+>>> assistant.requires("github")  # doctest: +SKIP
+
 Persisting conversation history across separate run() calls, kept bounded
 with a conversation policy:
 >>> from requisite.memory import InProcessMemory, MessageCountPolicy
@@ -89,6 +97,10 @@ from requisite.core.exceptions import (
     ToolException,
 )
 from requisite.core.interfaces import ChatResponse, Message, Role, ToolCall
+from requisite.mcp import default_mcp_registry
+from requisite.mcp.base import BaseMCPClient
+from requisite.mcp.client import MCPClient
+from requisite.mcp.registry import MCPClientRegistry
 from requisite.memory import default_registry as default_memory_registry
 from requisite.memory.base import BaseMemory
 from requisite.memory.factory import MemoryRegistry
@@ -130,6 +142,11 @@ __all__ = [
     "CapabilityRegistry",
     "CapabilityProvider",
     "default_capability_registry",
+    # MCP
+    "BaseMCPClient",
+    "MCPClient",
+    "MCPClientRegistry",
+    "default_mcp_registry",
     # Memory + conversation management
     "BaseMemory",
     "InProcessMemory",
@@ -161,4 +178,4 @@ __all__ = [
     "PromptException",
 ]
 
-__version__ = "0.1.0"
+__version__ = "0.2.0"
