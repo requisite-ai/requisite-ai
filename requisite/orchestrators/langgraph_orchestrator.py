@@ -24,7 +24,7 @@ from __future__ import annotations
 
 import logging
 from collections.abc import Sequence
-from typing import TYPE_CHECKING, Any, Optional, TypedDict
+from typing import TYPE_CHECKING, Any, TypedDict
 
 from requisite.core.exceptions import ConfigurationException
 from requisite.orchestrators.base import BaseOrchestrator, WorkflowResult
@@ -62,12 +62,12 @@ class LangGraphOrchestrator(BaseOrchestrator):
             ) from exc
         return StateGraph, END
 
-    def _build_graph(self, steps: Sequence["Agent"], **kwargs: Any) -> Any:
-        StateGraph, END = self._require_langgraph()  # noqa: N806
+    def _build_graph(self, steps: Sequence[Agent], **kwargs: Any) -> Any:
+        StateGraph, END = self._require_langgraph()
 
         graph = StateGraph(_GraphState)
 
-        def _make_node(agent: "Agent") -> Any:
+        def _make_node(agent: Agent) -> Any:
             def _node(state: _GraphState) -> _GraphState:
                 result = agent.run(state["input"], **kwargs)
                 return {
@@ -78,7 +78,7 @@ class LangGraphOrchestrator(BaseOrchestrator):
 
             return _node
 
-        previous_name: Optional[str] = None
+        previous_name: str | None = None
         for index, agent in enumerate(steps):
             node_name = f"{agent.name}_{index}"
             graph.add_node(node_name, _make_node(agent))
@@ -95,8 +95,8 @@ class LangGraphOrchestrator(BaseOrchestrator):
 
     def run(
         self,
-        steps: Sequence["Agent"],
-        input: Optional[str],  # noqa: A002
+        steps: Sequence[Agent],
+        input: str | None,
         *,
         strategy: str = "sequential",
         **kwargs: Any,
@@ -122,8 +122,8 @@ class LangGraphOrchestrator(BaseOrchestrator):
 
     async def arun(
         self,
-        steps: Sequence["Agent"],
-        input: Optional[str],  # noqa: A002
+        steps: Sequence[Agent],
+        input: str | None,
         *,
         strategy: str = "sequential",
         **kwargs: Any,

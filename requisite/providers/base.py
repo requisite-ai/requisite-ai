@@ -16,7 +16,7 @@ from __future__ import annotations
 import logging
 from abc import ABC, abstractmethod
 from collections.abc import AsyncIterator, Iterator, Sequence
-from typing import TYPE_CHECKING, Any, Optional
+from typing import TYPE_CHECKING, Any
 
 from pydantic import BaseModel
 
@@ -59,7 +59,7 @@ class BaseProvider(ABC):
     def __init__(
         self,
         *,
-        api_key: Optional[str] = None,
+        api_key: str | None = None,
         model: str,
         timeout: float = 60.0,
         max_retries: int = 2,
@@ -86,10 +86,10 @@ class BaseProvider(ABC):
         self,
         messages: Sequence[Message],
         *,
-        model: Optional[str] = None,
-        temperature: Optional[float] = None,
-        tools: Optional[Sequence["Tool"]] = None,
-        response_model: Optional[type[BaseModel]] = None,
+        model: str | None = None,
+        temperature: float | None = None,
+        tools: Sequence[Tool] | None = None,
+        response_model: type[BaseModel] | None = None,
         **kwargs: Any,
     ) -> ChatResponse:
         """Synchronously generate a chat completion.
@@ -130,10 +130,10 @@ class BaseProvider(ABC):
         self,
         messages: Sequence[Message],
         *,
-        model: Optional[str] = None,
-        temperature: Optional[float] = None,
-        tools: Optional[Sequence["Tool"]] = None,
-        response_model: Optional[type[BaseModel]] = None,
+        model: str | None = None,
+        temperature: float | None = None,
+        tools: Sequence[Tool] | None = None,
+        response_model: type[BaseModel] | None = None,
         **kwargs: Any,
     ) -> ChatResponse:
         """Asynchronous counterpart to :meth:`chat`. Same parameters and behavior."""
@@ -143,8 +143,8 @@ class BaseProvider(ABC):
         self,
         messages: Sequence[Message],
         *,
-        model: Optional[str] = None,
-        temperature: Optional[float] = None,
+        model: str | None = None,
+        temperature: float | None = None,
         **kwargs: Any,
     ) -> Iterator[StreamChunk]:
         """Synchronously stream a chat completion, chunk by chunk.
@@ -160,8 +160,8 @@ class BaseProvider(ABC):
         self,
         messages: Sequence[Message],
         *,
-        model: Optional[str] = None,
-        temperature: Optional[float] = None,
+        model: str | None = None,
+        temperature: float | None = None,
         **kwargs: Any,
     ) -> AsyncIterator[StreamChunk]:
         """Asynchronous counterpart to :meth:`stream`. Same parameters and behavior."""

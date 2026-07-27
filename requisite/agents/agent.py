@@ -22,13 +22,13 @@ from __future__ import annotations
 
 import logging
 from collections.abc import Callable, Sequence
-from typing import Any, Optional, Union
+from typing import Any
 
 from pydantic import BaseModel, ConfigDict
 
 from requisite.ai import AI
-from requisite.capabilities.registry import CapabilityRegistry
 from requisite.capabilities import default_registry as default_capability_registry
+from requisite.capabilities.registry import CapabilityRegistry
 from requisite.config.settings import Settings
 from requisite.core.exceptions import AgentException, ConfigurationException
 from requisite.core.interfaces import ChatResponse, Message
@@ -42,7 +42,7 @@ from requisite.tools.registry import ToolRegistry
 
 logger = logging.getLogger("requisite.agents")
 
-ToolLike = Union[Tool, Callable[..., Any]]
+ToolLike = Tool | Callable[..., Any]
 
 
 class AgentResult(BaseModel):
@@ -69,7 +69,7 @@ class AgentResult(BaseModel):
     agent_name: str
     iterations: int
     tool_calls_executed: list[str] = []
-    raw_response: Optional[ChatResponse] = None
+    raw_response: ChatResponse | None = None
 
     def __str__(self) -> str:  # pragma: no cover - trivial
         return self.content
@@ -176,18 +176,18 @@ class Agent:
         self,
         name: str,
         *,
-        provider: Optional[Union[str, BaseProvider]] = None,
-        model: Optional[str] = None,
-        tools: Optional[Sequence[ToolLike]] = None,
-        skills: Optional[Sequence[BaseSkill]] = None,
-        requires: Optional[Sequence[str]] = None,
-        capability_registry: Optional[CapabilityRegistry] = None,
-        system_prompt: Optional[str] = None,
-        memory: Optional[BaseMemory] = None,
-        session_id: Optional[str] = None,
-        conversation_policy: Optional[BaseConversationPolicy] = None,
-        settings: Optional[Settings] = None,
-        registry: Optional[ProviderRegistry] = None,
+        provider: str | BaseProvider | None = None,
+        model: str | None = None,
+        tools: Sequence[ToolLike] | None = None,
+        skills: Sequence[BaseSkill] | None = None,
+        requires: Sequence[str] | None = None,
+        capability_registry: CapabilityRegistry | None = None,
+        system_prompt: str | None = None,
+        memory: BaseMemory | None = None,
+        session_id: str | None = None,
+        conversation_policy: BaseConversationPolicy | None = None,
+        settings: Settings | None = None,
+        registry: ProviderRegistry | None = None,
         max_iterations: int = 5,
     ) -> None:
         self.name = name
@@ -231,16 +231,16 @@ class Agent:
         return self._tool_registry
 
     @property
-    def memory(self) -> Optional[BaseMemory]:
+    def memory(self) -> BaseMemory | None:
         """The memory backend this agent persists conversation history to, if any."""
         return self._memory
 
     @property
-    def conversation_policy(self) -> Optional[BaseConversationPolicy]:
+    def conversation_policy(self) -> BaseConversationPolicy | None:
         """The retention policy applied to message history before each run, if any."""
         return self._conversation_policy
 
-    def requires(self, *capabilities: str) -> "Agent":
+    def requires(self, *capabilities: str) -> Agent:
         """Declare capabilities this agent needs, resolved to whichever
         implementation is currently available.
 
@@ -285,7 +285,7 @@ class Agent:
             self._tool_registry.register(resolved_tool)
         return self
 
-    def _require_str_prompt_for_memory(self, prompt: Union[str, Sequence[Message]]) -> str:
+    def _require_str_prompt_for_memory(self, prompt: str | Sequence[Message]) -> str:
         if not isinstance(prompt, str):
             raise ConfigurationException(
                 f"Agent '{self.name}' has memory configured, so run()/arun() must be "
@@ -294,7 +294,7 @@ class Agent:
             )
         return prompt
 
-    def run(self, prompt: Union[str, Sequence[Message]], **kwargs: Any) -> AgentResult:
+    def run(self, prompt: str | Sequence[Message], **kwargs: Any) -> AgentResult:
         """Run the agent on a task, looping through tool calls until a final answer.
 
         Parameters
@@ -362,7 +362,7 @@ class Agent:
             f"without reaching a final answer.",
         )
 
-    async def arun(self, prompt: Union[str, Sequence[Message]], **kwargs: Any) -> AgentResult:
+    async def arun(self, prompt: str | Sequence[Message], **kwargs: Any) -> AgentResult:
         """Async counterpart to :meth:`run`."""
         if self._memory is not None:
             user_text = self._require_str_prompt_for_memory(prompt)

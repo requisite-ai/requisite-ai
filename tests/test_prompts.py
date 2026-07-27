@@ -46,7 +46,7 @@ def test_partial_can_be_chained() -> None:
 
 def test_prompt_template_is_frozen() -> None:
     template = PromptTemplate.from_template("hi {name}")
-    with pytest.raises(Exception):  # noqa: B017 - pydantic frozen model raises its own error type
+    with pytest.raises(Exception):
         template.template = "changed"  # type: ignore[misc]
 
 

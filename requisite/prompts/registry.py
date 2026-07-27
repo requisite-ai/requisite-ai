@@ -3,14 +3,13 @@
 from __future__ import annotations
 
 import logging
-from typing import Union
 
 from requisite.core.exceptions import PromptException
 from requisite.prompts.template import ChatPromptTemplate, PromptTemplate
 
 logger = logging.getLogger("requisite.prompts.registry")
 
-AnyPromptTemplate = Union[PromptTemplate, ChatPromptTemplate]
+AnyPromptTemplate = PromptTemplate | ChatPromptTemplate
 
 
 class PromptTemplateRegistry:

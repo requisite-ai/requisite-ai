@@ -10,7 +10,7 @@ deal with provider-specific formats.
 from __future__ import annotations
 
 from enum import Enum
-from typing import Any, Optional
+from typing import Any
 
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -75,34 +75,32 @@ class Message(BaseModel):
 
     role: Role
     content: str
-    name: Optional[str] = None
-    tool_call_id: Optional[str] = None
+    name: str | None = None
+    tool_call_id: str | None = None
     tool_calls: list[ToolCall] = Field(default_factory=list)
 
     @classmethod
-    def user(cls, content: str) -> "Message":
+    def user(cls, content: str) -> Message:
         """Convenience constructor for a user message."""
         return cls(role=Role.USER, content=content)
 
     @classmethod
-    def system(cls, content: str) -> "Message":
+    def system(cls, content: str) -> Message:
         """Convenience constructor for a system message."""
         return cls(role=Role.SYSTEM, content=content)
 
     @classmethod
-    def assistant(cls, content: str) -> "Message":
+    def assistant(cls, content: str) -> Message:
         """Convenience constructor for an assistant message."""
         return cls(role=Role.ASSISTANT, content=content)
 
     @classmethod
-    def assistant_tool_calls(cls, tool_calls: list[ToolCall], *, content: str = "") -> "Message":
+    def assistant_tool_calls(cls, tool_calls: list[ToolCall], *, content: str = "") -> Message:
         """Convenience constructor for an assistant message requesting tool calls."""
         return cls(role=Role.ASSISTANT, content=content, tool_calls=tool_calls)
 
     @classmethod
-    def tool_result(
-        cls, content: str, *, tool_call_id: str, name: Optional[str] = None
-    ) -> "Message":
+    def tool_result(cls, content: str, *, tool_call_id: str, name: str | None = None) -> Message:
         """Convenience constructor for a message reporting a tool's result back to the model."""
         return cls(role=Role.TOOL, content=content, name=name, tool_call_id=tool_call_id)
 
@@ -157,9 +155,9 @@ class ChatResponse(BaseModel):
     provider: str
     usage: Usage = Field(default_factory=Usage)
     raw: Any = None
-    finish_reason: Optional[str] = None
+    finish_reason: str | None = None
     tool_calls: list[ToolCall] = Field(default_factory=list)
-    parsed: Optional[Any] = None
+    parsed: Any | None = None
 
     @property
     def has_tool_calls(self) -> bool:

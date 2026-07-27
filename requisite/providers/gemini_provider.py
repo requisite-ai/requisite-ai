@@ -14,7 +14,7 @@ from __future__ import annotations
 
 import logging
 from collections.abc import AsyncIterator, Iterator, Sequence
-from typing import Any, Optional
+from typing import Any
 
 from pydantic import BaseModel
 
@@ -57,7 +57,7 @@ class GeminiProvider(BaseProvider):
     def __init__(
         self,
         *,
-        api_key: Optional[str] = None,
+        api_key: str | None = None,
         model: str = "gemini-2.5-flash",
         timeout: float = 60.0,
         max_retries: int = 2,
@@ -95,7 +95,7 @@ class GeminiProvider(BaseProvider):
 
     def _build_contents_and_system(
         self, messages: Sequence[Message]
-    ) -> tuple[list[Any], Optional[str]]:
+    ) -> tuple[list[Any], str | None]:
         """Split framework messages into Gemini ``contents`` + system instruction.
 
         Gemini has no ``system`` role in its content list; system prompts
@@ -149,10 +149,10 @@ class GeminiProvider(BaseProvider):
     def _build_config(
         self,
         *,
-        temperature: Optional[float],
-        system_instruction: Optional[str],
-        tools: Optional[Sequence[Tool]],
-        response_model: Optional[type[BaseModel]],
+        temperature: float | None,
+        system_instruction: str | None,
+        tools: Sequence[Tool] | None,
+        response_model: type[BaseModel] | None,
         kwargs: dict[str, Any],
     ) -> Any:
         from google.genai import types
@@ -188,10 +188,10 @@ class GeminiProvider(BaseProvider):
         self,
         messages: Sequence[Message],
         *,
-        model: Optional[str] = None,
-        temperature: Optional[float] = None,
-        tools: Optional[Sequence[Tool]] = None,
-        response_model: Optional[type[BaseModel]] = None,
+        model: str | None = None,
+        temperature: float | None = None,
+        tools: Sequence[Tool] | None = None,
+        response_model: type[BaseModel] | None = None,
         **kwargs: Any,
     ) -> ChatResponse:
         client = self._get_client()
@@ -210,7 +210,7 @@ class GeminiProvider(BaseProvider):
                 contents=contents,
                 config=config,
             )
-        except Exception as exc:  # noqa: BLE001
+        except Exception as exc:
             raise ProviderException(
                 f"Gemini generate_content failed: {exc}",
                 provider=self.name,
@@ -223,10 +223,10 @@ class GeminiProvider(BaseProvider):
         self,
         messages: Sequence[Message],
         *,
-        model: Optional[str] = None,
-        temperature: Optional[float] = None,
-        tools: Optional[Sequence[Tool]] = None,
-        response_model: Optional[type[BaseModel]] = None,
+        model: str | None = None,
+        temperature: float | None = None,
+        tools: Sequence[Tool] | None = None,
+        response_model: type[BaseModel] | None = None,
         **kwargs: Any,
     ) -> ChatResponse:
         client = self._get_client()
@@ -245,7 +245,7 @@ class GeminiProvider(BaseProvider):
                 contents=contents,
                 config=config,
             )
-        except Exception as exc:  # noqa: BLE001
+        except Exception as exc:
             raise ProviderException(
                 f"Gemini async generate_content failed: {exc}",
                 provider=self.name,
@@ -258,10 +258,10 @@ class GeminiProvider(BaseProvider):
         self,
         messages: Sequence[Message],
         *,
-        model: Optional[str] = None,
-        temperature: Optional[float] = None,
-        tools: Optional[Sequence[Tool]] = None,
-        response_model: Optional[type[BaseModel]] = None,
+        model: str | None = None,
+        temperature: float | None = None,
+        tools: Sequence[Tool] | None = None,
+        response_model: type[BaseModel] | None = None,
         **kwargs: Any,
     ) -> Iterator[StreamChunk]:
         client = self._get_client()
@@ -283,7 +283,7 @@ class GeminiProvider(BaseProvider):
                 text = chunk.text or ""
                 yield StreamChunk(delta=text, is_final=False, raw=chunk)
             yield StreamChunk(delta="", is_final=True)
-        except Exception as exc:  # noqa: BLE001
+        except Exception as exc:
             raise ProviderException(
                 f"Gemini streaming failed: {exc}",
                 provider=self.name,
@@ -294,10 +294,10 @@ class GeminiProvider(BaseProvider):
         self,
         messages: Sequence[Message],
         *,
-        model: Optional[str] = None,
-        temperature: Optional[float] = None,
-        tools: Optional[Sequence[Tool]] = None,
-        response_model: Optional[type[BaseModel]] = None,
+        model: str | None = None,
+        temperature: float | None = None,
+        tools: Sequence[Tool] | None = None,
+        response_model: type[BaseModel] | None = None,
         **kwargs: Any,
     ) -> AsyncIterator[StreamChunk]:
         client = self._get_client()
@@ -319,7 +319,7 @@ class GeminiProvider(BaseProvider):
                 text = chunk.text or ""
                 yield StreamChunk(delta=text, is_final=False, raw=chunk)
             yield StreamChunk(delta="", is_final=True)
-        except Exception as exc:  # noqa: BLE001
+        except Exception as exc:
             raise ProviderException(
                 f"Gemini async streaming failed: {exc}",
                 provider=self.name,
@@ -327,7 +327,7 @@ class GeminiProvider(BaseProvider):
             ) from exc
 
     def _to_chat_response(
-        self, response: Any, model: str, *, response_model: Optional[type[BaseModel]] = None
+        self, response: Any, model: str, *, response_model: type[BaseModel] | None = None
     ) -> ChatResponse:
         """Convert a ``google-genai`` response object into a :class:`ChatResponse`."""
         usage_meta = getattr(response, "usage_metadata", None)
@@ -359,7 +359,7 @@ class GeminiProvider(BaseProvider):
         text = ""
         try:
             text = response.text or ""
-        except Exception:  # noqa: BLE001 - .text raises if the response is a pure function call
+        except Exception:
             text = ""
 
         return ChatResponse(

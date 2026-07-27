@@ -20,7 +20,7 @@ flat set of named substitutions.
 from __future__ import annotations
 
 import string
-from typing import Any, Union
+from typing import Any
 
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -84,7 +84,7 @@ class PromptTemplate(BaseModel):
     input_variables: list[str] = Field(default_factory=list)
 
     @classmethod
-    def from_template(cls, template: str) -> "PromptTemplate":
+    def from_template(cls, template: str) -> PromptTemplate:
         """Build a :class:`PromptTemplate`, auto-deriving ``input_variables``
         from the ``{named}`` placeholders found in ``template``.
         """
@@ -106,7 +106,7 @@ class PromptTemplate(BaseModel):
             )
         return self.template.format(**kwargs)
 
-    def partial(self, **kwargs: Any) -> "PromptTemplate":
+    def partial(self, **kwargs: Any) -> PromptTemplate:
         """Return a new :class:`PromptTemplate` with some variables pre-filled.
 
         The given variables are substituted into the template text now;
@@ -155,7 +155,7 @@ class ChatPromptTemplate(BaseModel):
     messages: list[tuple[Role, PromptTemplate]]
 
     @classmethod
-    def from_messages(cls, messages: list[tuple[Union[str, Role], str]]) -> "ChatPromptTemplate":
+    def from_messages(cls, messages: list[tuple[str | Role, str]]) -> ChatPromptTemplate:
         """Build a :class:`ChatPromptTemplate` from ``(role, template_text)`` pairs.
 
         Parameters
@@ -194,7 +194,7 @@ class ChatPromptTemplate(BaseModel):
             for role, template in self.messages
         ]
 
-    def partial(self, **kwargs: Any) -> "ChatPromptTemplate":
+    def partial(self, **kwargs: Any) -> ChatPromptTemplate:
         """Return a new :class:`ChatPromptTemplate` with some variables pre-filled
         across every message template. See :meth:`PromptTemplate.partial`.
         """

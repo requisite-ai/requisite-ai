@@ -30,7 +30,6 @@ from __future__ import annotations
 import logging
 from collections.abc import Callable
 from dataclasses import dataclass, field
-from typing import Optional
 
 from requisite.core.exceptions import CapabilityException
 from requisite.tools.base import Tool
@@ -113,9 +112,9 @@ class CapabilityRegistry:
         capability: str,
         tool_or_func: ToolLike,
         *,
-        provider_name: Optional[str] = None,
+        provider_name: str | None = None,
         priority: int = 0,
-        is_available: Optional[AvailabilityCheck] = None,
+        is_available: AvailabilityCheck | None = None,
     ) -> CapabilityProvider:
         """Register an implementation for a named capability.
 

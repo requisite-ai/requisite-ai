@@ -9,7 +9,7 @@ testing standard.
 from __future__ import annotations
 
 from collections.abc import AsyncIterator, Iterator, Sequence
-from typing import Any, Optional
+from typing import Any
 
 import pytest
 
@@ -27,8 +27,8 @@ class FakeProvider(BaseProvider):
     def __init__(self, **kwargs: Any) -> None:
         super().__init__(api_key="fake-key", model=kwargs.get("model", "fake-model"))
         self.last_messages: list[Message] = []
-        self.last_temperature: Optional[float] = None
-        self.last_tools: Optional[list[Any]] = None
+        self.last_temperature: float | None = None
+        self.last_tools: list[Any] | None = None
 
     @property
     def name(self) -> str:

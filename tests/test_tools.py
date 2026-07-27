@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-from typing import Optional
 
 import pytest
 
@@ -13,7 +12,7 @@ from requisite.tools.registry import ToolRegistry
 from requisite.tools.schema import function_to_parameters_schema
 
 
-def sample_search(city: str, days: int = 1, verbose: Optional[bool] = None) -> str:
+def sample_search(city: str, days: int = 1, verbose: bool | None = None) -> str:
     """Search the weather for a city."""
     return f"{city}:{days}:{verbose}"
 

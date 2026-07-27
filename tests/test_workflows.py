@@ -16,6 +16,8 @@ from requisite.core.exceptions import ConfigurationException
 from requisite.core.interfaces import ChatResponse, Message, StreamChunk
 from requisite.orchestrators.factory import (
     OrchestratorRegistry,
+)
+from requisite.orchestrators.factory import (
     default_registry as default_orchestrator_registry,
 )
 from requisite.providers.base import BaseProvider

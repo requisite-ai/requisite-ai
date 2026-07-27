@@ -13,7 +13,7 @@ from __future__ import annotations
 import json
 import logging
 from collections.abc import AsyncIterator, Iterator, Sequence
-from typing import Any, Optional
+from typing import Any
 
 from pydantic import BaseModel
 
@@ -95,11 +95,11 @@ class OpenAIProvider(BaseProvider):
     def __init__(
         self,
         *,
-        api_key: Optional[str] = None,
+        api_key: str | None = None,
         model: str = "gpt-4o-mini",
         timeout: float = 60.0,
         max_retries: int = 2,
-        base_url: Optional[str] = None,
+        base_url: str | None = None,
         **kwargs: Any,
     ) -> None:
         super().__init__(
@@ -147,10 +147,10 @@ class OpenAIProvider(BaseProvider):
         self,
         messages: Sequence[Message],
         *,
-        model: Optional[str] = None,
-        temperature: Optional[float] = None,
-        tools: Optional[Sequence[Tool]] = None,
-        response_model: Optional[type[BaseModel]] = None,
+        model: str | None = None,
+        temperature: float | None = None,
+        tools: Sequence[Tool] | None = None,
+        response_model: type[BaseModel] | None = None,
         **kwargs: Any,
     ) -> ChatResponse:
         client = self._get_client()
@@ -173,7 +173,7 @@ class OpenAIProvider(BaseProvider):
                     temperature=temperature,
                     **kwargs,
                 )
-        except Exception as exc:  # noqa: BLE001 - re-raised with context below
+        except Exception as exc:
             raise ProviderException(
                 f"OpenAI chat completion failed: {exc}",
                 provider=self.name,
@@ -186,10 +186,10 @@ class OpenAIProvider(BaseProvider):
         self,
         messages: Sequence[Message],
         *,
-        model: Optional[str] = None,
-        temperature: Optional[float] = None,
-        tools: Optional[Sequence[Tool]] = None,
-        response_model: Optional[type[BaseModel]] = None,
+        model: str | None = None,
+        temperature: float | None = None,
+        tools: Sequence[Tool] | None = None,
+        response_model: type[BaseModel] | None = None,
         **kwargs: Any,
     ) -> ChatResponse:
         client = self._get_async_client()
@@ -212,7 +212,7 @@ class OpenAIProvider(BaseProvider):
                     temperature=temperature,
                     **kwargs,
                 )
-        except Exception as exc:  # noqa: BLE001
+        except Exception as exc:
             raise ProviderException(
                 f"OpenAI async chat completion failed: {exc}",
                 provider=self.name,
@@ -225,8 +225,8 @@ class OpenAIProvider(BaseProvider):
         self,
         messages: Sequence[Message],
         *,
-        model: Optional[str] = None,
-        temperature: Optional[float] = None,
+        model: str | None = None,
+        temperature: float | None = None,
         **kwargs: Any,
     ) -> Iterator[StreamChunk]:
         client = self._get_client()
@@ -244,7 +244,7 @@ class OpenAIProvider(BaseProvider):
                     delta = event.choices[0].delta.content or ""
                 is_final = bool(event.choices) and event.choices[0].finish_reason is not None
                 yield StreamChunk(delta=delta, is_final=is_final, raw=event)
-        except Exception as exc:  # noqa: BLE001
+        except Exception as exc:
             raise ProviderException(
                 f"OpenAI streaming failed: {exc}",
                 provider=self.name,
@@ -255,8 +255,8 @@ class OpenAIProvider(BaseProvider):
         self,
         messages: Sequence[Message],
         *,
-        model: Optional[str] = None,
-        temperature: Optional[float] = None,
+        model: str | None = None,
+        temperature: float | None = None,
         **kwargs: Any,
     ) -> AsyncIterator[StreamChunk]:
         client = self._get_async_client()
@@ -274,7 +274,7 @@ class OpenAIProvider(BaseProvider):
                     delta = event.choices[0].delta.content or ""
                 is_final = bool(event.choices) and event.choices[0].finish_reason is not None
                 yield StreamChunk(delta=delta, is_final=is_final, raw=event)
-        except Exception as exc:  # noqa: BLE001
+        except Exception as exc:
             raise ProviderException(
                 f"OpenAI async streaming failed: {exc}",
                 provider=self.name,

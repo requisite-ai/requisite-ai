@@ -19,7 +19,6 @@ from requisite.core.interfaces import Message, ToolCall
 from requisite.providers.base import BaseProvider
 from requisite.providers.factory import ProviderRegistry, default_registry
 
-
 # ---------------------------------------------------------------------------
 # Registry tests
 # ---------------------------------------------------------------------------
@@ -205,7 +204,7 @@ class _FakePart:
         self.text = text
 
     @classmethod
-    def from_text(cls, text: str) -> "_FakePart":
+    def from_text(cls, text: str) -> _FakePart:
         return cls(text)
 
 

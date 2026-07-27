@@ -13,7 +13,7 @@ from __future__ import annotations
 
 import uuid
 from collections.abc import Sequence
-from typing import Any, Optional
+from typing import Any
 
 from requisite.core.exceptions import ConfigurationException
 from requisite.rag.base import (
@@ -73,7 +73,7 @@ class Retriever(BaseRetriever):
         self,
         texts: Sequence[str],
         *,
-        metadatas: Optional[Sequence[dict[str, Any]]] = None,
+        metadatas: Sequence[dict[str, Any]] | None = None,
         chunk_size: int = 1000,
         chunk_overlap: int = 200,
     ) -> list[str]:
@@ -119,7 +119,7 @@ class Retriever(BaseRetriever):
         self,
         texts: Sequence[str],
         *,
-        metadatas: Optional[Sequence[dict[str, Any]]] = None,
+        metadatas: Sequence[dict[str, Any]] | None = None,
         chunk_size: int = 1000,
         chunk_overlap: int = 200,
     ) -> list[str]:
@@ -149,11 +149,11 @@ class Retriever(BaseRetriever):
         await self.vector_store.aadd(chunks)
         return chunk_ids
 
-    def retrieve(self, query: str, *, top_k: Optional[int] = None) -> list[ScoredChunk]:
+    def retrieve(self, query: str, *, top_k: int | None = None) -> list[ScoredChunk]:
         query_embedding = self.embedding_provider.embed_one(query)
         return self.vector_store.search(query_embedding, top_k=top_k or self.top_k)
 
-    async def aretrieve(self, query: str, *, top_k: Optional[int] = None) -> list[ScoredChunk]:
+    async def aretrieve(self, query: str, *, top_k: int | None = None) -> list[ScoredChunk]:
         query_embedding = await self.embedding_provider.aembed_one(query)
         return await self.vector_store.asearch(query_embedding, top_k=top_k or self.top_k)
 
@@ -162,7 +162,7 @@ class Retriever(BaseRetriever):
         *,
         name: str = "knowledge_base",
         description: str = "Search the knowledge base for information relevant to a query.",
-        top_k: Optional[int] = None,
+        top_k: int | None = None,
     ) -> Tool:
         """Expose this retriever as a :class:`~requisite.tools.base.Tool`.
 

@@ -23,7 +23,7 @@ from __future__ import annotations
 
 import logging
 from collections.abc import AsyncIterator, Iterator, Sequence
-from typing import Any, Optional
+from typing import Any
 
 from pydantic import BaseModel
 
@@ -66,7 +66,7 @@ class AnthropicProvider(BaseProvider):
     def __init__(
         self,
         *,
-        api_key: Optional[str] = None,
+        api_key: str | None = None,
         model: str = "claude-sonnet-4-6",
         timeout: float = 60.0,
         max_retries: int = 2,
@@ -111,7 +111,7 @@ class AnthropicProvider(BaseProvider):
 
     def _to_anthropic_messages(
         self, messages: Sequence[Message]
-    ) -> tuple[list[dict[str, Any]], Optional[str]]:
+    ) -> tuple[list[dict[str, Any]], str | None]:
         """Convert framework messages to Anthropic's wire format.
 
         Returns ``(messages, system)`` -- system messages are extracted
@@ -122,7 +122,7 @@ class AnthropicProvider(BaseProvider):
         """
         system_parts: list[str] = []
         anthropic_messages: list[dict[str, Any]] = []
-        pending_tool_results: Optional[list[dict[str, Any]]] = None
+        pending_tool_results: list[dict[str, Any]] | None = None
 
         def _flush_tool_results() -> None:
             nonlocal pending_tool_results
@@ -177,10 +177,10 @@ class AnthropicProvider(BaseProvider):
         self,
         messages: Sequence[Message],
         *,
-        model: Optional[str] = None,
-        temperature: Optional[float] = None,
-        tools: Optional[Sequence[Tool]] = None,
-        response_model: Optional[type[BaseModel]] = None,
+        model: str | None = None,
+        temperature: float | None = None,
+        tools: Sequence[Tool] | None = None,
+        response_model: type[BaseModel] | None = None,
         **kwargs: Any,
     ) -> ChatResponse:
         client = self._get_client()
@@ -210,7 +210,7 @@ class AnthropicProvider(BaseProvider):
                     temperature=temperature,
                     **kwargs,
                 )
-        except Exception as exc:  # noqa: BLE001
+        except Exception as exc:
             raise ProviderException(
                 f"Anthropic messages.create failed: {exc}",
                 provider=self.name,
@@ -223,10 +223,10 @@ class AnthropicProvider(BaseProvider):
         self,
         messages: Sequence[Message],
         *,
-        model: Optional[str] = None,
-        temperature: Optional[float] = None,
-        tools: Optional[Sequence[Tool]] = None,
-        response_model: Optional[type[BaseModel]] = None,
+        model: str | None = None,
+        temperature: float | None = None,
+        tools: Sequence[Tool] | None = None,
+        response_model: type[BaseModel] | None = None,
         **kwargs: Any,
     ) -> ChatResponse:
         client = self._get_async_client()
@@ -256,7 +256,7 @@ class AnthropicProvider(BaseProvider):
                     temperature=temperature,
                     **kwargs,
                 )
-        except Exception as exc:  # noqa: BLE001
+        except Exception as exc:
             raise ProviderException(
                 f"Anthropic async messages.create failed: {exc}",
                 provider=self.name,
@@ -269,10 +269,10 @@ class AnthropicProvider(BaseProvider):
         self,
         messages: Sequence[Message],
         *,
-        model: Optional[str] = None,
-        temperature: Optional[float] = None,
-        tools: Optional[Sequence[Tool]] = None,
-        response_model: Optional[type[BaseModel]] = None,
+        model: str | None = None,
+        temperature: float | None = None,
+        tools: Sequence[Tool] | None = None,
+        response_model: type[BaseModel] | None = None,
         **kwargs: Any,
     ) -> Iterator[StreamChunk]:
         client = self._get_client()
@@ -294,7 +294,7 @@ class AnthropicProvider(BaseProvider):
                 for text in stream.text_stream:
                     yield StreamChunk(delta=text, is_final=False)
                 yield StreamChunk(delta="", is_final=True)
-        except Exception as exc:  # noqa: BLE001
+        except Exception as exc:
             raise ProviderException(
                 f"Anthropic streaming failed: {exc}",
                 provider=self.name,
@@ -305,10 +305,10 @@ class AnthropicProvider(BaseProvider):
         self,
         messages: Sequence[Message],
         *,
-        model: Optional[str] = None,
-        temperature: Optional[float] = None,
-        tools: Optional[Sequence[Tool]] = None,
-        response_model: Optional[type[BaseModel]] = None,
+        model: str | None = None,
+        temperature: float | None = None,
+        tools: Sequence[Tool] | None = None,
+        response_model: type[BaseModel] | None = None,
         **kwargs: Any,
     ) -> AsyncIterator[StreamChunk]:
         client = self._get_async_client()
@@ -330,7 +330,7 @@ class AnthropicProvider(BaseProvider):
                 async for text in stream.text_stream:
                     yield StreamChunk(delta=text, is_final=False)
                 yield StreamChunk(delta="", is_final=True)
-        except Exception as exc:  # noqa: BLE001
+        except Exception as exc:
             raise ProviderException(
                 f"Anthropic async streaming failed: {exc}",
                 provider=self.name,
@@ -338,7 +338,7 @@ class AnthropicProvider(BaseProvider):
             ) from exc
 
     def _to_chat_response(
-        self, result: Any, model: str, *, response_model: Optional[type[BaseModel]] = None
+        self, result: Any, model: str, *, response_model: type[BaseModel] | None = None
     ) -> ChatResponse:
         """Convert an Anthropic ``Message`` (or ``ParsedMessage``) into a :class:`ChatResponse`."""
         text_parts: list[str] = []

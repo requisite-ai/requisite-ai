@@ -20,7 +20,7 @@ No separate SDK: this uses the ``openai`` package.
 
 from __future__ import annotations
 
-from typing import Any, Optional
+from typing import Any
 
 from requisite.core.exceptions import ConfigurationException
 from requisite.providers.openai_provider import OpenAIProvider
@@ -59,8 +59,8 @@ class AzureOpenAIProvider(OpenAIProvider):
     def __init__(
         self,
         *,
-        api_key: Optional[str] = None,
-        azure_endpoint: Optional[str] = None,
+        api_key: str | None = None,
+        azure_endpoint: str | None = None,
         model: str = "gpt-4o-mini",
         timeout: float = 60.0,
         max_retries: int = 2,

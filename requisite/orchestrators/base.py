@@ -17,7 +17,7 @@ from __future__ import annotations
 
 from abc import ABC, abstractmethod
 from collections.abc import Sequence
-from typing import TYPE_CHECKING, Any, Optional
+from typing import TYPE_CHECKING, Any
 
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -72,8 +72,8 @@ class BaseOrchestrator(ABC):
     @abstractmethod
     def run(
         self,
-        steps: Sequence["Agent"],
-        input: Optional[str],  # noqa: A002 - matches the ergonomic `workflow.run(input)` API
+        steps: Sequence[Agent],
+        input: str | None,
         *,
         strategy: str = "sequential",
         **kwargs: Any,
@@ -83,8 +83,8 @@ class BaseOrchestrator(ABC):
     @abstractmethod
     async def arun(
         self,
-        steps: Sequence["Agent"],
-        input: Optional[str],  # noqa: A002
+        steps: Sequence[Agent],
+        input: str | None,
         *,
         strategy: str = "sequential",
         **kwargs: Any,

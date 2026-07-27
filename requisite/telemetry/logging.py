@@ -21,7 +21,7 @@ from __future__ import annotations
 import json
 import logging
 import sys
-from typing import IO, Any, Optional
+from typing import IO, Any
 
 _STANDARD_LOG_RECORD_ATTRS = frozenset(vars(logging.makeLogRecord({})).keys())
 
@@ -69,7 +69,7 @@ def configure_logging(
     *,
     level: str = "INFO",
     json_format: bool = False,
-    stream: Optional[IO[str]] = None,
+    stream: IO[str] | None = None,
     logger_name: str = "requisite",
 ) -> logging.Logger:
     """Attach a single handler + formatter to the ``requisite`` logger tree.

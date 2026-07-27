@@ -21,7 +21,7 @@ from __future__ import annotations
 import asyncio
 import logging
 from abc import ABC, abstractmethod
-from typing import TYPE_CHECKING, Optional
+from typing import TYPE_CHECKING
 
 from requisite.core.exceptions import ConfigurationException
 from requisite.core.interfaces import Message, Role
@@ -134,11 +134,11 @@ class SummarizingPolicy(BaseConversationPolicy):
 
     def __init__(
         self,
-        ai: "AI",
+        ai: AI,
         *,
         max_messages: int,
         keep_recent: int = 4,
-        summarization_prompt: Optional[str] = None,
+        summarization_prompt: str | None = None,
     ) -> None:
         if keep_recent >= max_messages:
             raise ConfigurationException(
@@ -155,7 +155,7 @@ class SummarizingPolicy(BaseConversationPolicy):
         self.keep_recent = keep_recent
         self.summarization_prompt = prompt
 
-    def _split(self, messages: list[Message]) -> Optional[tuple[list[Message], list[Message]]]:
+    def _split(self, messages: list[Message]) -> tuple[list[Message], list[Message]] | None:
         if len(messages) <= self.max_messages:
             return None
         split_index = len(messages) - self.keep_recent

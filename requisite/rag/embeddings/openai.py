@@ -11,7 +11,7 @@ newer model as needed.
 from __future__ import annotations
 
 from collections.abc import Sequence
-from typing import Any, Optional
+from typing import Any
 
 from requisite.core.exceptions import ConfigurationException, ProviderException
 from requisite.rag.base import BaseEmbeddingProvider
@@ -42,7 +42,7 @@ class OpenAIEmbeddingProvider(BaseEmbeddingProvider):
     def __init__(
         self,
         *,
-        api_key: Optional[str] = None,
+        api_key: str | None = None,
         model: str = "text-embedding-3-small",
         timeout: float = 60.0,
         max_retries: int = 2,
@@ -81,7 +81,7 @@ class OpenAIEmbeddingProvider(BaseEmbeddingProvider):
         client = self._get_client()
         try:
             response = client.embeddings.create(input=list(texts), model=self._model)
-        except Exception as exc:  # noqa: BLE001
+        except Exception as exc:
             raise ProviderException(
                 f"OpenAI embeddings.create failed: {exc}",
                 provider=self.name,

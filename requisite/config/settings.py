@@ -22,7 +22,7 @@ Override anything via keyword arguments (useful in tests):
 from __future__ import annotations
 
 from functools import lru_cache
-from typing import Any, Optional
+from typing import Any
 
 from pydantic import Field, SecretStr
 from pydantic_settings import BaseSettings, SettingsConfigDict
@@ -78,12 +78,12 @@ class Settings(BaseSettings):
         case_sensitive=False,
     )
 
-    openai_api_key: Optional[SecretStr] = Field(default=None)
-    gemini_api_key: Optional[SecretStr] = Field(default=None)
-    anthropic_api_key: Optional[SecretStr] = Field(default=None)
-    groq_api_key: Optional[SecretStr] = Field(default=None)
-    azure_openai_api_key: Optional[SecretStr] = Field(default=None)
-    azure_openai_endpoint: Optional[str] = Field(
+    openai_api_key: SecretStr | None = Field(default=None)
+    gemini_api_key: SecretStr | None = Field(default=None)
+    anthropic_api_key: SecretStr | None = Field(default=None)
+    groq_api_key: SecretStr | None = Field(default=None)
+    azure_openai_api_key: SecretStr | None = Field(default=None)
+    azure_openai_endpoint: str | None = Field(
         default=None,
         description=(
             "Your Azure OpenAI resource endpoint, e.g. "
@@ -102,7 +102,7 @@ class Settings(BaseSettings):
     log_level: str = Field(default="INFO")
     log_format: str = Field(default="plain")
 
-    def api_key_for(self, provider: str) -> Optional[str]:
+    def api_key_for(self, provider: str) -> str | None:
         """Return the plaintext API key for the given provider name.
 
         Parameters
@@ -116,7 +116,7 @@ class Settings(BaseSettings):
         Optional[str]
             The plaintext key, or ``None`` if not configured.
         """
-        mapping: dict[str, Optional[SecretStr]] = {
+        mapping: dict[str, SecretStr | None] = {
             "openai": self.openai_api_key,
             "gemini": self.gemini_api_key,
             "anthropic": self.anthropic_api_key,

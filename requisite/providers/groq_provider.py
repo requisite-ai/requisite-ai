@@ -15,7 +15,7 @@ required), so no new optional dependency group is needed beyond ``openai``.
 
 from __future__ import annotations
 
-from typing import Any, Optional
+from typing import Any
 
 from requisite.providers.openai_provider import OpenAIProvider
 
@@ -46,7 +46,7 @@ class GroqProvider(OpenAIProvider):
     def __init__(
         self,
         *,
-        api_key: Optional[str] = None,
+        api_key: str | None = None,
         model: str = "llama-3.3-70b-versatile",
         timeout: float = 60.0,
         max_retries: int = 2,

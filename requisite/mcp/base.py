@@ -47,7 +47,7 @@ class BaseMCPClient(ABC):
         """
 
     @abstractmethod
-    def discover_tools(self) -> list["Tool"]:
+    def discover_tools(self) -> list[Tool]:
         """Connect to the MCP server and return its exposed tools.
 
         Each returned :class:`~requisite.tools.base.Tool`'s ``execute``
@@ -59,11 +59,11 @@ class BaseMCPClient(ABC):
         """
 
     @abstractmethod
-    async def adiscover_tools(self) -> list["Tool"]:
+    async def adiscover_tools(self) -> list[Tool]:
         """Async counterpart to :meth:`discover_tools`."""
 
     def register_as_capability(
-        self, registry: "CapabilityRegistry", *, capability: str, priority: int = 0
+        self, registry: CapabilityRegistry, *, capability: str, priority: int = 0
     ) -> None:
         """Discover this server's tools and register the one named
         ``capability`` into ``registry`` under that same name.

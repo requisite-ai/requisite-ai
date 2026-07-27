@@ -9,7 +9,7 @@ Default model ``gemini-embedding-001`` -- the current GA embedding model.
 from __future__ import annotations
 
 from collections.abc import Sequence
-from typing import Any, Optional
+from typing import Any
 
 from requisite.core.exceptions import ConfigurationException, ProviderException
 from requisite.rag.base import BaseEmbeddingProvider
@@ -35,7 +35,7 @@ class GeminiEmbeddingProvider(BaseEmbeddingProvider):
     def __init__(
         self,
         *,
-        api_key: Optional[str] = None,
+        api_key: str | None = None,
         model: str = "gemini-embedding-001",
         **kwargs: Any,
     ) -> None:
@@ -68,7 +68,7 @@ class GeminiEmbeddingProvider(BaseEmbeddingProvider):
         client = self._get_client()
         try:
             response = client.models.embed_content(model=self._model, contents=list(texts))
-        except Exception as exc:  # noqa: BLE001
+        except Exception as exc:
             raise ProviderException(
                 f"Gemini embed_content failed: {exc}",
                 provider=self.name,

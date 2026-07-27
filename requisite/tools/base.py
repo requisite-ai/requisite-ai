@@ -11,7 +11,8 @@ from __future__ import annotations
 import asyncio
 import inspect
 import logging
-from typing import Any, Callable
+from collections.abc import Callable
+from typing import Any
 
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -59,7 +60,7 @@ class Tool(BaseModel):
     @classmethod
     def from_function(
         cls, func: Callable[..., Any], *, name: str | None = None, description: str | None = None
-    ) -> "Tool":
+    ) -> Tool:
         """Build a :class:`Tool` from a plain Python function.
 
         Parameters
@@ -95,7 +96,7 @@ class Tool(BaseModel):
             if inspect.iscoroutinefunction(self.func):
                 return asyncio.run(self.func(**kwargs))
             return self.func(**kwargs)
-        except Exception as exc:  # noqa: BLE001
+        except Exception as exc:
             raise ToolException(
                 f"Tool '{self.name}' raised an error: {exc}",
                 details={"tool": self.name, "arguments": kwargs},
@@ -107,7 +108,7 @@ class Tool(BaseModel):
             if inspect.iscoroutinefunction(self.func):
                 return await self.func(**kwargs)
             return await asyncio.to_thread(self.func, **kwargs)
-        except Exception as exc:  # noqa: BLE001
+        except Exception as exc:
             raise ToolException(
                 f"Tool '{self.name}' raised an error: {exc}",
                 details={"tool": self.name, "arguments": kwargs},

@@ -41,7 +41,7 @@ def main() -> None:
         langgraph_result = workflow.run("Research AI trends and write a short summary.")
         print("\n--- sequential (langgraph) ---")
         print(langgraph_result.content)
-    except Exception as exc:  # noqa: BLE001
+    except Exception as exc:
         print(f"\nlanggraph backend not available: {exc}")
 
 

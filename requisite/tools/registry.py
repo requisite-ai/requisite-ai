@@ -9,14 +9,15 @@ and tests can each have their own instance of.
 from __future__ import annotations
 
 import logging
-from typing import Any, Callable, Union
+from collections.abc import Callable
+from typing import Any
 
 from requisite.core.exceptions import ToolException
 from requisite.tools.base import Tool
 
 logger = logging.getLogger("requisite.tools.registry")
 
-ToolLike = Union[Tool, Callable[..., Any]]
+ToolLike = Tool | Callable[..., Any]
 
 
 def resolve_tool_like(tool_or_func: ToolLike) -> Tool:

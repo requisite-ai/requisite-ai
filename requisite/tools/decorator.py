@@ -28,7 +28,8 @@ With an explicit name/description:
 from __future__ import annotations
 
 import functools
-from typing import Any, Callable, Optional, ParamSpec, Protocol, TypeVar, overload
+from collections.abc import Callable
+from typing import Any, ParamSpec, Protocol, TypeVar, overload
 
 from requisite.tools.base import Tool
 
@@ -57,9 +58,7 @@ class ToolFunction(Protocol[P, R_co]):
     def __call__(self, *args: P.args, **kwargs: P.kwargs) -> R_co: ...
 
 
-def _wrap(
-    func: Callable[P, R], *, name: Optional[str], description: Optional[str]
-) -> ToolFunction[P, R]:
+def _wrap(func: Callable[P, R], *, name: str | None, description: str | None) -> ToolFunction[P, R]:
     built_tool = Tool.from_function(func, name=name, description=description)
 
     @functools.wraps(func)
@@ -76,15 +75,15 @@ def tool(func: Callable[P, R]) -> ToolFunction[P, R]: ...
 
 @overload
 def tool(
-    *, name: Optional[str] = None, description: Optional[str] = None
+    *, name: str | None = None, description: str | None = None
 ) -> Callable[[Callable[P, R]], ToolFunction[P, R]]: ...
 
 
 def tool(
-    func: Optional[Callable[P, R]] = None,
+    func: Callable[P, R] | None = None,
     *,
-    name: Optional[str] = None,
-    description: Optional[str] = None,
+    name: str | None = None,
+    description: str | None = None,
 ) -> Any:
     """Mark a function as an LLM-callable tool.
 

@@ -20,7 +20,7 @@ from __future__ import annotations
 import asyncio
 from abc import ABC, abstractmethod
 from collections.abc import Sequence
-from typing import Any, Optional
+from typing import Any
 
 from pydantic import BaseModel, Field
 
@@ -46,7 +46,7 @@ class Chunk(BaseModel):
     id: str
     text: str
     metadata: dict[str, Any] = Field(default_factory=dict)
-    embedding: Optional[list[float]] = None
+    embedding: list[float] | None = None
 
 
 class ScoredChunk(BaseModel):

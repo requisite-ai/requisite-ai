@@ -16,7 +16,7 @@ import asyncio
 import logging
 from collections.abc import Sequence
 from concurrent.futures import ThreadPoolExecutor
-from typing import TYPE_CHECKING, Any, Optional
+from typing import TYPE_CHECKING, Any
 
 from requisite.core.exceptions import ConfigurationException
 from requisite.orchestrators.base import BaseOrchestrator, WorkflowResult
@@ -46,8 +46,8 @@ class NativeOrchestrator(BaseOrchestrator):
 
     def run(
         self,
-        steps: Sequence["Agent"],
-        input: Optional[str],  # noqa: A002
+        steps: Sequence[Agent],
+        input: str | None,
         *,
         strategy: str = "sequential",
         **kwargs: Any,
@@ -68,8 +68,8 @@ class NativeOrchestrator(BaseOrchestrator):
 
     async def arun(
         self,
-        steps: Sequence["Agent"],
-        input: Optional[str],  # noqa: A002
+        steps: Sequence[Agent],
+        input: str | None,
         *,
         strategy: str = "sequential",
         **kwargs: Any,
@@ -90,11 +90,11 @@ class NativeOrchestrator(BaseOrchestrator):
 
     def _run_sequential(
         self,
-        steps: Sequence["Agent"],
+        steps: Sequence[Agent],
         input: str,
-        **kwargs: Any,  # noqa: A002
+        **kwargs: Any,
     ) -> WorkflowResult:
-        results: list["AgentResult"] = []
+        results: list[AgentResult] = []
         current_input = input
         for agent in steps:
             result = agent.run(current_input, **kwargs)
@@ -109,9 +109,9 @@ class NativeOrchestrator(BaseOrchestrator):
 
     def _run_parallel(
         self,
-        steps: Sequence["Agent"],
+        steps: Sequence[Agent],
         input: str,
-        **kwargs: Any,  # noqa: A002
+        **kwargs: Any,
     ) -> WorkflowResult:
         with ThreadPoolExecutor(max_workers=max(len(steps), 1)) as executor:
             futures = [executor.submit(agent.run, input, **kwargs) for agent in steps]
@@ -123,11 +123,11 @@ class NativeOrchestrator(BaseOrchestrator):
 
     async def _arun_sequential(
         self,
-        steps: Sequence["Agent"],
+        steps: Sequence[Agent],
         input: str,
-        **kwargs: Any,  # noqa: A002
+        **kwargs: Any,
     ) -> WorkflowResult:
-        results: list["AgentResult"] = []
+        results: list[AgentResult] = []
         current_input = input
         for agent in steps:
             result = await agent.arun(current_input, **kwargs)
@@ -142,9 +142,9 @@ class NativeOrchestrator(BaseOrchestrator):
 
     async def _arun_parallel(
         self,
-        steps: Sequence["Agent"],
+        steps: Sequence[Agent],
         input: str,
-        **kwargs: Any,  # noqa: A002
+        **kwargs: Any,
     ) -> WorkflowResult:
         results = list(await asyncio.gather(*(agent.arun(input, **kwargs) for agent in steps)))
         combined = "\n\n".join(f"[{r.agent_name}]\n{r.content}" for r in results)

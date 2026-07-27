@@ -63,7 +63,7 @@ class BaseSkill(ABC):
         """
         try:
             return await asyncio.to_thread(self.run, **kwargs)
-        except Exception as exc:  # noqa: BLE001
+        except Exception as exc:
             raise SkillException(
                 f"Skill '{self.name}' raised an error: {exc}",
                 details={"skill": self.name, "arguments": kwargs},

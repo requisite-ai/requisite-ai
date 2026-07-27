@@ -17,7 +17,7 @@ Design notes
 
 from __future__ import annotations
 
-from typing import Any, Optional
+from typing import Any
 
 
 class AIException(Exception):
@@ -40,7 +40,7 @@ class AIException(Exception):
     something went wrong
     """
 
-    def __init__(self, message: str, *, details: Optional[dict[str, Any]] = None) -> None:
+    def __init__(self, message: str, *, details: dict[str, Any] | None = None) -> None:
         super().__init__(message)
         self.message = message
         self.details = details or {}
@@ -79,9 +79,9 @@ class ProviderException(AIException):
         self,
         message: str,
         *,
-        provider: Optional[str] = None,
-        original_error: Optional[BaseException] = None,
-        details: Optional[dict[str, Any]] = None,
+        provider: str | None = None,
+        original_error: BaseException | None = None,
+        details: dict[str, Any] | None = None,
     ) -> None:
         super().__init__(message, details=details)
         self.provider = provider

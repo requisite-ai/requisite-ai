@@ -27,7 +27,7 @@ from __future__ import annotations
 
 import logging
 from collections.abc import AsyncIterator, Iterator, Sequence
-from typing import Any, Optional, TypeVar, Union
+from typing import Any, TypeVar
 
 from pydantic import BaseModel
 
@@ -91,11 +91,11 @@ class AI:
     def __init__(
         self,
         *,
-        provider: Optional[Union[str, BaseProvider]] = None,
-        model: Optional[str] = None,
-        settings: Optional[Settings] = None,
-        registry: Optional[ProviderRegistry] = None,
-        system_prompt: Optional[str] = None,
+        provider: str | BaseProvider | None = None,
+        model: str | None = None,
+        settings: Settings | None = None,
+        registry: ProviderRegistry | None = None,
+        system_prompt: str | None = None,
     ) -> None:
         self._settings = settings or Settings()
         self._registry = registry or default_registry
@@ -103,7 +103,7 @@ class AI:
         self._provider = self._resolve_provider(provider, model)
 
     def _resolve_provider(
-        self, provider: Optional[Union[str, BaseProvider]], model: Optional[str]
+        self, provider: str | BaseProvider | None, model: str | None
     ) -> BaseProvider:
         if isinstance(provider, BaseProvider):
             return provider
@@ -133,7 +133,7 @@ class AI:
         return self._provider
 
     def _build_messages(
-        self, prompt: Union[str, Sequence[Message]], system_prompt: Optional[str]
+        self, prompt: str | Sequence[Message], system_prompt: str | None
     ) -> list[Message]:
         messages: list[Message] = []
         effective_system = system_prompt if system_prompt is not None else self._system_prompt
@@ -148,13 +148,13 @@ class AI:
 
     def chat(
         self,
-        prompt: Union[str, Sequence[Message]],
+        prompt: str | Sequence[Message],
         *,
-        system_prompt: Optional[str] = None,
-        model: Optional[str] = None,
-        temperature: Optional[float] = None,
-        tools: Optional[Sequence[ToolLike]] = None,
-        response_model: Optional[type[ResponseModelT]] = None,
+        system_prompt: str | None = None,
+        model: str | None = None,
+        temperature: float | None = None,
+        tools: Sequence[ToolLike] | None = None,
+        response_model: type[ResponseModelT] | None = None,
         **kwargs: Any,
     ) -> Any:
         """Send a prompt and return the response.
@@ -210,13 +210,13 @@ class AI:
 
     def chat_response(
         self,
-        prompt: Union[str, Sequence[Message]],
+        prompt: str | Sequence[Message],
         *,
-        system_prompt: Optional[str] = None,
-        model: Optional[str] = None,
-        temperature: Optional[float] = None,
-        tools: Optional[Sequence[ToolLike]] = None,
-        response_model: Optional[type[BaseModel]] = None,
+        system_prompt: str | None = None,
+        model: str | None = None,
+        temperature: float | None = None,
+        tools: Sequence[ToolLike] | None = None,
+        response_model: type[BaseModel] | None = None,
         **kwargs: Any,
     ) -> ChatResponse:
         """Send a prompt and return the full, normalized :class:`ChatResponse`."""
@@ -236,13 +236,13 @@ class AI:
 
     async def achat(
         self,
-        prompt: Union[str, Sequence[Message]],
+        prompt: str | Sequence[Message],
         *,
-        system_prompt: Optional[str] = None,
-        model: Optional[str] = None,
-        temperature: Optional[float] = None,
-        tools: Optional[Sequence[ToolLike]] = None,
-        response_model: Optional[type[ResponseModelT]] = None,
+        system_prompt: str | None = None,
+        model: str | None = None,
+        temperature: float | None = None,
+        tools: Sequence[ToolLike] | None = None,
+        response_model: type[ResponseModelT] | None = None,
         **kwargs: Any,
     ) -> Any:
         """Async counterpart to :meth:`chat`."""
@@ -261,13 +261,13 @@ class AI:
 
     async def achat_response(
         self,
-        prompt: Union[str, Sequence[Message]],
+        prompt: str | Sequence[Message],
         *,
-        system_prompt: Optional[str] = None,
-        model: Optional[str] = None,
-        temperature: Optional[float] = None,
-        tools: Optional[Sequence[ToolLike]] = None,
-        response_model: Optional[type[BaseModel]] = None,
+        system_prompt: str | None = None,
+        model: str | None = None,
+        temperature: float | None = None,
+        tools: Sequence[ToolLike] | None = None,
+        response_model: type[BaseModel] | None = None,
         **kwargs: Any,
     ) -> ChatResponse:
         """Async counterpart to :meth:`chat_response`."""
@@ -287,11 +287,11 @@ class AI:
 
     def stream(
         self,
-        prompt: Union[str, Sequence[Message]],
+        prompt: str | Sequence[Message],
         *,
-        system_prompt: Optional[str] = None,
-        model: Optional[str] = None,
-        temperature: Optional[float] = None,
+        system_prompt: str | None = None,
+        model: str | None = None,
+        temperature: float | None = None,
         **kwargs: Any,
     ) -> Iterator[str]:
         """Stream the response as plain text chunks.
@@ -313,11 +313,11 @@ class AI:
 
     async def astream(
         self,
-        prompt: Union[str, Sequence[Message]],
+        prompt: str | Sequence[Message],
         *,
-        system_prompt: Optional[str] = None,
-        model: Optional[str] = None,
-        temperature: Optional[float] = None,
+        system_prompt: str | None = None,
+        model: str | None = None,
+        temperature: float | None = None,
         **kwargs: Any,
     ) -> AsyncIterator[str]:
         """Async counterpart to :meth:`stream`."""

@@ -17,7 +17,7 @@ import asyncio
 import logging
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
-from typing import TYPE_CHECKING, Any, Optional
+from typing import TYPE_CHECKING, Any
 
 from requisite.core.exceptions import ConfigurationException, MCPException
 from requisite.mcp.base import BaseMCPClient
@@ -61,12 +61,12 @@ class MCPClient(BaseMCPClient):
         *,
         name: str,
         transport: str,
-        command: Optional[str] = None,
-        args: Optional[list[str]] = None,
-        env: Optional[dict[str, str]] = None,
-        cwd: Optional[str] = None,
-        url: Optional[str] = None,
-        headers: Optional[dict[str, str]] = None,
+        command: str | None = None,
+        args: list[str] | None = None,
+        env: dict[str, str] | None = None,
+        cwd: str | None = None,
+        url: str | None = None,
+        headers: dict[str, str] | None = None,
         timeout: float = _DEFAULT_HTTP_TIMEOUT,
     ) -> None:
         if transport not in ("stdio", "http"):
@@ -94,10 +94,10 @@ class MCPClient(BaseMCPClient):
         *,
         name: str,
         command: str,
-        args: Optional[list[str]] = None,
-        env: Optional[dict[str, str]] = None,
-        cwd: Optional[str] = None,
-    ) -> "MCPClient":
+        args: list[str] | None = None,
+        env: dict[str, str] | None = None,
+        cwd: str | None = None,
+    ) -> MCPClient:
         """Connect to a local MCP server run as a subprocess over stdio.
 
         Parameters
@@ -121,9 +121,9 @@ class MCPClient(BaseMCPClient):
         *,
         name: str,
         url: str,
-        headers: Optional[dict[str, str]] = None,
+        headers: dict[str, str] | None = None,
         timeout: float = _DEFAULT_HTTP_TIMEOUT,
-    ) -> "MCPClient":
+    ) -> MCPClient:
         """Connect to a remote MCP server over Streamable HTTP.
 
         Parameters
@@ -144,7 +144,7 @@ class MCPClient(BaseMCPClient):
         return self._name
 
     @asynccontextmanager
-    async def _session(self) -> AsyncIterator["MCPClientSession"]:
+    async def _session(self) -> AsyncIterator[MCPClientSession]:
         try:
             from mcp import ClientSession
         except ImportError as exc:  # pragma: no cover - exercised only without the dep
@@ -182,7 +182,7 @@ class MCPClient(BaseMCPClient):
                 result = await session.list_tools()
         except ConfigurationException:
             raise
-        except Exception as exc:  # noqa: BLE001
+        except Exception as exc:
             raise MCPException(
                 f"Failed to discover tools from MCP server '{self.name}': {exc}",
                 details={"server": self.name},
@@ -222,7 +222,7 @@ class MCPClient(BaseMCPClient):
                 result = await session.call_tool(tool_name, arguments)
         except ConfigurationException:
             raise
-        except Exception as exc:  # noqa: BLE001
+        except Exception as exc:
             raise MCPException(
                 f"Failed to call MCP tool '{tool_name}' on server '{self.name}': {exc}",
                 details={"server": self.name, "tool": tool_name},
