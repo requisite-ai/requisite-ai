@@ -12,8 +12,8 @@ from requisite.prompts.registry import default_registry as default_prompt_regist
 from requisite.prompts.template import ChatPromptTemplate, PromptTemplate
 
 __all__ = [
-    "PromptTemplate",
     "ChatPromptTemplate",
+    "PromptTemplate",
     "PromptTemplateRegistry",
     "default_prompt_registry",
 ]

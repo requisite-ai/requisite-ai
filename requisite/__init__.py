@@ -148,73 +148,73 @@ from requisite.workflows.workflow import Workflow
 __all__ = [
     # The core facade
     "AI",
-    "Settings",
-    # Messages / responses
-    "Message",
-    "Role",
-    "ChatResponse",
-    "ToolCall",
-    # Tool calling
-    "tool",
-    "Tool",
-    "ToolRegistry",
-    # Skills
-    "BaseSkill",
-    "SkillRegistry",
+    # Exceptions
+    "AIException",
     # Agents
     "Agent",
-    "AgentResult",
+    "AgentException",
     "AgentRegistry",
-    # Capabilities (agent.requires(...))
-    "CapabilityRegistry",
-    "CapabilityProvider",
-    "default_capability_registry",
+    "AgentResult",
+    "BaseConversationPolicy",
+    "BaseEmbeddingProvider",
     # MCP
     "BaseMCPClient",
-    "MCPClient",
-    "MCPClientRegistry",
-    "default_mcp_registry",
-    # RAG
-    "Chunk",
-    "ScoredChunk",
-    "BaseEmbeddingProvider",
-    "BaseVectorStore",
-    "BaseRetriever",
-    "Retriever",
-    "chunk_text",
-    "EmbeddingRegistry",
-    "default_embedding_registry",
-    "VectorStoreRegistry",
-    "default_vector_store_registry",
     # Memory + conversation management
     "BaseMemory",
+    "BaseRetriever",
+    # Skills
+    "BaseSkill",
+    "BaseVectorStore",
+    "CapabilityException",
+    "CapabilityProvider",
+    # Capabilities (agent.requires(...))
+    "CapabilityRegistry",
+    "ChatPromptTemplate",
+    "ChatResponse",
+    # RAG
+    "Chunk",
+    "ConfigurationException",
+    "EmbeddingRegistry",
     "InProcessMemory",
+    "MCPClient",
+    "MCPClientRegistry",
+    "MCPException",
     "MemoryRegistry",
-    "default_memory_registry",
-    "BaseConversationPolicy",
+    # Messages / responses
+    "Message",
     "MessageCountPolicy",
-    "SummarizingPolicy",
+    "PromptException",
     # Prompt templates
     "PromptTemplate",
-    "ChatPromptTemplate",
     "PromptTemplateRegistry",
-    "default_prompt_registry",
+    "ProviderException",
+    # Providers
+    "ProviderRegistry",
+    "Retriever",
+    "Role",
+    "ScoredChunk",
+    "Settings",
+    "SkillException",
+    "SkillRegistry",
+    "SummarizingPolicy",
+    "Tool",
+    "ToolCall",
+    "ToolException",
+    "ToolRegistry",
+    "VectorStoreRegistry",
     # Multi-agent workflows
     "Workflow",
     "WorkflowResult",
-    # Providers
-    "ProviderRegistry",
+    "chunk_text",
+    "default_capability_registry",
+    "default_embedding_registry",
+    "default_mcp_registry",
+    "default_memory_registry",
+    "default_prompt_registry",
     "default_registry",
-    # Exceptions
-    "AIException",
-    "ProviderException",
-    "ConfigurationException",
-    "ToolException",
-    "SkillException",
-    "AgentException",
-    "MCPException",
-    "CapabilityException",
-    "PromptException",
+    "default_vector_store_registry",
+    # Tool calling
+    "tool",
 ]
 
 __version__ = "0.3.1"

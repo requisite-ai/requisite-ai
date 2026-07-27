@@ -14,11 +14,11 @@ from requisite.memory.in_process import InProcessMemory
 from requisite.memory.policies import BaseConversationPolicy, MessageCountPolicy, SummarizingPolicy
 
 __all__ = [
+    "BaseConversationPolicy",
     "BaseMemory",
     "InProcessMemory",
     "MemoryRegistry",
-    "default_registry",
-    "BaseConversationPolicy",
     "MessageCountPolicy",
     "SummarizingPolicy",
+    "default_registry",
 ]

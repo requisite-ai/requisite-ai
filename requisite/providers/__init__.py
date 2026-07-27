@@ -9,4 +9,4 @@ never requires every optional dependency to be installed.
 from requisite.providers.base import BaseProvider
 from requisite.providers.factory import ProviderRegistry, create_provider, default_registry
 
-__all__ = ["BaseProvider", "ProviderRegistry", "default_registry", "create_provider"]
+__all__ = ["BaseProvider", "ProviderRegistry", "create_provider", "default_registry"]

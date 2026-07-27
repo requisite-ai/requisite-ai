@@ -3,4 +3,4 @@
 from requisite.agents.agent import Agent, AgentResult
 from requisite.agents.registry import AgentRegistry
 
-__all__ = ["Agent", "AgentResult", "AgentRegistry"]
+__all__ = ["Agent", "AgentRegistry", "AgentResult"]

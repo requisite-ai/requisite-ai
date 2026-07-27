@@ -41,15 +41,15 @@ from requisite.rag.factory import (
 from requisite.rag.retriever import Retriever
 
 __all__ = [
-    "Chunk",
-    "ScoredChunk",
     "BaseEmbeddingProvider",
-    "BaseVectorStore",
     "BaseRetriever",
-    "Retriever",
-    "chunk_text",
+    "BaseVectorStore",
+    "Chunk",
     "EmbeddingRegistry",
-    "default_embedding_registry",
+    "Retriever",
+    "ScoredChunk",
     "VectorStoreRegistry",
+    "chunk_text",
+    "default_embedding_registry",
     "default_vector_store_registry",
 ]

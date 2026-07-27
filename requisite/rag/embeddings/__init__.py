@@ -9,4 +9,4 @@ only using that specific embedding provider does.
 from requisite.rag.embeddings.gemini import GeminiEmbeddingProvider
 from requisite.rag.embeddings.openai import OpenAIEmbeddingProvider
 
-__all__ = ["OpenAIEmbeddingProvider", "GeminiEmbeddingProvider"]
+__all__ = ["GeminiEmbeddingProvider", "OpenAIEmbeddingProvider"]
