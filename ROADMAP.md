@@ -120,21 +120,24 @@ or care whether `"github"` is resolved by a native tool or an MCP server.
 
 ## RAG
 
-Design decided (see the roadmap-planning discussion in this repo's issue
-history / commit log); not yet implemented. Full architecture (interfaces,
-chunking strategy, retrieval algorithm details) will get its own ADR
-(ADR-0005) when implementation starts, per ADR-0001's note that RAG
-decomposes into several independent extension points rather than one.
+Core interfaces and the in-memory default are shipped; Pinecone/Weaviate
+are the deliberate scope cut for this phase (see
+[ADR-0005](docs/adr/0005-rag-integration.md)).
 
 | Item | Status | Notes |
 |---|---|---|
-| `BaseEmbeddingProvider` interface + registry | 📋 | |
-| `BaseVectorStore` interface + registry | 📋 | |
-| In-memory vector store (default, zero dependencies) | 📋 | Same pattern as `InProcessMemory` — demonstrable with no external service |
+| `BaseEmbeddingProvider` interface + registry | ✅ | `requisite/rag/base.py`, `requisite/rag/factory.py` |
+| `BaseVectorStore` interface + registry | ✅ | |
+| OpenAI embedding provider | ✅ | `OpenAIEmbeddingProvider` (`text-embedding-3-small` default) |
+| Gemini embedding provider | ✅ | `GeminiEmbeddingProvider` (`gemini-embedding-001` default) |
+| In-memory vector store (default, zero dependencies) | ✅ | `InMemoryVectorStore` — pure-Python cosine similarity |
 | Pinecone vector store | 📋 | `PINECONE_API_KEY` / `PINECONE_ENVIRONMENT` already reserved in `.env.example` |
 | Weaviate vector store | 📋 | `WEAVIATE_URL` / `WEAVIATE_API_KEY` already reserved in `.env.example` |
-| Chunking strategies | 📋 | |
-| Retrievers (dense, hybrid) | 📋 | Exposed to agents as a `CapabilityProvider` (`agent.requires("knowledge_base")`), reusing the existing capability-resolution mechanism rather than a new `Agent` constructor parameter |
+| Chunking (character-based, with overlap) | ✅ | `chunk_text()` — token-aware chunking is a follow-up, not this phase |
+| `BaseRetriever` interface | ✅ | Independent of embeddings/vector store at the interface level, by design |
+| Dense retriever (`Retriever`) | ✅ | Composes an embedding provider + vector store |
+| Hybrid / BM25 retriever | 📋 | |
+| Retriever exposed as a `CapabilityProvider` (`agent.requires("knowledge_base")`) | ✅ | `Retriever.as_tool()` |
 | Re-ranking | 📋 | |
 | Context compression | 📋 | |
 

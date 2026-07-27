@@ -11,12 +11,12 @@ from requisite import Agent, Workflow
 def main() -> None:
     research = Agent(
         name="Researcher",
-        provider="openai",
+        provider="gemini",
         system_prompt="You research topics and produce concise, factual bullet points.",
     )
     writer = Agent(
         name="Writer",
-        provider="openai",
+        provider="gemini",
         system_prompt="You turn research notes into a polished, engaging short summary.",
     )
 

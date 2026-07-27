@@ -17,7 +17,7 @@ def main() -> None:
     print(ai.chat("Explain LangGraph in one sentence."))
 
     # Switching providers is a configuration change, not a code change.
-    gemini_ai = AI(provider="gemini", model="gemini-2.5-flash")
+    gemini_ai = AI(provider="gemini", model="gemini-3.1-flash-lite")
     print(f"Using: {gemini_ai}")
     print(gemini_ai.chat("Explain LangGraph in one sentence."))
 

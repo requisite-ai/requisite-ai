@@ -19,7 +19,7 @@ def sync_streaming_example() -> None:
 
 
 async def async_example() -> None:
-    ai = AI(provider="gemini", model="gemini-2.5-flash")
+    ai = AI(provider="gemini", model="gemini-3.1-flash-lite")
 
     print("--- async chat ---")
     text = await ai.achat("Give me one fun fact about the ocean.")

@@ -55,6 +55,18 @@ Connecting to an MCP server -- its tools become capabilities like any other:
 >>> github.register_as_capability(default_capability_registry, capability="github")  # doctest: +SKIP
 >>> assistant.requires("github")  # doctest: +SKIP
 
+Retrieval-augmented generation -- a retriever is a capability too:
+>>> from requisite.rag import Retriever
+>>> from requisite.rag.embeddings import OpenAIEmbeddingProvider
+>>> from requisite.rag.vectorstores import InMemoryVectorStore
+>>> retriever = Retriever(
+...     embedding_provider=OpenAIEmbeddingProvider(api_key="sk-..."),
+...     vector_store=InMemoryVectorStore(),
+... )  # doctest: +SKIP
+>>> retriever.add_texts(["Paris is the capital of France."])  # doctest: +SKIP
+>>> default_capability_registry.register("knowledge_base", retriever.as_tool())  # doctest: +SKIP
+>>> assistant.requires("knowledge_base")  # doctest: +SKIP
+
 Persisting conversation history across separate run() calls, kept bounded
 with a conversation policy:
 >>> from requisite.memory import InProcessMemory, MessageCountPolicy
@@ -111,6 +123,21 @@ from requisite.prompts import default_prompt_registry
 from requisite.prompts.registry import PromptTemplateRegistry
 from requisite.prompts.template import ChatPromptTemplate, PromptTemplate
 from requisite.providers.factory import ProviderRegistry, default_registry
+from requisite.rag.base import (
+    BaseEmbeddingProvider,
+    BaseRetriever,
+    BaseVectorStore,
+    Chunk,
+    ScoredChunk,
+)
+from requisite.rag.chunking import chunk_text
+from requisite.rag.factory import (
+    EmbeddingRegistry,
+    VectorStoreRegistry,
+    default_embedding_registry,
+    default_vector_store_registry,
+)
+from requisite.rag.retriever import Retriever
 from requisite.skills.base import BaseSkill
 from requisite.skills.registry import SkillRegistry
 from requisite.tools.base import Tool
@@ -147,6 +174,18 @@ __all__ = [
     "MCPClient",
     "MCPClientRegistry",
     "default_mcp_registry",
+    # RAG
+    "Chunk",
+    "ScoredChunk",
+    "BaseEmbeddingProvider",
+    "BaseVectorStore",
+    "BaseRetriever",
+    "Retriever",
+    "chunk_text",
+    "EmbeddingRegistry",
+    "default_embedding_registry",
+    "VectorStoreRegistry",
+    "default_vector_store_registry",
     # Memory + conversation management
     "BaseMemory",
     "InProcessMemory",
@@ -178,4 +217,4 @@ __all__ = [
     "PromptException",
 ]
 
-__version__ = "0.2.0"
+__version__ = "0.3.1"

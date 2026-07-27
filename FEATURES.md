@@ -43,8 +43,8 @@ Status legend: ✅ Done · 🚧 Partial · 📋 Not started · N/A Deliberately 
 | MCP client integration | ✅ | `MCPClient` (stdio + Streamable HTTP) — ADR-0004 |
 | MCP server integration | 📋 | |
 | Memory | ✅ | `BaseMemory`, `InProcessMemory`, wired into `Agent(memory=..., session_id=...)` |
-| Retrieval | 📋 | Part of RAG, not yet started |
-| RAG | 📋 | See RAG table below |
+| Retrieval | ✅ | `Retriever.retrieve()` / `.aretrieve()` |
+| RAG | 🚧 | Core interfaces + in-memory default shipped (ADR-0005); Pinecone/Weaviate, hybrid search, re-ranking, context compression still 📋 — see RAG table below |
 | Prompt templates | ✅ | `PromptTemplate`, `ChatPromptTemplate`, `PromptTemplateRegistry` — ADR-0003 |
 | Conversation management | ✅ | `Message` history + `BaseMemory` (storage) + `BaseConversationPolicy` (retention: `MessageCountPolicy`, `SummarizingPolicy`) — ADR-0003 |
 | Workflow execution | ✅ | `Workflow.run` / `Workflow.arun` |
@@ -191,18 +191,16 @@ Status legend: ✅ Done · 🚧 Partial · 📋 Not started · N/A Deliberately 
 
 ## RAG
 
-Design decided (in-memory default + Pinecone/Weaviate as optional
-integrations; retriever exposed via `CapabilityProvider`); not yet
-implemented. Full architecture gets its own ADR (ADR-0005) when
-implementation starts.
+Core interfaces + in-memory default shipped (ADR-0005). Pinecone/Weaviate
+are a deliberate scope cut, not yet implemented.
 
 | Requirement | Status | Notes |
 |---|---|---|
-| Embedding providers | 📋 | |
-| Vector stores | 📋 | In-memory default decided (zero deps, matches `InProcessMemory`); `PINECONE_API_KEY`, `WEAVIATE_URL`/`WEAVIATE_API_KEY` reserved in `.env.example` for the optional integrations |
-| Chunking | 📋 | |
-| Retrievers | 📋 | Decided: exposed as a `CapabilityProvider` (`agent.requires("knowledge_base")`), not a new `Agent` constructor parameter |
-| Hybrid search | 📋 | |
+| Embedding providers | ✅ | `OpenAIEmbeddingProvider`, `GeminiEmbeddingProvider` |
+| Vector stores | 🚧 | `InMemoryVectorStore` shipped (zero deps, matches `InProcessMemory`); Pinecone/Weaviate still 📋 — `PINECONE_API_KEY`, `WEAVIATE_URL`/`WEAVIATE_API_KEY` reserved in `.env.example` |
+| Chunking | ✅ | `chunk_text()` — character-based with overlap; token-aware chunking is a follow-up |
+| Retrievers | ✅ | `Retriever` (dense); exposed as a `CapabilityProvider` via `.as_tool()` — `agent.requires("knowledge_base")`, not a new `Agent` constructor parameter |
+| Hybrid search | 📋 | `BaseRetriever` is independent of embeddings at the interface level specifically to allow this later |
 | Re-ranking | 📋 | |
 | Context compression | 📋 | |
 
@@ -227,7 +225,7 @@ implementation starts.
 |---|---|---|
 | Provider | ✅ | `ProviderRegistry` |
 | Memory | ✅ | `MemoryRegistry` |
-| Retriever | 📋 | Depends on RAG |
+| Retriever | ✅ | `EmbeddingRegistry` / `VectorStoreRegistry`; swap `BaseRetriever` implementations directly |
 | Tool registry | ✅ | Construct your own `ToolRegistry()` |
 | Skill registry | ✅ | Construct your own `SkillRegistry()` |
 | Execution engine (orchestrator) | ✅ | `OrchestratorRegistry` |
@@ -244,8 +242,8 @@ implementation starts.
 | Agents | ✅ | `AgentRegistry.register(agent)` |
 | Tools | ✅ | `ToolRegistry.register(...)` / `CapabilityRegistry.register(...)` |
 | MCP servers | ✅ | `MCPClientRegistry.register(...)`, then `.register_as_capability(...)` into `CapabilityRegistry` |
-| Retrievers | 📋 | Depends on RAG |
-| Vector stores | 📋 | Depends on RAG |
+| Retrievers | ✅ | `Retriever.as_tool()` -> `CapabilityRegistry.register(...)` |
+| Vector stores | ✅ | `VectorStoreRegistry.register(...)` — Pinecone/Weaviate implementations still 📋, but the registration mechanism is ready |
 | Memory providers | ✅ | `MemoryRegistry.register(...)` |
 | Prompt templates | ✅ | `PromptTemplateRegistry.register(...)` |
 | Discovery mechanism (entry points) | 📋 | Deliberately deferred — explicit import + register for v1; see ADR-0001's Plugin Discovery section for the trigger to add it |
@@ -273,7 +271,7 @@ implementation starts.
 
 | Requirement | Status | Notes |
 |---|---|---|
-| Unit tests | ✅ | 151 tests as of this writing |
+| Unit tests | ✅ | 184 tests as of this writing |
 | Integration tests | 🚧 | Real (installed, not faked) `langgraph` integration tests exist; real-network provider integration tests do not (deliberately — see `DEVELOPMENT.md`'s no-network-in-tests rule) |
 | Mock providers | ✅ | `sys.modules`-injected fakes for OpenAI/Gemini/Anthropic SDKs |
 | Mock MCP servers | ✅ | `tests/test_mcp.py` fakes the `mcp` session object; a real stdio + Streamable HTTP server round-trip was verified manually during implementation (ADR-0004) but isn't part of CI |
@@ -341,7 +339,7 @@ implementation starts.
 
 ---
 
-*Last updated alongside `CHANGELOG.md`'s 0.2.0 entry. When a roadmap item
+*Last updated alongside `CHANGELOG.md`'s 0.3.0 entry. When a roadmap item
 ships, update its row here **and** the corresponding row in
 `ROADMAP.md` — they're allowed to organize the same facts differently,
 but not to disagree about what's actually shipped.*

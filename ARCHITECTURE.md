@@ -22,6 +22,10 @@ from source. It complements `ROADMAP.md` (what's planned) and
 > model, and how MCP tools bridge into the capability system are covered
 > in
 > [`docs/adr/0004-mcp-integration.md`](docs/adr/0004-mcp-integration.md).
+> RAG's interface decomposition (embeddings / vector stores / retrievers),
+> the in-memory default, and why retrievers are capabilities rather than
+> a new `Agent` parameter are covered in
+> [`docs/adr/0005-rag-integration.md`](docs/adr/0005-rag-integration.md).
 > This document and those ADRs should never contradict each other; if
 > they drift, the ADR is amended (or superseded) and this file is
 > updated to match.
@@ -98,6 +102,9 @@ requisite/
 ├── capabilities/   # CapabilityRegistry -- name -> best available Tool
 ├── mcp/            # BaseMCPClient + MCPClient (stdio + Streamable HTTP)
 │                   # + MCPClientRegistry -- MCP tools bridge into capabilities
+├── rag/            # BaseEmbeddingProvider, BaseVectorStore, BaseRetriever
+│                   # + Retriever (dense) + InMemoryVectorStore -- bridges
+│                   # into capabilities via Retriever.as_tool()
 ├── memory/         # BaseMemory + InProcessMemory + MemoryRegistry, plus
 │                   # BaseConversationPolicy (MessageCountPolicy, SummarizingPolicy)
 ├── prompts/        # PromptTemplate, ChatPromptTemplate, PromptTemplateRegistry
@@ -247,6 +254,9 @@ one node per agent, wired linearly, and compiles/invokes it. The
 | A new reusable capability (vs. a one-off tool) | `skills.base.BaseSkill` | pass to `Agent(skills=[...])` |
 | A new memory backend | `memory.base.BaseMemory` | `memory.factory.default_registry`, or pass directly to `Agent(memory=...)` |
 | A new MCP client/transport | `mcp.base.BaseMCPClient` | `mcp.registry.default_registry`, or bridge into `CapabilityRegistry` via `.register_as_capability()` |
+| A new vector store (Pinecone, Weaviate, ...) | `rag.base.BaseVectorStore` | `rag.factory.default_vector_store_registry` |
+| A new embedding provider | `rag.base.BaseEmbeddingProvider` | `rag.factory.default_embedding_registry` |
+| A new retrieval strategy (hybrid, BM25, ...) | `rag.base.BaseRetriever` | pass directly, or bridge via `.as_tool()` into `CapabilityRegistry` |
 | A new conversation policy (trim/summarize differently) | `memory.policies.BaseConversationPolicy` | pass directly to `Agent(conversation_policy=...)` |
 | A named, reusable prompt template | `prompts.template.PromptTemplate` / `ChatPromptTemplate` | `prompts.default_prompt_registry`, or use standalone |
 | An OpenAI-wire-compatible provider (OpenRouter, Together AI, ...) | subclass `providers.openai_provider.OpenAIProvider` with a `base_url` override -- see [ADR-0002](docs/adr/0002-provider-kwargs-and-memory-integration.md) | `providers.factory.default_registry` |

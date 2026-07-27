@@ -28,16 +28,18 @@ class FakeProvider(BaseProvider):
         super().__init__(api_key="fake-key", model=kwargs.get("model", "fake-model"))
         self.last_messages: list[Message] = []
         self.last_temperature: Optional[float] = None
+        self.last_tools: Optional[list[Any]] = None
 
     @property
     def name(self) -> str:
         return "fake"
 
     def chat(
-        self, messages: Sequence[Message], *, model=None, temperature=None, **kwargs
+        self, messages: Sequence[Message], *, model=None, temperature=None, tools=None, **kwargs
     ) -> ChatResponse:
         self.last_messages = list(messages)
         self.last_temperature = temperature
+        self.last_tools = list(tools) if tools is not None else None
         return ChatResponse(
             content="fake response",
             model=model or self._model,
@@ -46,9 +48,9 @@ class FakeProvider(BaseProvider):
         )
 
     async def achat(
-        self, messages: Sequence[Message], *, model=None, temperature=None, **kwargs
+        self, messages: Sequence[Message], *, model=None, temperature=None, tools=None, **kwargs
     ) -> ChatResponse:
-        return self.chat(messages, model=model, temperature=temperature, **kwargs)
+        return self.chat(messages, model=model, temperature=temperature, tools=tools, **kwargs)
 
     def stream(
         self, messages: Sequence[Message], *, model=None, temperature=None, **kwargs
@@ -186,3 +188,85 @@ def test_missing_default_provider_raises(registry_with_fake: ProviderRegistry) -
     empty_settings = Settings(default_provider="")
     with pytest.raises(ConfigurationException):
         AI(settings=empty_settings, registry=registry_with_fake)
+
+
+# ---------------------------------------------------------------------------
+# tools= accepts Tool instances, @tool-decorated functions, and plain functions
+# ---------------------------------------------------------------------------
+
+
+def test_chat_response_tools_accepts_tool_decorated_function(
+    registry_with_fake: ProviderRegistry, settings: Settings
+) -> None:
+    from requisite.tools import tool
+
+    @tool
+    def get_weather(city: str) -> str:
+        """Get the weather for a city."""
+        return f"sunny in {city}"
+
+    ai = AI(provider="fake", settings=settings, registry=registry_with_fake)
+    ai.chat_response("weather?", tools=[get_weather])
+
+    provider: FakeProvider = ai.provider  # type: ignore[assignment]
+    assert provider.last_tools is not None
+    assert provider.last_tools[0].name == "get_weather"
+    assert provider.last_tools[0].to_openai_schema()["function"]["name"] == "get_weather"
+
+
+def test_chat_response_tools_accepts_plain_function(
+    registry_with_fake: ProviderRegistry, settings: Settings
+) -> None:
+    def get_weather(city: str) -> str:
+        """Get the weather for a city."""
+        return f"sunny in {city}"
+
+    ai = AI(provider="fake", settings=settings, registry=registry_with_fake)
+    ai.chat_response("weather?", tools=[get_weather])
+
+    provider: FakeProvider = ai.provider  # type: ignore[assignment]
+    assert provider.last_tools[0].name == "get_weather"  # type: ignore[index]
+
+
+def test_chat_response_tools_accepts_tool_instance_directly(
+    registry_with_fake: ProviderRegistry, settings: Settings
+) -> None:
+    from requisite.tools.base import Tool
+
+    def get_weather(city: str) -> str:
+        return f"sunny in {city}"
+
+    built_tool = Tool.from_function(get_weather)
+    ai = AI(provider="fake", settings=settings, registry=registry_with_fake)
+    ai.chat_response("weather?", tools=[built_tool])
+
+    provider: FakeProvider = ai.provider  # type: ignore[assignment]
+    assert provider.last_tools == [built_tool]
+
+
+def test_chat_response_without_tools_passes_none(
+    registry_with_fake: ProviderRegistry, settings: Settings
+) -> None:
+    ai = AI(provider="fake", settings=settings, registry=registry_with_fake)
+    ai.chat_response("hello")
+    provider: FakeProvider = ai.provider  # type: ignore[assignment]
+    assert provider.last_tools is None
+
+
+@pytest.mark.asyncio
+async def test_achat_response_tools_accepts_tool_decorated_function(
+    registry_with_fake: ProviderRegistry, settings: Settings
+) -> None:
+    from requisite.tools import tool
+
+    @tool
+    def get_weather(city: str) -> str:
+        """Get the weather for a city."""
+        return f"sunny in {city}"
+
+    ai = AI(provider="fake", settings=settings, registry=registry_with_fake)
+    await ai.achat_response("weather?", tools=[get_weather])
+
+    provider: FakeProvider = ai.provider  # type: ignore[assignment]
+    assert provider.last_tools is not None
+    assert provider.last_tools[0].name == "get_weather"

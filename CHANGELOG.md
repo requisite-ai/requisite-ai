@@ -7,6 +7,70 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.3.1] - 2026-07-26
+
+### Fixed
+
+- **`AI.chat`/`chat_response`/`achat`/`achat_response`'s `tools=` parameter
+  now accepts `@tool`-decorated functions and plain functions directly**,
+  not just `Tool` instances — matching what `Agent(tools=...)` already
+  did, and what the README's own tool-calling example showed. Previously,
+  `ai.chat(prompt, tools=[my_decorated_function])` raised an
+  `AttributeError` at the provider layer (`to_openai_schema` doesn't
+  exist on a plain function, only on the `.tool` attached to it) — a real
+  runtime bug affecting the framework's documented public API, not just
+  an example. Fixed by resolving each item via
+  `requisite.tools.registry.resolve_tool_like` before dispatching to the
+  provider, same as `ToolRegistry` already did.
+- `@tool`'s type signature now returns a proper `Protocol`
+  (`ToolFunction[P, R]`) declaring both the original call signature and
+  the attached `.tool: Tool` attribute, instead of just returning the
+  original function type unchanged. This makes `.tool` access and
+  passing a decorated function to `tools=[...]` both type-check
+  correctly under `mypy --strict`, rather than only working at runtime
+  with no static verification.
+- Fixed a test isolation bug in `tests/test_settings.py`:
+  `Settings(_env_file=None)` only disables reading the `.env` *file* —
+  it does not and should not block real OS environment variables. A test
+  only cleared 2 of 13 `Settings`-relevant env vars, so a real
+  `DEFAULT_PROVIDER` (or similar) set in the shell -- commonly injected
+  by VS Code's Python extension loading `.env` into the integrated
+  terminal / debug session -- could make the test fail on some machines
+  despite passing in CI. Fixed with an `autouse` fixture clearing every
+  `Settings` field's env var before each test.
+- `examples/rag_example.py` no longer hardcodes OpenAI for embeddings or
+  chat — it now picks the embedding provider based on whichever API key
+  is actually configured, and lets the agent's chat provider default to
+  `Settings.default_provider` rather than assuming `"openai"`.
+
+## [0.3.0] - 2026-07-23
+
+### Added
+
+- RAG integration: `BaseEmbeddingProvider`, `BaseVectorStore`, and
+  `BaseRetriever` interfaces (RAG decomposes into independent extension
+  points, per ADR-0001), plus a shipped `Retriever` (dense retrieval)
+  composing an embedding provider and a vector store.
+- `OpenAIEmbeddingProvider` (`text-embedding-3-small` default) and
+  `GeminiEmbeddingProvider` (`gemini-embedding-001` default).
+- `InMemoryVectorStore` — zero-dependency default, pure-Python cosine
+  similarity, mirroring `InProcessMemory`'s role for conversation memory.
+  Pinecone and Weaviate integrations are a deliberate scope cut for this
+  release, not yet implemented — `.env.example` already reserves their
+  keys.
+- `chunk_text()` — character-based chunking with overlap; a token-aware
+  chunker is a documented follow-up, not this release.
+- `Retriever.as_tool()` — bridges a retriever into `CapabilityRegistry`
+  exactly like an MCP server or a native tool:
+  `agent.requires("knowledge_base")`. This was an explicit design
+  decision (over a new `Agent(retriever=...)` parameter), reusing the
+  existing capability mechanism.
+- ADR-0005, documenting the interface decomposition, the chunking
+  approach, the in-memory-default/Pinecone-Weaviate-deferred decision,
+  and the capability-bridge design.
+- `ROADMAP.md`: added an Evaluation section (not yet implemented,
+  logged following external architecture review feedback).
+
 ## [0.2.0] - 2026-07-17
 
 ### Added
@@ -101,6 +165,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `pydantic-settings`-based `Settings`, `Message`/`ChatResponse` models,
   and the `AIException` hierarchy.
 
-[Unreleased]: https://github.com/requisite-ai/requisite-ai/compare/v0.2.0...HEAD
+[Unreleased]: https://github.com/requisite-ai/requisite-ai/compare/v0.3.1...HEAD
+[0.3.1]: https://github.com/requisite-ai/requisite-ai/compare/v0.3.0...v0.3.1
+[0.3.0]: https://github.com/requisite-ai/requisite-ai/compare/v0.2.0...v0.3.0
 [0.2.0]: https://github.com/requisite-ai/requisite-ai/compare/v0.1.0...v0.2.0
 [0.1.0]: https://github.com/requisite-ai/requisite-ai/releases/tag/v0.1.0

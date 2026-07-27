@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "requisite-ai"
-version = "0.2.0"
+version = "0.3.1"
 description = "A provider-agnostic, plugin-based framework for building AI applications and agents. Declare what you need -- providers, tools, capabilities -- not which SDK provides it."
 readme = "README.md"
 requires-python = ">=3.10"
@@ -27,6 +27,7 @@ groq = ["openai>=1.35"]          # Groq is OpenAI-wire-compatible; no separate S
 azure_openai = ["openai>=1.35"]  # Azure OpenAI v1 GA API also uses the plain openai client
 langgraph = ["langgraph>=0.2"]
 mcp = ["mcp>=1.28"]
+rag = ["openai>=1.35", "google-genai>=1.0"]  # embedding providers; no vector-store SDK needed for the in-memory default
 all = [
     "openai>=1.35",
     "google-genai>=1.0",

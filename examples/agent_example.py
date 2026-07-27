@@ -19,7 +19,7 @@ def get_weather(city: str) -> str:
 def main() -> None:
     agent = Agent(
         name="Weather Agent",
-        provider="openai",
+        provider="gemini",
         tools=[get_weather],
         system_prompt="You are a helpful weather assistant. Use the get_weather tool when needed.",
     )

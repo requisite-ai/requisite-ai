@@ -28,18 +28,42 @@ With an explicit name/description:
 from __future__ import annotations
 
 import functools
-from typing import Any, Callable, Optional, TypeVar, overload
+from typing import Any, Callable, Optional, ParamSpec, Protocol, TypeVar, overload
 
 from requisite.tools.base import Tool
 
-F = TypeVar("F", bound=Callable[..., Any])
+P = ParamSpec("P")
+R = TypeVar("R")
+R_co = TypeVar("R_co", covariant=True)
 
 
-def _wrap(func: F, *, name: Optional[str], description: Optional[str]) -> F:
+class ToolFunction(Protocol[P, R_co]):
+    """The type of a function decorated with ``@tool``.
+
+    Statically describes both halves of what ``@tool`` produces: the
+    function remains directly callable with its original signature, and
+    also carries a ``.tool`` attribute holding the generated
+    :class:`~requisite.tools.base.Tool`. Declaring this as a real
+    ``Protocol`` (rather than returning the original function type
+    as-is) is what lets type checkers verify both
+    ``search_weather("Paris")`` and ``search_weather.tool.execute(...)``
+    / passing ``search_weather`` directly to ``tools=[...]`` -- accessing
+    ``.tool`` on a plain, undecorated function is a real type error,
+    exactly as it would be a real ``AttributeError`` at runtime.
+    """
+
+    tool: Tool
+
+    def __call__(self, *args: P.args, **kwargs: P.kwargs) -> R_co: ...
+
+
+def _wrap(
+    func: Callable[P, R], *, name: Optional[str], description: Optional[str]
+) -> ToolFunction[P, R]:
     built_tool = Tool.from_function(func, name=name, description=description)
 
     @functools.wraps(func)
-    def wrapper(*args: Any, **kwargs: Any) -> Any:
+    def wrapper(*args: P.args, **kwargs: P.kwargs) -> R:
         return func(*args, **kwargs)
 
     wrapper.tool = built_tool  # type: ignore[attr-defined]
@@ -47,15 +71,20 @@ def _wrap(func: F, *, name: Optional[str], description: Optional[str]) -> F:
 
 
 @overload
-def tool(func: F) -> F: ...
+def tool(func: Callable[P, R]) -> ToolFunction[P, R]: ...
 
 
 @overload
-def tool(*, name: Optional[str] = None, description: Optional[str] = None) -> Callable[[F], F]: ...
+def tool(
+    *, name: Optional[str] = None, description: Optional[str] = None
+) -> Callable[[Callable[P, R]], ToolFunction[P, R]]: ...
 
 
 def tool(
-    func: Optional[F] = None, *, name: Optional[str] = None, description: Optional[str] = None
+    func: Optional[Callable[P, R]] = None,
+    *,
+    name: Optional[str] = None,
+    description: Optional[str] = None,
 ) -> Any:
     """Mark a function as an LLM-callable tool.
 
@@ -66,12 +95,15 @@ def tool(
     the generated :class:`~requisite.tools.base.Tool` is attached as
     the ``.tool`` attribute for registration with a
     :class:`~requisite.tools.registry.ToolRegistry` or an
-    :class:`~requisite.agents.agent.Agent`.
+    :class:`~requisite.agents.agent.Agent`. It can also be passed
+    directly wherever a tool is accepted (``ai.chat(tools=[my_tool])``,
+    ``Agent(tools=[my_tool])``) -- both resolve a decorated function's
+    ``.tool`` automatically, the same as passing the ``Tool`` directly.
     """
     if func is not None:
         return _wrap(func, name=name, description=description)
 
-    def decorator(inner: F) -> F:
+    def decorator(inner: Callable[P, R]) -> ToolFunction[P, R]:
         return _wrap(inner, name=name, description=description)
 
     return decorator

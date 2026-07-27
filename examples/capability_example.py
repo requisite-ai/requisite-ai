@@ -16,7 +16,7 @@ def main() -> None:
     # The three built-in capabilities work with zero setup: "weather" and
     # "internet_search" call free, keyless public APIs; "filesystem" reads
     # local files. See requisite/capabilities/resolvers.py.
-    agent = Agent(name="Assistant", provider="openai")
+    agent = Agent(name="Assistant", provider="gemini")
     agent.requires("weather", "internet_search", "filesystem")
 
     result = agent.run("What's the weather in Tokyo right now?")
@@ -28,8 +28,9 @@ def main() -> None:
     # Register a higher-priority provider for "weather" (e.g. a paid API),
     # gated on an API key being configured. Agent code that already calls
     # `.requires("weather")` picks it up automatically -- no code changes.
-    from requisite.capabilities import default_registry
     import os
+
+    from requisite.capabilities import default_registry
 
     def paid_weather_api(city: str) -> str:
         """Paid, more accurate weather provider."""
@@ -43,7 +44,7 @@ def main() -> None:
         is_available=lambda: bool(os.environ.get("ACME_WEATHER_API_KEY")),
     )
 
-    agent2 = Agent(name="Assistant2", provider="openai")
+    agent2 = Agent(name="Assistant2", provider="gemini")
     agent2.requires("weather")  # uses acme-weather if ACME_WEATHER_API_KEY is set, else falls back
     print(agent2.run("Weather in Paris?").content)
 

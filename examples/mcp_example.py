@@ -35,7 +35,7 @@ def main() -> None:
         first_tool_name = tools[0].name
         filesystem.register_as_capability(capabilities, capability=first_tool_name)
 
-        agent = Agent(name="Assistant", provider="openai")
+        agent = Agent(name="Assistant", provider="gemini")
         agent.requires(first_tool_name)
         result = agent.run(
             f"Use the {first_tool_name} tool to help me, then summarize what it returned."

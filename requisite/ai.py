@@ -27,7 +27,7 @@ from __future__ import annotations
 
 import logging
 from collections.abc import AsyncIterator, Iterator, Sequence
-from typing import TYPE_CHECKING, Any, Optional, TypeVar, Union
+from typing import Any, Optional, TypeVar, Union
 
 from pydantic import BaseModel
 
@@ -36,9 +36,7 @@ from requisite.core.exceptions import ConfigurationException
 from requisite.core.interfaces import ChatResponse, Message
 from requisite.providers.base import BaseProvider
 from requisite.providers.factory import ProviderRegistry, default_registry
-
-if TYPE_CHECKING:
-    from requisite.tools.base import Tool
+from requisite.tools.registry import ToolLike, resolve_tool_like
 
 logger = logging.getLogger("requisite")
 
@@ -155,7 +153,7 @@ class AI:
         system_prompt: Optional[str] = None,
         model: Optional[str] = None,
         temperature: Optional[float] = None,
-        tools: Optional[Sequence["Tool"]] = None,
+        tools: Optional[Sequence[ToolLike]] = None,
         response_model: Optional[type[ResponseModelT]] = None,
         **kwargs: Any,
     ) -> Any:
@@ -173,11 +171,15 @@ class AI:
         temperature:
             Overrides the configured temperature for this call.
         tools:
-            Tools the model may call. When the model requests one, the
-            tool is *not* executed automatically here -- inspect
-            ``chat_response(...).tool_calls`` (or use an
-            :class:`~requisite.agents.agent.Agent`, which runs the
-            full tool-calling loop for you).
+            Tools the model may call -- :class:`~requisite.tools.base.Tool`
+            instances, plain functions, or ``@tool``-decorated functions
+            (all accepted directly; a decorated function's attached
+            ``.tool`` is resolved automatically, the same as
+            :class:`~requisite.tools.registry.ToolRegistry` does). When
+            the model requests one, the tool is *not* executed
+            automatically here -- inspect ``chat_response(...).tool_calls``
+            (or use an :class:`~requisite.agents.agent.Agent`, which runs
+            the full tool-calling loop for you).
         response_model:
             A Pydantic model class. When given, the response is
             constrained to match its schema and this method returns a
@@ -213,7 +215,7 @@ class AI:
         system_prompt: Optional[str] = None,
         model: Optional[str] = None,
         temperature: Optional[float] = None,
-        tools: Optional[Sequence["Tool"]] = None,
+        tools: Optional[Sequence[ToolLike]] = None,
         response_model: Optional[type[BaseModel]] = None,
         **kwargs: Any,
     ) -> ChatResponse:
@@ -222,11 +224,12 @@ class AI:
         effective_temperature = (
             temperature if temperature is not None else self._settings.temperature
         )
+        resolved_tools = [resolve_tool_like(t) for t in tools] if tools else None
         return self._provider.chat(
             messages,
             model=model,
             temperature=effective_temperature,
-            tools=tools,
+            tools=resolved_tools,
             response_model=response_model,
             **kwargs,
         )
@@ -238,7 +241,7 @@ class AI:
         system_prompt: Optional[str] = None,
         model: Optional[str] = None,
         temperature: Optional[float] = None,
-        tools: Optional[Sequence["Tool"]] = None,
+        tools: Optional[Sequence[ToolLike]] = None,
         response_model: Optional[type[ResponseModelT]] = None,
         **kwargs: Any,
     ) -> Any:
@@ -263,7 +266,7 @@ class AI:
         system_prompt: Optional[str] = None,
         model: Optional[str] = None,
         temperature: Optional[float] = None,
-        tools: Optional[Sequence["Tool"]] = None,
+        tools: Optional[Sequence[ToolLike]] = None,
         response_model: Optional[type[BaseModel]] = None,
         **kwargs: Any,
     ) -> ChatResponse:
@@ -272,11 +275,12 @@ class AI:
         effective_temperature = (
             temperature if temperature is not None else self._settings.temperature
         )
+        resolved_tools = [resolve_tool_like(t) for t in tools] if tools else None
         return await self._provider.achat(
             messages,
             model=model,
             temperature=effective_temperature,
-            tools=tools,
+            tools=resolved_tools,
             response_model=response_model,
             **kwargs,
         )

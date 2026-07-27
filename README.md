@@ -32,18 +32,28 @@ agent.run("What's the weather in Tokyo?")
 
 ## Install
 
+Requisite is [published on PyPI](https://pypi.org/project/requisite-ai/):
+
 ```bash
-pip install -e .[all]         # every provider + langgraph
-pip install -e .[openai]      # OpenAI only
-pip install -e .[anthropic]   # Anthropic (Claude) only
-pip install -e .[gemini]      # Gemini only
-pip install -e .[groq]        # Groq only (uses the openai package -- wire-compatible)
-pip install -e .[azure_openai] # Azure OpenAI only (uses the openai package)
-pip install -e .[mcp]         # MCP client integration
-pip install -e .[langgraph]   # native + langgraph orchestration
+pip install requisite-ai                  # core only -- no provider SDKs
+pip install "requisite-ai[all]"           # every provider + langgraph
+pip install "requisite-ai[openai]"        # OpenAI only
+pip install "requisite-ai[anthropic]"     # Anthropic (Claude) only
+pip install "requisite-ai[gemini]"        # Gemini only
+pip install "requisite-ai[groq]"          # Groq only (uses the openai package -- wire-compatible)
+pip install "requisite-ai[azure_openai]"  # Azure OpenAI only (uses the openai package)
+pip install "requisite-ai[mcp]"           # MCP client integration
+pip install "requisite-ai[rag]"           # RAG (embedding providers; in-memory vector store needs nothing extra)
+pip install "requisite-ai[langgraph]"     # native + langgraph orchestration
 ```
 
-Or with the plain requirements file: `pip install -r requirements.txt`
+> Quoting the package name (`"requisite-ai[all]"`) avoids shell globbing
+> issues with `[...]` in zsh; plain `pip install requisite-ai[all]` also
+> works in bash.
+
+**Contributing to Requisite itself** (not just using it)? See
+[`CONTRIBUTING.md`](CONTRIBUTING.md) for an editable install from source
+(`pip install -e ".[dev,all]"`) and running the test suite/linters.
 
 > **Note on the Gemini SDK:** this framework uses the current, unified
 > `google-genai` package (`from google import genai`). Do not install the
@@ -290,6 +300,50 @@ than holding a persistent session — see
 optional persistent-session mode if reconnect latency becomes a problem
 for your use case.
 
+### RAG (Retrieval-Augmented Generation)
+
+A retriever is a capability too — `agent.requires("knowledge_base")`
+works exactly like `"weather"` or an MCP-backed tool:
+
+```python
+from requisite import Agent
+from requisite.rag import Retriever
+from requisite.rag.embeddings import OpenAIEmbeddingProvider
+from requisite.rag.vectorstores import InMemoryVectorStore
+from requisite.capabilities import default_registry as capabilities
+
+retriever = Retriever(
+    embedding_provider=OpenAIEmbeddingProvider(api_key="sk-..."),
+    vector_store=InMemoryVectorStore(),  # zero-dependency default
+)
+retriever.add_texts([
+    "Paris is the capital of France.",
+    "The Eiffel Tower was completed in 1889.",
+])
+
+capabilities.register("knowledge_base", retriever.as_tool())
+
+agent = Agent(name="Assistant", provider="openai")
+agent.requires("knowledge_base")
+print(agent.run("What's the capital of France?").content)
+```
+
+`add_texts` chunks each document (character-based, with overlap) before
+embedding and storing it:
+
+```python
+retriever.add_texts(long_document_text, chunk_size=1000, chunk_overlap=200)
+```
+
+`InMemoryVectorStore` is the zero-dependency default — pure-Python cosine
+similarity, fine for a few thousand chunks. Pinecone and Weaviate
+integrations are planned (`PINECONE_API_KEY`/`WEAVIATE_URL` are already
+reserved in `.env.example`) but not yet implemented — see
+[ADR-0005](docs/adr/0005-rag-integration.md) for the interface
+decomposition (embeddings / vector stores / retrievers are three
+independent extension points) and why the in-memory default was chosen
+over requiring a real vector DB from day one.
+
 ### Memory: conversation history across separate calls
 
 ```python
@@ -461,6 +515,8 @@ requisite/
 │                   # "weather") to whichever implementation is available
 ├── mcp/            # BaseMCPClient + MCPClient (stdio + Streamable HTTP)
 │                   # + MCPClientRegistry -- bridges MCP tools into capabilities
+├── rag/            # BaseEmbeddingProvider, BaseVectorStore, BaseRetriever
+│                   # + Retriever (dense) + InMemoryVectorStore
 ├── memory/         # BaseMemory + InProcessMemory + MemoryRegistry, plus
 │                   # BaseConversationPolicy (MessageCountPolicy, SummarizingPolicy)
 ├── prompts/        # PromptTemplate, ChatPromptTemplate, PromptTemplateRegistry
@@ -524,10 +580,11 @@ tested against fully in-memory fake providers.
 Implemented: 5 providers (OpenAI, Anthropic, Gemini, Groq, Azure OpenAI),
 structured outputs, tool calling, skills, capability resolution
 (`agent.requires(...)`), MCP client integration (stdio + Streamable
-HTTP), memory + conversation policies (`Agent(memory=...,
-conversation_policy=...)`), prompt templates, structured logging, agents
-+ registry, multi-agent workflows (sequential/parallel, native +
-langgraph backends).
+HTTP), RAG (embeddings, in-memory vector store, dense retrieval —
+Pinecone/Weaviate still planned), memory + conversation policies
+(`Agent(memory=..., conversation_policy=...)`), prompt templates,
+structured logging, agents + registry, multi-agent workflows
+(sequential/parallel, native + langgraph backends).
 
 See [`ROADMAP.md`](ROADMAP.md) for the full, per-layer status table
 (providers, orchestration strategies, MCP, memory, RAG, ...) and what's
