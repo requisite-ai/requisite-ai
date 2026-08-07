@@ -104,7 +104,12 @@ class GeminiProvider(BaseProvider):
         messages that requested tool calls are encoded as
         ``function_call`` parts, and tool-result messages are encoded as
         ``function_response`` parts on a ``"user"``-role turn, per the
-        Gemini function-calling protocol.
+        Gemini function-calling protocol. When a :class:`ToolCall` carries
+        a ``thought_signature`` in ``provider_data`` (set by this same
+        provider on a prior turn), it is echoed back onto the
+        reconstructed ``function_call`` part -- Gemini requires this for
+        multi-turn tool-calling conversations and rejects the request
+        with ``400 INVALID_ARGUMENT`` otherwise.
         """
         from google.genai import types
 
@@ -120,7 +125,12 @@ class GeminiProvider(BaseProvider):
                 if message.content:
                     parts.append(types.Part.from_text(text=message.content))
                 for call in message.tool_calls:
-                    parts.append(types.Part.from_function_call(name=call.name, args=call.arguments))
+                    function_call_part = types.Part.from_function_call(
+                        name=call.name, args=call.arguments
+                    )
+                    if isinstance(call.provider_data, bytes):
+                        function_call_part.thought_signature = call.provider_data
+                    parts.append(function_call_part)
                 contents.append(types.Content(role="model", parts=parts))
                 continue
 
@@ -329,7 +339,15 @@ class GeminiProvider(BaseProvider):
     def _to_chat_response(
         self, response: Any, model: str, *, response_model: Optional[type[BaseModel]] = None
     ) -> ChatResponse:
-        """Convert a ``google-genai`` response object into a :class:`ChatResponse`."""
+        """Convert a ``google-genai`` response object into a :class:`ChatResponse`.
+
+        Walks ``candidates[0].content.parts`` directly rather than using the
+        ``response.text`` / ``response.function_calls`` convenience
+        properties: both discard the per-part ``thought_signature`` field
+        that newer Gemini API versions require echoed back verbatim on
+        function-call parts in later turns, and ``response.text`` also logs
+        a noisy warning whenever the response contains a function call.
+        """
         usage_meta = getattr(response, "usage_metadata", None)
         usage = Usage(
             prompt_tokens=getattr(usage_meta, "prompt_token_count", 0) or 0,
@@ -342,28 +360,36 @@ class GeminiProvider(BaseProvider):
             finish_reason = getattr(candidates[0], "finish_reason", None)
             finish_reason = str(finish_reason) if finish_reason is not None else None
 
+        parts: list[Any] = []
+        if candidates and getattr(candidates[0], "content", None) is not None:
+            parts = getattr(candidates[0].content, "parts", None) or []
+
+        text_parts: list[str] = []
         tool_calls: list[ToolCall] = []
-        function_calls = getattr(response, "function_calls", None) or []
-        for index, call in enumerate(function_calls):
-            args = dict(getattr(call, "args", None) or {})
-            tool_calls.append(
-                ToolCall(
-                    id=f"{getattr(call, 'name', 'call')}-{index}", name=call.name, arguments=args
+        for index, part in enumerate(parts):
+            part_text = getattr(part, "text", None)
+            if part_text:
+                text_parts.append(part_text)
+
+            function_call = getattr(part, "function_call", None)
+            if function_call is not None:
+                args = dict(getattr(function_call, "args", None) or {})
+                call_name = getattr(function_call, "name", "call")
+                tool_calls.append(
+                    ToolCall(
+                        id=f"{call_name}-{index}",
+                        name=call_name,
+                        arguments=args,
+                        provider_data=getattr(part, "thought_signature", None),
+                    )
                 )
-            )
 
         parsed = None
         if response_model is not None:
             parsed = getattr(response, "parsed", None)
 
-        text = ""
-        try:
-            text = response.text or ""
-        except Exception:  # noqa: BLE001 - .text raises if the response is a pure function call
-            text = ""
-
         return ChatResponse(
-            content=text,
+            content="".join(text_parts),
             model=model,
             provider=self.name,
             usage=usage,

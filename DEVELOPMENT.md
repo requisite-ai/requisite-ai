@@ -18,6 +18,16 @@ All four run in CI (`.github/workflows/ci.yml`) and are required to pass
 before merge. Run them locally before pushing — CI failures on formatting
 alone are a waste of a review cycle.
 
+**Dev tool versions (`ruff`, `mypy`) are pinned exactly** (`ruff==X.Y.Z`,
+not `ruff>=X.Y.Z`) in `pyproject.toml`'s `dev` extra, `requirements.txt`,
+and every CI job installs from one of those rather than a bare
+`pip install ruff`. This is deliberate, not an oversight: ruff 0.16.0
+(July 2026) expanded its *default* lint rule set from 59 to 413 rules in
+one release, and CI jobs that did `pip install ruff` unpinned broke
+overnight with no code change on our side. Bump a pinned tool version
+deliberately, in its own PR, after checking what changed — never let it
+drift silently via an unpinned install.
+
 ## Typing
 
 - **Type hints on everything**, including private helpers and test

@@ -39,11 +39,20 @@ class ToolCall(BaseModel):
         Parsed keyword arguments for the call. Providers report
         arguments as a JSON string on the wire; this is already decoded
         into a dict.
+    provider_data:
+        Opaque, provider-specific data required to correctly replay this
+        exact tool call in a later turn (e.g. Gemini's
+        ``thought_signature``). Populated only by the provider that
+        produced this :class:`ToolCall`; every other provider ignores
+        it. Never construct or interpret this value yourself.
     """
+
+    model_config = ConfigDict(arbitrary_types_allowed=True)
 
     id: str
     name: str
     arguments: dict[str, Any] = Field(default_factory=dict)
+    provider_data: Optional[Any] = None
 
 
 class Message(BaseModel):

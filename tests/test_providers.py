@@ -10,7 +10,7 @@ from __future__ import annotations
 
 import sys
 import types
-from typing import Any
+from typing import Any, ClassVar, Optional
 
 import pytest
 
@@ -200,13 +200,35 @@ def test_openai_provider_parses_tool_calls(fake_openai_module: types.ModuleType)
 # ---------------------------------------------------------------------------
 
 
+class _FakeGeminiFunctionCall:
+    def __init__(self, name: str, args: dict[str, Any]) -> None:
+        self.name = name
+        self.args = args
+
+
 class _FakePart:
-    def __init__(self, text: str) -> None:
+    def __init__(
+        self,
+        *,
+        text: Optional[str] = None,
+        function_call: Optional[_FakeGeminiFunctionCall] = None,
+        thought_signature: Optional[bytes] = None,
+    ) -> None:
         self.text = text
+        self.function_call = function_call
+        self.thought_signature = thought_signature
 
     @classmethod
     def from_text(cls, text: str) -> "_FakePart":
-        return cls(text)
+        return cls(text=text)
+
+    @classmethod
+    def from_function_call(cls, name: str, args: dict[str, Any]) -> "_FakePart":
+        return cls(function_call=_FakeGeminiFunctionCall(name, args))
+
+    @classmethod
+    def from_function_response(cls, name: str, response: dict[str, Any]) -> "_FakePart":
+        return cls(text=None)
 
 
 class _FakeContent:
@@ -215,26 +237,48 @@ class _FakeContent:
         self.parts = parts
 
 
+class _FakeCandidate:
+    def __init__(self, content: _FakeContent, *, finish_reason: str = "STOP") -> None:
+        self.content = content
+        self.finish_reason = finish_reason
+
+
 class _FakeGenerateContentConfig:
     def __init__(self, **kwargs: Any) -> None:
         self.kwargs = kwargs
 
 
 class _FakeGeminiResponse:
-    def __init__(self, text: str) -> None:
-        self.text = text
+    def __init__(self, parts: list[_FakePart], *, finish_reason: str = "STOP") -> None:
         self.usage_metadata = types.SimpleNamespace(
             prompt_token_count=3, candidates_token_count=4, total_token_count=7
         )
-        self.candidates = [types.SimpleNamespace(finish_reason="STOP")]
+        self.candidates = [
+            _FakeCandidate(_FakeContent("model", parts), finish_reason=finish_reason)
+        ]
 
 
 class _FakeGeminiModels:
+    """Real ``.models.generate_content``, plus a test hook.
+
+    Tests that need a specific response shape (e.g. a function call with a
+    ``thought_signature``) set ``next_response`` via ``monkeypatch`` before
+    calling into the provider; it's consumed once and cleared. Absent that,
+    ``generate_content`` echoes the last message's text, matching the
+    original fixture's behavior.
+    """
+
+    next_response: ClassVar[Optional[_FakeGeminiResponse]] = None
+
     def generate_content(
         self, *, model: str, contents: list[Any], config: Any
     ) -> _FakeGeminiResponse:
+        if _FakeGeminiModels.next_response is not None:
+            response = _FakeGeminiModels.next_response
+            _FakeGeminiModels.next_response = None
+            return response
         last_text = contents[-1].parts[0].text if contents else ""
-        return _FakeGeminiResponse(f"echo: {last_text}")
+        return _FakeGeminiResponse([_FakePart.from_text(f"echo: {last_text}")])
 
 
 class _FakeGeminiClient:
@@ -283,6 +327,63 @@ def test_gemini_provider_missing_sdk_raises_configuration_exception(
     provider = GeminiProvider(api_key="g-test", model="gemini-2.5-flash")
     with pytest.raises(ConfigurationException):
         provider.chat([Message.user("hi")])
+
+
+def test_gemini_provider_captures_thought_signature_on_tool_call(
+    fake_genai_module: types.ModuleType, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A function-call part's thought_signature is captured into ToolCall.provider_data."""
+    from requisite.providers.gemini_provider import GeminiProvider
+
+    part = _FakePart.from_function_call(name="search_weather", args={"city": "Paris"})
+    part.thought_signature = b"sig-bytes"
+    monkeypatch.setattr(_FakeGeminiModels, "next_response", _FakeGeminiResponse([part]))
+
+    provider = GeminiProvider(api_key="g-test", model="gemini-2.5-flash")
+    response = provider.chat([Message.user("weather in paris")])
+
+    assert len(response.tool_calls) == 1
+    assert response.tool_calls[0].name == "search_weather"
+    assert response.tool_calls[0].arguments == {"city": "Paris"}
+    assert response.tool_calls[0].provider_data == b"sig-bytes"
+
+
+def test_gemini_provider_echoes_thought_signature_on_next_turn(
+    fake_genai_module: types.ModuleType,
+) -> None:
+    """A ToolCall.provider_data captured from a prior turn is echoed back verbatim."""
+    from requisite.providers.gemini_provider import GeminiProvider
+
+    provider = GeminiProvider(api_key="g-test", model="gemini-2.5-flash")
+    tool_call = ToolCall(
+        id="search_weather-0",
+        name="search_weather",
+        arguments={"city": "Paris"},
+        provider_data=b"sig-bytes",
+    )
+    message = Message.assistant_tool_calls([tool_call])
+
+    contents, _ = provider._build_contents_and_system([message])
+
+    reconstructed_part = contents[0].parts[0]
+    assert reconstructed_part.function_call.name == "search_weather"
+    assert reconstructed_part.thought_signature == b"sig-bytes"
+
+
+def test_gemini_provider_leaves_thought_signature_unset_without_provider_data(
+    fake_genai_module: types.ModuleType,
+) -> None:
+    """A ToolCall with no provider_data (e.g. hand-built) doesn't fabricate a signature."""
+    from requisite.providers.gemini_provider import GeminiProvider
+
+    provider = GeminiProvider(api_key="g-test", model="gemini-2.5-flash")
+    tool_call = ToolCall(id="search_weather-0", name="search_weather", arguments={"city": "Paris"})
+    message = Message.assistant_tool_calls([tool_call])
+
+    contents, _ = provider._build_contents_and_system([message])
+
+    reconstructed_part = contents[0].parts[0]
+    assert reconstructed_part.thought_signature is None
 
 
 # ---------------------------------------------------------------------------

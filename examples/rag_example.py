@@ -5,15 +5,16 @@ Shows building a retriever (embeddings + in-memory vector store),
 adding documents, and exposing it to an agent as a capability so
 `agent.requires("knowledge_base")` works exactly like any other capability.
 
-Run with whichever provider(s) you've configured in `.env` -- this script
-doesn't hardcode a provider. Embeddings and chat completion are picked
-independently: you can chat with Gemini while embedding with OpenAI, or
-any other combination, since a retriever's embedding provider has nothing
-to do with an agent's chat provider.
+Uses Gemini for both embeddings and chat by default. A retriever's
+embedding provider is independent of an agent's chat provider, though --
+swap in `OpenAIEmbeddingProvider` (from `requisite.rag.embeddings`) if
+you'd rather embed with OpenAI while chatting with a different provider,
+or vice versa.
 
-    cp .env.example .env   # then fill in at least one of:
-    #   OPENAI_API_KEY=...        (for OpenAI embeddings and/or chat)
-    #   GEMINI_API_KEY=...        (for Gemini embeddings and/or chat)
+    cp .env.example .env   # then fill in:
+    #   GEMINI_API_KEY=...
+    #   DEFAULT_PROVIDER=gemini
+    #   MODEL=gemini-3.1-flash-lite
     python examples/rag_example.py
 """
 

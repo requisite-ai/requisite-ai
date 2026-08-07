@@ -7,6 +7,62 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.3.4] - 2026-08-07
+
+### Fixed
+
+- `examples/mcp_example.py` hardcoded `/tmp` as the filesystem MCP
+  server's allowed directory. `@modelcontextprotocol/server-filesystem`
+  validates that directory at startup and exits before completing the
+  MCP handshake if it doesn't exist -- on Windows, where `/tmp` isn't a
+  valid path, this surfaced as `mcp.shared.exceptions.McpError:
+  Connection closed` during `session.initialize()`, not as an obviously
+  path-related error. Fixed by using `tempfile.gettempdir()` instead, and
+  by writing a known demo file into it so the agent has something real
+  to read rather than guessing a filename that may not exist.
+
+## [0.3.3] - 2026-08-07
+
+### Fixed
+
+- `GeminiProvider` failed multi-turn tool-calling conversations with
+  `400 INVALID_ARGUMENT: Function call is missing a thought_signature`,
+  because it read responses via the `response.text` /
+  `response.function_calls` convenience properties, both of which
+  discard the `thought_signature` field Gemini now requires echoed back
+  verbatim on `function_call` parts across turns (the same discard also
+  caused a noisy but non-fatal "there are non-text parts in the
+  response" warning). Fixed by walking
+  `response.candidates[0].content.parts` directly in
+  `_to_chat_response`, and by echoing a captured signature back onto the
+  reconstructed `function_call` part in `_build_contents_and_system`.
+  See `docs/adr/0006-gemini-thought-signature.md`.
+- `ToolCall` gained an optional `provider_data: Any` field to carry this
+  kind of opaque, provider-specific replay data. It's `None` for every
+  other provider and ignored by them.
+
+## [0.3.2] - 2026-07-28
+
+### Fixed
+
+- CI's lint job installed `ruff` unpinned (`pip install ruff`), bypassing
+  the version pin already set in `pyproject.toml`'s `dev` extra and
+  `requirements.txt`. When Ruff 0.16.0 (released July 23, 2026) expanded
+  its default lint rule set from 59 to 413 rules, the lint job broke
+  overnight with no code change on our side — 295 findings, mostly
+  `UP045`/`UP007` (pyupgrade's `Optional`/`Union` -> `X | None`/`X | Y`
+  suggestions), plus `RUF100`/`UP037`/`UP035`/`SIM117`. Fixed by having
+  the lint job install from `pyproject.toml`'s pinned `dev` extra
+  (`pip install -e ".[dev]"`) instead of a bare `pip install ruff`, so
+  there's exactly one source of truth for the pinned version across all
+  three places it's declared (`pyproject.toml`, `requirements.txt`, CI).
+- Documented the pinning policy in `DEVELOPMENT.md`: dev tool versions
+  (`ruff`, `mypy`) are pinned exactly, bumped deliberately in their own
+  PR, never left to drift via an unpinned install.
+- `examples/rag_example.py`'s docstring no longer claims "doesn't
+  hardcode a provider" after the example was simplified to use Gemini
+  directly for both embeddings and chat.
+
 ## [0.3.1] - 2026-07-26
 
 ### Fixed
@@ -165,7 +221,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `pydantic-settings`-based `Settings`, `Message`/`ChatResponse` models,
   and the `AIException` hierarchy.
 
-[Unreleased]: https://github.com/requisite-ai/requisite-ai/compare/v0.3.1...HEAD
+[Unreleased]: https://github.com/requisite-ai/requisite-ai/compare/v0.3.4...HEAD
+[0.3.4]: https://github.com/requisite-ai/requisite-ai/compare/v0.3.3...v0.3.4
+[0.3.3]: https://github.com/requisite-ai/requisite-ai/compare/v0.3.2...v0.3.3
+[0.3.2]: https://github.com/requisite-ai/requisite-ai/compare/v0.3.1...v0.3.2
 [0.3.1]: https://github.com/requisite-ai/requisite-ai/compare/v0.3.0...v0.3.1
 [0.3.0]: https://github.com/requisite-ai/requisite-ai/compare/v0.2.0...v0.3.0
 [0.2.0]: https://github.com/requisite-ai/requisite-ai/compare/v0.1.0...v0.2.0
