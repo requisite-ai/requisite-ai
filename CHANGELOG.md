@@ -7,6 +7,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- `.github/workflows/publish.yml` no longer trusts that `main`'s branch
+  protection alone kept an unverified commit from reaching PyPI. It now
+  invokes `ci.yml`'s full job graph (lint, type check, test matrix,
+  build) as a reusable workflow (`workflow_call`) and gates the build +
+  publish steps on it succeeding. This closes the gap where a manually
+  triggered `workflow_dispatch` could target any branch/commit and skip
+  verification entirely, regardless of what protection `main` has.
+
+## [0.5.1] - 2026-08-08
+
+### Fixed
+
+- Republished under a new version after a `0.5.0` upload attempt was
+  deleted from PyPI: PyPI permanently blocks re-uploading a filename
+  once used, even after deletion (`400 This filename was previously
+  used by a file that has since been deleted`), so `0.5.0` can never be
+  published again. No code changes from `0.5.0` -- version bump only.
+
 ## [0.5.0] - 2026-08-08
 
 ### Added
@@ -282,7 +302,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `pydantic-settings`-based `Settings`, `Message`/`ChatResponse` models,
   and the `AIException` hierarchy.
 
-[Unreleased]: https://github.com/requisite-ai/requisite-ai/compare/v0.5.0...HEAD
+[Unreleased]: https://github.com/requisite-ai/requisite-ai/compare/v0.5.1...HEAD
+[0.5.1]: https://github.com/requisite-ai/requisite-ai/compare/v0.5.0...v0.5.1
 [0.5.0]: https://github.com/requisite-ai/requisite-ai/compare/v0.4.1...v0.5.0
 [0.4.1]: https://github.com/requisite-ai/requisite-ai/compare/v0.4.0...v0.4.1
 [0.4.0]: https://github.com/requisite-ai/requisite-ai/compare/v0.3.4...v0.4.0

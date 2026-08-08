@@ -202,6 +202,17 @@ instance; give it the same registry shape as everything else.
 - `ToolRegistry._resolve` is an existing example of this pattern — kept as
   a thin wrapper around the module-level `resolve_tool_like` for backward
   compatibility after the refactor that introduced the latter.
+- **PyPI filenames are permanent, even after deletion.** Once
+  `requisite_ai-X.Y.Z-py3-none-any.whl` (or the matching sdist) has been
+  uploaded, that exact filename can never be uploaded again — deleting
+  the release from PyPI does not free it up. If a release upload needs
+  to be redone (bad upload, wrong process used, etc.), bump to a new
+  version rather than retrying the same one; PyPI will reject it with
+  `400 This filename was previously used by a file that has since been
+  deleted`. Prefer the documented release flow (tag a GitHub Release →
+  `.github/workflows/publish.yml` → trusted OIDC publishing) over a
+  manual `twine upload`, precisely so a bad local upload doesn't burn a
+  version number before CI's build/test/lint gate has even run.
 
 ## Dependency policy
 

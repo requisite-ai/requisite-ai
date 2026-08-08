@@ -6,6 +6,11 @@ on:
   pull_request:
     branches: [main]
   workflow_dispatch: {}
+  # Lets publish.yml invoke this workflow's full job graph (lint, type
+  # check, test matrix, build) as its own pre-publish gate, so a PyPI
+  # release can't skip verification even via a manually triggered
+  # workflow_dispatch on a branch that skipped branch-protection review.
+  workflow_call: {}
 
 permissions:
   contents: read

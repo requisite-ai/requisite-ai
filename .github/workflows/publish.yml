@@ -1,13 +1,20 @@
 name: Publish to PyPI
 
-# Triggered when a GitHub Release is published. Uses PyPI's trusted
-# publishing (OIDC) -- no API token needs to be stored as a secret.
-# One-time setup required before this will work: on pypi.org, under your
-# project (or as a *pending* publisher before the first release), add a
-# trusted publisher with:
+# Triggered when a GitHub Release is published (or manually via
+# workflow_dispatch). Uses PyPI's trusted publishing (OIDC) -- no API
+# token needs to be stored as a secret. One-time setup required before
+# this will work: on pypi.org, under your project (or as a *pending*
+# publisher before the first release), add a trusted publisher with:
 #   Owner: <requisite-ai>   Repository: requisite-ai
 #   Workflow: publish.yml   Environment: pypi
 # See: https://docs.pypi.org/trusted-publishers/
+#
+# `verify` below re-runs ci.yml's full job graph (lint, type check, test
+# matrix, build) as a reusable workflow before anything is built for
+# publishing. This is a deliberate belt-and-suspenders gate: it doesn't
+# rely on `main`'s branch protection alone to keep an unverified commit
+# from reaching PyPI, since a manually triggered workflow_dispatch can
+# target any branch/commit regardless of what protection main has.
 
 on:
   release:
@@ -18,8 +25,14 @@ permissions:
   contents: read
 
 jobs:
+  verify:
+    name: Verify (lint, type check, test, build)
+    uses: ./.github/workflows/ci.yml
+    secrets: inherit
+
   build:
     name: Build distribution
+    needs: [verify]
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
