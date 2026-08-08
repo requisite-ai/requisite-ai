@@ -34,6 +34,7 @@ from pydantic import BaseModel
 from requisite.config.settings import Settings
 from requisite.core.exceptions import ConfigurationException
 from requisite.core.interfaces import ChatResponse, Message
+from requisite.core.rate_limiter import RateLimiter
 from requisite.providers.base import BaseProvider
 from requisite.providers.factory import ProviderRegistry, default_registry
 from requisite.tools.registry import ToolLike, resolve_tool_like
@@ -69,6 +70,15 @@ class AI:
     system_prompt:
         Optional system message applied to every call made through this
         instance, unless overridden per-call.
+    rate_limiter:
+        A :class:`~requisite.core.rate_limiter.RateLimiter` that every
+        call made through this instance waits on before reaching the
+        provider. Pass the *same* instance to several ``AI``/
+        :class:`~requisite.agents.agent.Agent` objects to share one
+        budget across them -- this is the usual case when they draw on
+        the same underlying API key. Defaults to ``None``; if unset and
+        ``settings.rate_limit_rpm`` is configured, a private limiter is
+        built from that instead (see :class:`~requisite.config.settings.Settings`).
 
     Examples
     --------
@@ -96,11 +106,21 @@ class AI:
         settings: Optional[Settings] = None,
         registry: Optional[ProviderRegistry] = None,
         system_prompt: Optional[str] = None,
+        rate_limiter: Optional[RateLimiter] = None,
     ) -> None:
         self._settings = settings or Settings()
         self._registry = registry or default_registry
         self._system_prompt = system_prompt
         self._provider = self._resolve_provider(provider, model)
+        self._rate_limiter = rate_limiter or self._build_default_rate_limiter()
+
+    def _build_default_rate_limiter(self) -> Optional[RateLimiter]:
+        if self._settings.rate_limit_rpm is None:
+            return None
+        return RateLimiter(
+            requests_per_minute=self._settings.rate_limit_rpm,
+            max_wait_seconds=self._settings.rate_limit_max_wait_seconds,
+        )
 
     def _resolve_provider(
         self, provider: Optional[Union[str, BaseProvider]], model: Optional[str]
@@ -131,6 +151,12 @@ class AI:
     def provider(self) -> BaseProvider:
         """The underlying, fully-resolved provider instance backing this ``AI``."""
         return self._provider
+
+    @property
+    def rate_limiter(self) -> Optional[RateLimiter]:
+        """The :class:`~requisite.core.rate_limiter.RateLimiter` every call waits
+        on before reaching the provider, if one is configured."""
+        return self._rate_limiter
 
     def _build_messages(
         self, prompt: Union[str, Sequence[Message]], system_prompt: Optional[str]
@@ -225,6 +251,8 @@ class AI:
             temperature if temperature is not None else self._settings.temperature
         )
         resolved_tools = [resolve_tool_like(t) for t in tools] if tools else None
+        if self._rate_limiter is not None:
+            self._rate_limiter.acquire()
         return self._provider.chat(
             messages,
             model=model,
@@ -276,6 +304,8 @@ class AI:
             temperature if temperature is not None else self._settings.temperature
         )
         resolved_tools = [resolve_tool_like(t) for t in tools] if tools else None
+        if self._rate_limiter is not None:
+            await self._rate_limiter.aacquire()
         return await self._provider.achat(
             messages,
             model=model,
@@ -305,6 +335,8 @@ class AI:
         effective_temperature = (
             temperature if temperature is not None else self._settings.temperature
         )
+        if self._rate_limiter is not None:
+            self._rate_limiter.acquire()
         for chunk in self._provider.stream(
             messages, model=model, temperature=effective_temperature, **kwargs
         ):
@@ -325,6 +357,8 @@ class AI:
         effective_temperature = (
             temperature if temperature is not None else self._settings.temperature
         )
+        if self._rate_limiter is not None:
+            await self._rate_limiter.aacquire()
         async for chunk in self._provider.astream(
             messages, model=model, temperature=effective_temperature, **kwargs
         ):

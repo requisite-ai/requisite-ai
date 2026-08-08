@@ -196,6 +196,22 @@ def test_agent_raises_when_max_iterations_exceeded(
         agent.run("do something")
 
 
+def test_agent_forwards_rate_limiter_to_its_internal_ai(
+    registry_with_scripted: ProviderRegistry, settings: Settings
+) -> None:
+    from requisite.core.rate_limiter import RateLimiter
+
+    shared_limiter = RateLimiter(requests_per_minute=99)
+    agent = Agent(
+        name="Weather Agent",
+        provider="scripted",
+        settings=settings,
+        registry=registry_with_scripted,
+        rate_limiter=shared_limiter,
+    )
+    assert agent.ai.rate_limiter is shared_limiter
+
+
 def test_agent_registry_register_and_get(
     registry_with_scripted: ProviderRegistry, settings: Settings
 ) -> None:

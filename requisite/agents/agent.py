@@ -32,6 +32,7 @@ from requisite.capabilities import default_registry as default_capability_regist
 from requisite.config.settings import Settings
 from requisite.core.exceptions import AgentException, ConfigurationException
 from requisite.core.interfaces import ChatResponse, Message
+from requisite.core.rate_limiter import RateLimiter
 from requisite.memory.base import BaseMemory
 from requisite.memory.policies import BaseConversationPolicy
 from requisite.providers.base import BaseProvider
@@ -139,6 +140,16 @@ class Agent:
         :class:`~requisite.config.settings.Settings`.
     registry:
         Provider registry used to resolve ``provider`` by name.
+    rate_limiter:
+        A :class:`~requisite.core.rate_limiter.RateLimiter` this agent's
+        calls wait on before reaching the provider. Pass the *same*
+        instance to every ``Agent`` that draws on the same underlying
+        API key/quota (e.g. every agent in one
+        :class:`~requisite.workflows.workflow.Workflow`) so they share
+        one real budget rather than each independently -- and
+        incorrectly -- assuming they have the full quota to themselves.
+        Forwarded to this agent's internal
+        :class:`~requisite.ai.AI` instance.
     max_iterations:
         Maximum number of tool-calling round-trips before
         :class:`~requisite.core.exceptions.AgentException` is raised,
@@ -188,6 +199,7 @@ class Agent:
         conversation_policy: Optional[BaseConversationPolicy] = None,
         settings: Optional[Settings] = None,
         registry: Optional[ProviderRegistry] = None,
+        rate_limiter: Optional[RateLimiter] = None,
         max_iterations: int = 5,
     ) -> None:
         self.name = name
@@ -215,6 +227,7 @@ class Agent:
             settings=settings,
             registry=registry,
             system_prompt=system_prompt,
+            rate_limiter=rate_limiter,
         )
 
         if requires:

@@ -63,6 +63,22 @@ class Settings(BaseSettings):
         application opts into it -- Settings only stores the preference,
         it never configures logging itself (see that function's
         docstring for why).
+    rate_limit_rpm:
+        When set, :class:`~requisite.ai.AI` builds a private
+        :class:`~requisite.core.rate_limiter.RateLimiter` capped at this
+        many requests per minute, applied to every call made through
+        that instance. ``None`` (default) means no rate limiting --
+        matching the framework's "never automatic, always opt-in"
+        convention. To share one budget across *several*
+        :class:`~requisite.agents.agent.Agent`/``AI`` instances (the
+        usual case -- they're likely calling the same underlying API
+        key), construct one ``RateLimiter`` explicitly and pass it as
+        ``rate_limiter=`` instead of relying on this field.
+    rate_limit_max_wait_seconds:
+        Only meaningful when ``rate_limit_rpm`` is set. If waiting for
+        capacity would take longer than this, the call raises
+        :class:`~requisite.core.exceptions.RateLimitException` instead
+        of waiting. ``None`` (default) waits as long as necessary.
 
     Notes
     -----
@@ -101,6 +117,9 @@ class Settings(BaseSettings):
 
     log_level: str = Field(default="INFO")
     log_format: str = Field(default="plain")
+
+    rate_limit_rpm: Optional[int] = Field(default=None, gt=0)
+    rate_limit_max_wait_seconds: Optional[float] = Field(default=None, gt=0)
 
     def api_key_for(self, provider: str) -> Optional[str]:
         """Return the plaintext API key for the given provider name.

@@ -120,3 +120,10 @@ class PromptException(AIException):
     """Raised when a prompt template is misused: rendered without a
     required variable, or a named template isn't found in a registry.
     """
+
+
+class RateLimitException(AIException):
+    """Raised when a :class:`~requisite.core.rate_limiter.RateLimiter` call
+    would need to wait longer than its configured ``max_wait_seconds``
+    for capacity, rather than waiting indefinitely.
+    """

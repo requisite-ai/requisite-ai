@@ -45,3 +45,5 @@ need one — `CONTRIBUTING.md` already covers those.
 | [0004](0004-mcp-integration.md) | MCP client integration | Accepted |
 | [0005](0005-rag-integration.md) | RAG integration | Accepted |
 | [0006](0006-gemini-thought-signature.md) | Gemini thought_signature echoing | Accepted |
+| [0007](0007-multi-agent-orchestration-strategies.md) | Multi-agent orchestration strategies: reflection, planner, supervisor | Accepted |
+| [0008](0008-rate-limiting.md) | Proactive rate limiting for provider calls | Accepted |

@@ -89,6 +89,13 @@ Reusable, parameterized prompts:
 Structured (JSON) logging, opt-in:
 >>> from requisite.telemetry import configure_logging
 >>> configure_logging(level="DEBUG", json_format=True)  # doctest: +SKIP
+
+Proactive rate limiting, shared across every agent that calls the same
+underlying API key/quota:
+>>> from requisite import RateLimiter
+>>> shared_limit = RateLimiter(requests_per_minute=15)
+>>> research = Agent(name="Researcher", provider="gemini", rate_limiter=shared_limit)  # doctest: +SKIP
+>>> writer = Agent(name="Writer", provider="gemini", rate_limiter=shared_limit)  # doctest: +SKIP
 """
 
 from requisite.agents.agent import Agent, AgentResult
@@ -105,10 +112,12 @@ from requisite.core.exceptions import (
     MCPException,
     PromptException,
     ProviderException,
+    RateLimitException,
     SkillException,
     ToolException,
 )
 from requisite.core.interfaces import ChatResponse, Message, Role, ToolCall
+from requisite.core.rate_limiter import RateLimiter
 from requisite.mcp import default_mcp_registry
 from requisite.mcp.base import BaseMCPClient
 from requisite.mcp.client import MCPClient
@@ -190,6 +199,9 @@ __all__ = [
     "ProviderException",
     # Providers
     "ProviderRegistry",
+    "RateLimitException",
+    # Rate limiting
+    "RateLimiter",
     "Retriever",
     "Role",
     "ScoredChunk",
@@ -217,4 +229,4 @@ __all__ = [
     "tool",
 ]
 
-__version__ = "0.3.4"
+__version__ = "0.5.0"

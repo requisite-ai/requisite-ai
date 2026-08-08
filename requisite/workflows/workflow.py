@@ -38,7 +38,7 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger("requisite.workflows")
 
-_KNOWN_STRATEGIES = {"sequential", "parallel"}
+_KNOWN_STRATEGIES = {"sequential", "parallel", "reflection", "planner", "supervisor"}
 
 
 class Workflow:
@@ -47,15 +47,26 @@ class Workflow:
     Parameters
     ----------
     strategy:
-        How agents are executed relative to one another: ``"sequential"``
-        (each agent's output feeds the next -- the default) or
-        ``"parallel"`` (every agent runs against the same input
-        concurrently). See the module docstring for further multi-agent
-        strategies planned on the roadmap (supervisor, planner,
-        reflection, debate, critic, consensus, hierarchical, map-reduce,
-        tree-of-thoughts, graph execution) -- each becomes a new
-        ``strategy`` value handled by the underlying orchestrator, with
-        no change to this class's public API.
+        How agents are executed relative to one another:
+
+        - ``"sequential"`` (default): each agent's output feeds the next.
+        - ``"parallel"``: every agent runs against the same input
+          concurrently.
+        - ``"reflection"``: a single agent (see :meth:`reflection`)
+          critiques and revises its own output over several rounds.
+        - ``"planner"``: the first agent breaks the task into a plan of
+          subtasks for the remaining agents (see :meth:`planner`).
+        - ``"supervisor"``: the first agent delegates subtasks to the
+          remaining agents one at a time until the task is done (see
+          :meth:`supervisor`).
+
+        Further multi-agent strategies remain on the roadmap (debate,
+        critic, consensus, hierarchical, map-reduce, tree-of-thoughts,
+        general graph execution) -- each becomes a new ``strategy`` value
+        handled by the underlying orchestrator, with no change to this
+        class's public API. ``"reflection"``, ``"planner"``, and
+        ``"supervisor"`` are currently only implemented on the
+        ``"native"`` orchestrator backend.
     orchestrator:
         Execution backend: ``"native"`` (default, pure Python, no extra
         dependency) or ``"langgraph"``. Change via :meth:`use_langgraph` /
@@ -103,6 +114,39 @@ class Workflow:
     def parallel(self) -> "Workflow":
         """Switch to the parallel execution strategy. Returns ``self`` for chaining."""
         self._strategy = "parallel"
+        return self
+
+    def reflection(self) -> "Workflow":
+        """Switch to the reflection strategy. Returns ``self`` for chaining.
+
+        Requires exactly one agent (added via :meth:`add`), which
+        critiques and revises its own output. Pass ``max_rounds=`` to
+        :meth:`run`/:meth:`arun` to control how many rounds it gets
+        (default 3); it may also stop earlier on its own.
+        """
+        self._strategy = "reflection"
+        return self
+
+    def planner(self) -> "Workflow":
+        """Switch to the planner strategy. Returns ``self`` for chaining.
+
+        The first agent added becomes the planner; every agent added
+        after it is a worker the planner can assign subtasks to, by
+        name. Requires at least 2 agents.
+        """
+        self._strategy = "planner"
+        return self
+
+    def supervisor(self) -> "Workflow":
+        """Switch to the supervisor strategy. Returns ``self`` for chaining.
+
+        The first agent added becomes the supervisor; every agent added
+        after it is a worker the supervisor can delegate to, by name.
+        Requires at least 2 agents. Pass ``max_rounds=`` to
+        :meth:`run`/:meth:`arun` to bound how many delegation rounds it
+        gets before giving up (default 6).
+        """
+        self._strategy = "supervisor"
         return self
 
     def use_native(self) -> "Workflow":

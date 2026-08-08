@@ -6,7 +6,7 @@ pydantic-settings>=2.3
 openai>=1.35        # OpenAI provider, and Groq / Azure OpenAI (both OpenAI-wire-compatible)
 google-genai>=1.0   # Gemini provider (unified SDK; do NOT install google-generativeai)
 anthropic>=0.116    # Anthropic (Claude) provider
-mcp>=1.28            # MCP client integration
+mcp>=1.28,<2.0       # MCP client integration (capped below 2.0's breaking rewrite -- see CHANGELOG 0.4.1)
 # rag: reuses openai / google-genai above for embeddings; no extra SDK for the in-memory vector store
 
 # Orchestration backends (optional)

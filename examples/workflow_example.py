@@ -2,10 +2,24 @@
 Multi-agent workflow example.
 
 Run with:
-    OPENAI_API_KEY=sk-... python examples/workflow_example.py
+    GEMINI_API_KEY=... python examples/workflow_example.py
+
+This script builds four agents (Researcher, Writer, Planner, Supervisor)
+that all call the same Gemini API key -- on a free-tier key (15
+requests/minute) their combined call rate can exceed the real quota even
+though each agent looks fine on its own. One `RateLimiter` shared across
+all four keeps the script under that quota by waiting for capacity
+instead of letting Gemini reject the call with a 429. See the "Rate
+limiting" section of README.md and docs/adr/0008-rate-limiting.md.
 """
 
-from requisite import Agent, Workflow
+from requisite import Agent, RateLimiter, Workflow
+
+# Shared across every agent below since they all draw on the same Gemini
+# API key/quota -- a limiter scoped to just one agent wouldn't help, since
+# the quota is enforced against their combined call rate, not each one
+# individually.
+shared_rate_limit = RateLimiter(requests_per_minute=15)
 
 
 def main() -> None:
@@ -13,11 +27,13 @@ def main() -> None:
         name="Researcher",
         provider="gemini",
         system_prompt="You research topics and produce concise, factual bullet points.",
+        rate_limiter=shared_rate_limit,
     )
     writer = Agent(
         name="Writer",
         provider="gemini",
         system_prompt="You turn research notes into a polished, engaging short summary.",
+        rate_limiter=shared_rate_limit,
     )
 
     workflow = Workflow()
@@ -43,6 +59,53 @@ def main() -> None:
         print(langgraph_result.content)
     except Exception as exc:  # noqa: BLE001
         print(f"\nlanggraph backend not available: {exc}")
+
+    # Reflection: a single agent critiques and revises its own output.
+    reflection_workflow = Workflow().reflection()
+    reflection_workflow.add(writer)
+    reflection_result = reflection_workflow.run(
+        "Write a one-sentence tagline for an open-source AI framework.", max_rounds=3
+    )
+    print("\n--- reflection (native) ---")
+    print(reflection_result.content)
+    print(f"(rounds of self-critique/revision: {len(reflection_result.steps)})")
+
+    # Planner: the first agent decomposes the task into a plan; the rest
+    # are workers it assigns subtasks to, by name.
+    planner_agent = Agent(
+        name="Planner",
+        provider="gemini",
+        system_prompt="You break tasks into an ordered plan of subtasks for your team.",
+        rate_limiter=shared_rate_limit,
+    )
+    planner_workflow = Workflow().planner()
+    planner_workflow.add(planner_agent).add(research).add(writer)
+    planner_result = planner_workflow.run(
+        "Research what MCP (Model Context Protocol) is and write a short explainer."
+    )
+    print("\n--- planner (native) ---")
+    print(planner_result.content)
+    print(
+        f"(plan had {len(planner_result.steps)} step(s): "
+        f"{[s.agent_name for s in planner_result.steps]})"
+    )
+
+    # Supervisor: the first agent delegates subtasks to named workers one
+    # at a time, deciding for itself when the task is complete.
+    supervisor_agent = Agent(
+        name="Supervisor",
+        provider="gemini",
+        system_prompt="You coordinate a small team, delegating one subtask at a time.",
+        rate_limiter=shared_rate_limit,
+    )
+    supervisor_workflow = Workflow().supervisor()
+    supervisor_workflow.add(supervisor_agent).add(research).add(writer)
+    supervisor_result = supervisor_workflow.run(
+        "Research what LangGraph is and write a short summary."
+    )
+    print("\n--- supervisor (native) ---")
+    print(supervisor_result.content)
+    print(f"(delegated to: {[s.agent_name for s in supervisor_result.steps]})")
 
 
 if __name__ == "__main__":

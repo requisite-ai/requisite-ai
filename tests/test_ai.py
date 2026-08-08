@@ -270,3 +270,63 @@ async def test_achat_response_tools_accepts_tool_decorated_function(
     provider: FakeProvider = ai.provider  # type: ignore[assignment]
     assert provider.last_tools is not None
     assert provider.last_tools[0].name == "get_weather"
+
+
+# ---------------------------------------------------------------------------
+# Rate limiter wiring
+# ---------------------------------------------------------------------------
+
+
+def test_ai_has_no_rate_limiter_by_default(registry_with_fake: ProviderRegistry) -> None:
+    # rate_limit_rpm explicitly overridden to None rather than relying on the
+    # shared `settings` fixture: a real .env in the repo/cwd may legitimately
+    # set RATE_LIMIT_RPM (Settings(_env_file=None) wouldn't help either, since
+    # this framework's convention -- see tests/test_settings.py -- is that it
+    # only disables the .env file, not real process environment variables).
+    settings = Settings(default_provider="fake", model="fake-model", rate_limit_rpm=None)
+    ai = AI(provider="fake", settings=settings, registry=registry_with_fake)
+    assert ai.rate_limiter is None
+
+
+def test_ai_builds_default_rate_limiter_from_settings(
+    registry_with_fake: ProviderRegistry,
+) -> None:
+    settings = Settings(default_provider="fake", model="fake-model", rate_limit_rpm=5)
+    ai = AI(provider="fake", settings=settings, registry=registry_with_fake)
+    assert ai.rate_limiter is not None
+
+
+def test_ai_explicit_rate_limiter_overrides_settings(
+    registry_with_fake: ProviderRegistry,
+) -> None:
+    from requisite.core.rate_limiter import RateLimiter
+
+    settings = Settings(default_provider="fake", model="fake-model", rate_limit_rpm=5)
+    explicit = RateLimiter(requests_per_minute=99)
+    ai = AI(provider="fake", settings=settings, registry=registry_with_fake, rate_limiter=explicit)
+    assert ai.rate_limiter is explicit
+
+
+def test_shared_rate_limiter_serializes_calls_across_two_ai_instances(
+    monkeypatch: pytest.MonkeyPatch, registry_with_fake: ProviderRegistry, settings: Settings
+) -> None:
+    """Two AI instances sharing one RateLimiter draw from one combined budget."""
+    from requisite.core import rate_limiter as rate_limiter_module
+    from requisite.core.rate_limiter import RateLimiter
+
+    monkeypatch.setattr(rate_limiter_module, "_WINDOW_SECONDS", 0.2)
+    shared = RateLimiter(requests_per_minute=1)
+
+    first = AI(provider="fake", settings=settings, registry=registry_with_fake, rate_limiter=shared)
+    second = AI(
+        provider="fake", settings=settings, registry=registry_with_fake, rate_limiter=shared
+    )
+
+    import time
+
+    first.chat("hello")  # claims the one slot in the shared budget
+    start = time.monotonic()
+    second.chat("hello")  # must wait for the shared slot to free up
+    elapsed = time.monotonic() - start
+
+    assert elapsed >= 0.1

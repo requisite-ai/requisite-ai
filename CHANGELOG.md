@@ -7,6 +7,67 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.5.0] - 2026-08-08
+
+### Added
+
+- Proactive rate limiting for provider calls: `requisite.core.rate_limiter.RateLimiter`
+  (sliding-window log, thread-safe `acquire()` / async-safe `aacquire()`),
+  a new `RateLimitException(AIException)`, and two new opt-in `Settings`
+  fields (`rate_limit_rpm`, `rate_limit_max_wait_seconds` / env
+  `RATE_LIMIT_RPM`, `RATE_LIMIT_MAX_WAIT_SECONDS`). `AI` and `Agent` both
+  gain a `rate_limiter=` constructor parameter -- pass the *same*
+  `RateLimiter` instance to several `Agent`/`AI` objects that draw on the
+  same underlying API key/quota to share one real budget across them,
+  which a single `Settings.rate_limit_rpm` value alone does not do (each
+  instance would otherwise build its own private limiter). Fixes the
+  free-tier Gemini `429 RESOURCE_EXHAUSTED` errors surfaced when running
+  `examples/workflow_example.py` -- that example now constructs one
+  shared `RateLimiter` for its four agents. See
+  `docs/adr/0008-rate-limiting.md` for the full design rationale.
+
+## [0.4.1] - 2026-08-07
+
+### Fixed
+
+- CI's type-check and test jobs install `mcp` via the unbounded
+  `mcp>=1.28` constraint in the `mcp`/`all` extras, so they picked up
+  `mcp` 2.0.0 -- a breaking rewrite (restructured package layout,
+  `CallToolResult.isError`/`structuredContent` renamed to
+  `is_error`/`structured_content`, `streamablehttp_client` removed in
+  favor of `streamable_http_client`) -- and failed `mypy` with four
+  `attr-defined` errors in `requisite/mcp/client.py`, with zero code
+  changes on our side. Same shape as the ruff 0.16.0 incident
+  (0.3.2's fix): an unbounded dependency constraint let a breaking
+  upstream release reach CI unpinned. Fixed by capping `mcp` to
+  `>=1.28,<2.0` in `pyproject.toml` (`mcp` and `all` extras) and
+  `requirements.txt`, verified against the real `mcp` 2.0.0 wheel
+  (downloaded and inspected, not assumed) to confirm the scope of the
+  break before deciding to pin rather than migrate. Migrating
+  `requisite/mcp/client.py` to the `mcp` 2.x API is tracked as a
+  separate, deliberate change -- see `ROADMAP.md`.
+
+## [0.4.0] - 2026-08-07
+
+### Added
+
+- Three new multi-agent orchestration strategies on the `native`
+  orchestrator: `Workflow().reflection()`, `.planner()`, and
+  `.supervisor()`. `reflection` takes a single agent that critiques and
+  revises its own output over `max_rounds` rounds (default 3),
+  optionally stopping early. `planner`/`supervisor` take a coordinating
+  agent (`steps[0]`) plus named workers (`steps[1:]`): `planner`
+  decomposes the task into an ordered plan up front and executes it;
+  `supervisor` delegates one subtask at a time, deciding each round
+  whether to delegate again or finish (`max_rounds` default 6, raising
+  `AgentException` if exhausted without a final answer). Coordinator
+  decisions use `AI.chat(response_model=...)` for structured routing/
+  planning rather than free-text parsing. See
+  `docs/adr/0007-multi-agent-orchestration-strategies.md` for the full
+  design rationale and deliberate scope cuts. These strategies are
+  implemented on the `native` orchestrator only; `LangGraphOrchestrator`
+  continues to only support `sequential`.
+
 ## [0.3.4] - 2026-08-07
 
 ### Fixed
@@ -221,7 +282,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `pydantic-settings`-based `Settings`, `Message`/`ChatResponse` models,
   and the `AIException` hierarchy.
 
-[Unreleased]: https://github.com/requisite-ai/requisite-ai/compare/v0.3.4...HEAD
+[Unreleased]: https://github.com/requisite-ai/requisite-ai/compare/v0.5.0...HEAD
+[0.5.0]: https://github.com/requisite-ai/requisite-ai/compare/v0.4.1...v0.5.0
+[0.4.1]: https://github.com/requisite-ai/requisite-ai/compare/v0.4.0...v0.4.1
+[0.4.0]: https://github.com/requisite-ai/requisite-ai/compare/v0.3.4...v0.4.0
 [0.3.4]: https://github.com/requisite-ai/requisite-ai/compare/v0.3.3...v0.3.4
 [0.3.3]: https://github.com/requisite-ai/requisite-ai/compare/v0.3.2...v0.3.3
 [0.3.2]: https://github.com/requisite-ai/requisite-ai/compare/v0.3.1...v0.3.2

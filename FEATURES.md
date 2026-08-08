@@ -38,8 +38,8 @@ Status legend: ✅ Done · 🚧 Partial · 📋 Not started · N/A Deliberately 
 | Agent creation | ✅ | `Agent(...)` |
 | Agent execution | ✅ | `Agent.run` / `Agent.arun` (tool-calling loop) |
 | Agent registry | ✅ | `AgentRegistry` |
-| Multi-agent orchestration | 🚧 | `Workflow` ships sequential + parallel; see the Multi-Agent System table below for the rest |
-| Agentic execution | 🚧 | `Agent`'s own tool-calling loop is agentic (model decides which tool); full autonomous planning across agents/skills/MCP is 📋 — see Agentic Mode below |
+| Multi-agent orchestration | 🚧 | `Workflow` ships sequential, parallel, reflection, planner, and supervisor (native orchestrator only — ADR-0007); see the Multi-Agent System table below for the rest |
+| Agentic execution | 🚧 | `Agent`'s own tool-calling loop is agentic (model decides which tool); the supervisor/planner strategies add model-decided agent delegation (ADR-0007); full autonomous planning across agents/skills/MCP beyond that is 📋 — see Agentic Mode below |
 | MCP client integration | ✅ | `MCPClient` (stdio + Streamable HTTP) — ADR-0004 |
 | MCP server integration | 📋 | |
 | Memory | ✅ | `BaseMemory`, `InProcessMemory`, wired into `Agent(memory=..., session_id=...)` |
@@ -130,9 +130,9 @@ Status legend: ✅ Done · 🚧 Partial · 📋 Not started · N/A Deliberately 
 |---|---|---|
 | Sequential | ✅ | `NativeOrchestrator`, `LangGraphOrchestrator` |
 | Parallel | ✅ | `NativeOrchestrator` only so far |
-| Supervisor | 📋 | |
-| Planner | 📋 | |
-| Reflection | 📋 | |
+| Supervisor | ✅ | `native` orchestrator only — coordinator (`steps[0]`) delegates to named workers (`steps[1:]`) via structured decisions, up to `max_rounds`; ADR-0007 |
+| Planner | ✅ | `native` orchestrator only — coordinator (`steps[0]`) decomposes the task into a plan executed by named workers (`steps[1:]`); ADR-0007 |
+| Reflection | ✅ | `native` orchestrator only — single agent critiques and revises its own output, up to `max_rounds`; ADR-0007 |
 | Debate | 📋 | |
 | Critic | 📋 | |
 | Consensus | 📋 | |
@@ -158,7 +158,7 @@ Status legend: ✅ Done · 🚧 Partial · 📋 Not started · N/A Deliberately 
 |---|---|---|
 | Model decides which tool to call | ✅ | `Agent`'s tool-calling loop |
 | Model decides which skill to use | ✅ | Skills are exposed as tools, so this falls out of the above |
-| Model decides which agent to delegate to (multi-agent) | 📋 | Requires a Supervisor/Planner strategy — see Multi-Agent System table |
+| Model decides which agent to delegate to (multi-agent) | ✅ | `workflow.supervisor()` / `workflow.planner()` — see Multi-Agent System table, ADR-0007 |
 | Model decides whether MCP is needed | 🚧 | MCP tools are available via `agent.requires(...)` like any capability, but there's no dedicated "decide to use MCP" planning step beyond ordinary tool-calling |
 | Model decides whether retrieval is needed | 📋 | Depends on RAG |
 
@@ -229,7 +229,7 @@ are a deliberate scope cut, not yet implemented.
 | Tool registry | ✅ | Construct your own `ToolRegistry()` |
 | Skill registry | ✅ | Construct your own `SkillRegistry()` |
 | Execution engine (orchestrator) | ✅ | `OrchestratorRegistry` |
-| Planner | 📋 | Depends on the Planner multi-agent strategy |
+| Planner | 📋 | The `planner` multi-agent strategy now ships (ADR-0007), but its planning logic lives inside `NativeOrchestrator._run_planner`, not behind a separate, replaceable `BasePlanner`-style interface yet |
 | Prompt builder | ✅ | `PromptTemplate` / `ChatPromptTemplate` |
 | Configuration | ✅ | Pass an explicit `Settings(...)` instance anywhere one is accepted |
 
@@ -309,6 +309,7 @@ are a deliberate scope cut, not yet implemented.
 | Cache expensive objects | ✅ | Provider clients cached per instance after first build |
 | Reuse HTTP clients | ✅ | One client instance reused across calls on a given provider instance |
 | Support concurrency | ✅ | `Workflow`'s parallel strategy (`ThreadPoolExecutor` for sync, `asyncio.gather` for async) |
+| Proactive rate limiting for provider quotas | ✅ | `RateLimiter` (sliding-window log), opt-in via `Settings.rate_limit_rpm` or explicit `rate_limiter=` on `AI`/`Agent`; share one instance across agents that draw on the same API key — ADR-0008 |
 
 ## Security
 
@@ -339,7 +340,7 @@ are a deliberate scope cut, not yet implemented.
 
 ---
 
-*Last updated alongside `CHANGELOG.md`'s 0.3.0 entry. When a roadmap item
+*Last updated alongside `CHANGELOG.md`'s 0.4.0 entry. When a roadmap item
 ships, update its row here **and** the corresponding row in
 `ROADMAP.md` — they're allowed to organize the same facts differently,
 but not to disagree about what's actually shipped.*

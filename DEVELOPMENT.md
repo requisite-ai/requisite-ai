@@ -215,6 +215,18 @@ instance; give it the same registry shape as everything else.
   library where reasonable (e.g. `capabilities/resolvers.py`'s default
   providers use `urllib.request`, not `requests`, specifically to avoid
   adding a dependency for a reference implementation).
+- An unbounded lower-bound constraint (`mcp>=1.28`) on an optional SDK
+  extra is not automatically safe just because it isn't a dev tool.
+  `mcp` 2.0.0 was a breaking rewrite (restructured package layout,
+  `CallToolResult.isError`/`structuredContent` renamed to snake_case,
+  `streamablehttp_client` removed) that reached CI unpinned and broke
+  `mypy` with zero code changes on our side — the same shape as the
+  ruff 0.16.0 incident above, just for a runtime SDK instead of a dev
+  tool. When a real break like this happens, cap the constraint below
+  the breaking version (`mcp>=1.28,<2.0`) rather than migrating under
+  CI-failure pressure; treat the migration as its own deliberate change.
+
+
 
 ## Commits & branches
 

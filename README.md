@@ -77,6 +77,7 @@ AZURE_OPENAI_ENDPOINT=
 DEFAULT_PROVIDER=openai
 MODEL=gpt-4o-mini
 TEMPERATURE=0.2
+RATE_LIMIT_RPM=          # optional -- see "Rate limiting" below
 ```
 
 `Settings` (`requisite/config/settings.py`) reads this automatically — you
@@ -194,6 +195,57 @@ workflow.use_langgraph()   # requires: pip install langgraph
 result = workflow.run("Research AI trends and write a summary.")
 
 workflow.use_native()      # back to the built-in, dependency-free engine
+```
+
+Let a supervisor agent delegate to a team of workers, addressed by name,
+deciding when the task is done:
+
+```python
+supervisor = Agent(name="Supervisor", provider="openai")
+researcher = Agent(name="Researcher", provider="openai")
+writer = Agent(name="Writer", provider="openai")
+
+workflow = Workflow().supervisor()
+workflow.add(supervisor).add(researcher).add(writer)
+result = workflow.run("Research AI trends and write a summary.")
+```
+
+The first agent added is the coordinator; every agent added after it is a
+worker. `.planner()` works the same way, but the first agent decomposes
+the task into an ordered plan up front instead of delegating round by
+round. `.reflection()` takes a single agent that critiques and revises
+its own output over several rounds:
+
+```python
+workflow = Workflow().reflection()
+workflow.add(writer)
+result = workflow.run("Write a tagline for an AI framework.", max_rounds=3)
+```
+
+### Rate limiting
+
+Free-tier and other quota-limited API keys often cap requests per
+minute — set `RATE_LIMIT_RPM` (and, optionally, `RATE_LIMIT_MAX_WAIT_SECONDS`)
+in `.env` and `AI`/`Agent` wait for capacity instead of letting the
+provider reject the call:
+
+```env
+RATE_LIMIT_RPM=15
+```
+
+That covers a single `Agent`/`AI`. **Several agents that call the same
+underlying API key share the same real quota**, so build one
+`RateLimiter` and pass it to each of them explicitly — this is what a
+multi-agent `Workflow` (research + writer + planner + supervisor, say)
+needs to avoid exceeding the quota collectively even if each individual
+agent looks fine on its own:
+
+```python
+from requisite import Agent, RateLimiter
+
+shared_limit = RateLimiter(requests_per_minute=15)
+research = Agent(name="Researcher", provider="gemini", rate_limiter=shared_limit)
+writer = Agent(name="Writer", provider="gemini", rate_limiter=shared_limit)
 ```
 
 ### Skills
@@ -522,8 +574,9 @@ requisite/
 ├── prompts/        # PromptTemplate, ChatPromptTemplate, PromptTemplateRegistry
 ├── telemetry/      # Structured (JSON) logging -- opt-in, never automatic
 ├── agents/         # Agent (tool-calling loop, .requires(), optional memory) + AgentRegistry
-├── orchestrators/  # BaseOrchestrator interface + native (sequential/parallel)
-│                   # and langgraph backends + OrchestratorRegistry
+├── orchestrators/  # BaseOrchestrator interface + native (sequential, parallel,
+│                   # reflection, planner, supervisor) and langgraph backends
+│                   # + OrchestratorRegistry
 ├── workflows/      # Workflow -- the small, ergonomic multi-agent facade
 └── ai.py           # The `AI` facade -- the class most users touch directly
 ```
@@ -583,8 +636,9 @@ structured outputs, tool calling, skills, capability resolution
 HTTP), RAG (embeddings, in-memory vector store, dense retrieval —
 Pinecone/Weaviate still planned), memory + conversation policies
 (`Agent(memory=..., conversation_policy=...)`), prompt templates,
-structured logging, agents + registry, multi-agent workflows
-(sequential/parallel, native + langgraph backends).
+structured logging, agents + registry, multi-agent workflows (sequential,
+parallel, reflection, planner, supervisor on the native backend;
+sequential on langgraph).
 
 See [`ROADMAP.md`](ROADMAP.md) for the full, per-layer status table
 (providers, orchestration strategies, MCP, memory, RAG, ...) and what's

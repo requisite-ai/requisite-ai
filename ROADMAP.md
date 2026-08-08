@@ -21,6 +21,7 @@ Status legend: ✅ Shipped · 🚧 In progress · 📋 Planned · 💭 Under dis
 | `Settings` (pydantic-settings, `.env`) | ✅ |
 | `AIException` hierarchy | ✅ |
 | `py.typed` / PEP 561 typed distribution | ✅ |
+| Proactive rate limiting (`RateLimiter`, shareable across `Agent`/`AI` instances) | ✅ — see [ADR-0008](docs/adr/0008-rate-limiting.md) |
 
 ## Providers
 
@@ -74,9 +75,9 @@ construction (each lives in its own module, imported lazily).
 | Native orchestrator: parallel strategy | ✅ |
 | `langgraph` orchestrator backend (linear graph) | ✅ |
 | `langgraph` backend: branching / conditional graphs | 📋 |
-| Supervisor strategy (a coordinating agent delegates to others) | 📋 |
-| Planner strategy | 📋 |
-| Reflection strategy (agent critiques and revises its own output) | 📋 |
+| Supervisor strategy (a coordinating agent delegates to others) | ✅ — `native` orchestrator only; see [ADR-0007](docs/adr/0007-multi-agent-orchestration-strategies.md) |
+| Planner strategy | ✅ — `native` orchestrator only; see [ADR-0007](docs/adr/0007-multi-agent-orchestration-strategies.md) |
+| Reflection strategy (agent critiques and revises its own output) | ✅ — `native` orchestrator only; see [ADR-0007](docs/adr/0007-multi-agent-orchestration-strategies.md) |
 | Debate / critic / consensus strategies | 📋 |
 | Hierarchical strategy | 📋 |
 | Map-reduce strategy | 📋 |
@@ -97,6 +98,7 @@ Each new strategy is a `_run_<strategy>` / `_arun_<strategy>` pair on
 | MCP client: stdio transport | ✅ | `MCPClient.stdio(...)` |
 | MCP client: Streamable HTTP transport | ✅ | `MCPClient.http(...)` |
 | MCP client: persistent session mode (vs. today's per-call reconnect) | 📋 | Deferred until reconnect latency is a measured problem — ADR-0004 |
+| Migrate to `mcp` 2.x's API | 📋 | Currently capped at `mcp>=1.28,<2.0` — 2.0.0 is a breaking rewrite (restructured package layout, renamed `CallToolResult` fields, removed `streamablehttp_client`). Deliberately deferred as its own change rather than rushed under CI-failure pressure — see `CHANGELOG.md`'s 0.4.1 entry and `DEVELOPMENT.md`'s dependency policy |
 | Bridge into `CapabilityRegistry` (`agent.requires("github")` -> MCP server) | ✅ | `BaseMCPClient.register_as_capability(...)` |
 | MCP resource / prompt discovery (beyond tools) | 📋 | Out of scope for the initial client — ADR-0004 |
 | MCP server integration (expose Requisite tools/agents as an MCP server) | 📋 | |
