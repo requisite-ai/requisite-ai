@@ -30,9 +30,9 @@ Status legend: ✅ Done · 🚧 Partial · 📋 Not started · N/A Deliberately 
 |---|---|---|
 | AI provider configuration | ✅ | `Settings` + `AI(provider=...)` |
 | Chat completions | ✅ | `AI.chat` / `AI.chat_response` (+ async) |
-| Structured outputs | ✅ | `response_model=` on all 5 providers |
-| Streaming responses | ✅ | `AI.stream` / `AI.astream` on all 5 providers |
-| Function / Tool calling | ✅ | `@tool`, `Tool`, `ToolRegistry`; wired into all 5 providers |
+| Structured outputs | ✅ | `response_model=` on all 8 providers |
+| Streaming responses | ✅ | `AI.stream` / `AI.astream` on all 8 providers |
+| Function / Tool calling | ✅ | `@tool`, `Tool`, `ToolRegistry`; wired into all 8 providers |
 | Skills | ✅ | `BaseSkill`, `.as_tool()` |
 | Skills registry | ✅ | `SkillRegistry` |
 | Agent creation | ✅ | `Agent(...)` |
@@ -44,7 +44,7 @@ Status legend: ✅ Done · 🚧 Partial · 📋 Not started · N/A Deliberately 
 | MCP server integration | 📋 | |
 | Memory | ✅ | `BaseMemory`, `InProcessMemory`, wired into `Agent(memory=..., session_id=...)` |
 | Retrieval | ✅ | `Retriever.retrieve()` / `.aretrieve()` |
-| RAG | 🚧 | Core interfaces + in-memory default shipped (ADR-0005); Pinecone/Weaviate, hybrid search, re-ranking, context compression still 📋 — see RAG table below |
+| RAG | 🚧 | Core interfaces + in-memory/Pinecone/Weaviate vector stores shipped (ADR-0005); hybrid search, re-ranking, context compression still 📋 — see RAG table below |
 | Prompt templates | ✅ | `PromptTemplate`, `ChatPromptTemplate`, `PromptTemplateRegistry` — ADR-0003 |
 | Conversation management | ✅ | `Message` history + `BaseMemory` (storage) + `BaseConversationPolicy` (retention: `MessageCountPolicy`, `SummarizingPolicy`) — ADR-0003 |
 | Workflow execution | ✅ | `Workflow.run` / `Workflow.arun` |
@@ -57,11 +57,11 @@ Status legend: ✅ Done · 🚧 Partial · 📋 Not started · N/A Deliberately 
 | Anthropic Claude | ✅ | `AnthropicProvider` |
 | Google Gemini | ✅ | `GeminiProvider` |
 | Azure OpenAI | ✅ | `AzureOpenAIProvider` (v1 GA API) |
-| Ollama | 📋 | |
-| OpenRouter | 📋 | Candidate for the `OpenAIProvider`-subclass pattern — ADR-0002 |
+| Ollama | ✅ | `OllamaProvider` — native `ollama` client, not the OpenAI-compat subclass pattern (Ollama's own compat endpoint is documented experimental) |
+| OpenRouter | ✅ | `OpenRouterProvider` (`OpenAIProvider` subclass) — ADR-0002 |
 | Groq | ✅ | `GroqProvider` (`OpenAIProvider` subclass) |
-| Together AI | 📋 | Same candidate pattern as OpenRouter |
-| Local models | 📋 | Likely via Ollama once that lands |
+| Together AI | ✅ | `TogetherProvider` (`OpenAIProvider` subclass) |
+| Local models | ✅ | Via Ollama |
 
 ## Architecture
 
@@ -191,13 +191,13 @@ Status legend: ✅ Done · 🚧 Partial · 📋 Not started · N/A Deliberately 
 
 ## RAG
 
-Core interfaces + in-memory default shipped (ADR-0005). Pinecone/Weaviate
-are a deliberate scope cut, not yet implemented.
+Core interfaces, the in-memory default, and Pinecone/Weaviate are all
+shipped (ADR-0005).
 
 | Requirement | Status | Notes |
 |---|---|---|
 | Embedding providers | ✅ | `OpenAIEmbeddingProvider`, `GeminiEmbeddingProvider` |
-| Vector stores | 🚧 | `InMemoryVectorStore` shipped (zero deps, matches `InProcessMemory`); Pinecone/Weaviate still 📋 — `PINECONE_API_KEY`, `WEAVIATE_URL`/`WEAVIATE_API_KEY` reserved in `.env.example` |
+| Vector stores | ✅ | `InMemoryVectorStore` (zero deps, matches `InProcessMemory`), `PineconeVectorStore`, `WeaviateVectorStore` |
 | Chunking | ✅ | `chunk_text()` — character-based with overlap; token-aware chunking is a follow-up |
 | Retrievers | ✅ | `Retriever` (dense); exposed as a `CapabilityProvider` via `.as_tool()` — `agent.requires("knowledge_base")`, not a new `Agent` constructor parameter |
 | Hybrid search | 📋 | `BaseRetriever` is independent of embeddings at the interface level specifically to allow this later |
@@ -243,7 +243,7 @@ are a deliberate scope cut, not yet implemented.
 | Tools | ✅ | `ToolRegistry.register(...)` / `CapabilityRegistry.register(...)` |
 | MCP servers | ✅ | `MCPClientRegistry.register(...)`, then `.register_as_capability(...)` into `CapabilityRegistry` |
 | Retrievers | ✅ | `Retriever.as_tool()` -> `CapabilityRegistry.register(...)` |
-| Vector stores | ✅ | `VectorStoreRegistry.register(...)` — Pinecone/Weaviate implementations still 📋, but the registration mechanism is ready |
+| Vector stores | ✅ | `VectorStoreRegistry.register(...)` — `in_memory`, `pinecone`, `weaviate` all registered by default |
 | Memory providers | ✅ | `MemoryRegistry.register(...)` |
 | Prompt templates | ✅ | `PromptTemplateRegistry.register(...)` |
 | Discovery mechanism (entry points) | 📋 | Deliberately deferred — explicit import + register for v1; see ADR-0001's Plugin Discovery section for the trigger to add it |
@@ -340,7 +340,7 @@ are a deliberate scope cut, not yet implemented.
 
 ---
 
-*Last updated alongside `CHANGELOG.md`'s 0.4.0 entry. When a roadmap item
+*Last updated alongside `CHANGELOG.md`'s 0.6.0 entry. When a roadmap item
 ships, update its row here **and** the corresponding row in
 `ROADMAP.md` — they're allowed to organize the same facts differently,
 but not to disagree about what's actually shipped.*

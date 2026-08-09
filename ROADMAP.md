@@ -32,9 +32,10 @@ Status legend: ✅ Shipped · 🚧 In progress · 📋 Planned · 💭 Under dis
 | Anthropic Claude (`anthropic>=0.116`, native structured output + tool calling) | ✅ |
 | Azure OpenAI (v1 GA API, `OpenAIProvider` subclass) | ✅ |
 | Groq (OpenAI-wire-compatible, `OpenAIProvider` subclass) | ✅ |
-| Ollama (local models) | 📋 |
-| OpenRouter — candidate for the `OpenAIProvider` subclass pattern (see [ADR-0002](docs/adr/0002-provider-kwargs-and-memory-integration.md)) | 📋 |
-| Together AI — same candidate pattern | 📋 |
+| OpenRouter (OpenAI-wire-compatible, `OpenAIProvider` subclass — [ADR-0002](docs/adr/0002-provider-kwargs-and-memory-integration.md)) | ✅ |
+| Together AI (OpenAI-wire-compatible, `OpenAIProvider` subclass — same pattern) | ✅ |
+| Ollama (local models, native `ollama` client — not the OpenAI-compat subclass pattern, since Ollama's own compat endpoint is documented experimental) | ✅ |
+| Local models (general) | ✅ — via Ollama |
 
 Each is an implementation of `BaseProvider` — see `CONTRIBUTING.md` for the
 exact steps. **Community-contributed providers are one of the highest-value,
@@ -122,9 +123,9 @@ or care whether `"github"` is resolved by a native tool or an MCP server.
 
 ## RAG
 
-Core interfaces and the in-memory default are shipped; Pinecone/Weaviate
-are the deliberate scope cut for this phase (see
-[ADR-0005](docs/adr/0005-rag-integration.md)).
+Core interfaces, the in-memory default, and both Pinecone/Weaviate are
+now shipped (see [ADR-0005](docs/adr/0005-rag-integration.md) for the
+original interface design).
 
 | Item | Status | Notes |
 |---|---|---|
@@ -133,8 +134,8 @@ are the deliberate scope cut for this phase (see
 | OpenAI embedding provider | ✅ | `OpenAIEmbeddingProvider` (`text-embedding-3-small` default) |
 | Gemini embedding provider | ✅ | `GeminiEmbeddingProvider` (`gemini-embedding-001` default) |
 | In-memory vector store (default, zero dependencies) | ✅ | `InMemoryVectorStore` — pure-Python cosine similarity |
-| Pinecone vector store | 📋 | `PINECONE_API_KEY` / `PINECONE_ENVIRONMENT` already reserved in `.env.example` |
-| Weaviate vector store | 📋 | `WEAVIATE_URL` / `WEAVIATE_API_KEY` already reserved in `.env.example` |
+| Pinecone vector store | ✅ | `PineconeVectorStore` — current `pinecone>=9.0` SDK (serverless `cloud`/`region`, not the older `environment=` API) |
+| Weaviate vector store | ✅ | `WeaviateVectorStore` — current `weaviate-client>=4.0` v4 API, bring-your-own-vectors |
 | Chunking (character-based, with overlap) | ✅ | `chunk_text()` — token-aware chunking is a follow-up, not this phase |
 | `BaseRetriever` interface | ✅ | Independent of embeddings/vector store at the interface level, by design |
 | Dense retriever (`Retriever`) | ✅ | Composes an embedding provider + vector store |

@@ -3,11 +3,14 @@ pydantic>=2.7
 pydantic-settings>=2.3
 
 # Providers (install only what you use)
-openai>=1.35        # OpenAI provider, and Groq / Azure OpenAI (both OpenAI-wire-compatible)
+openai>=1.35        # OpenAI provider, and Groq / Azure OpenAI / OpenRouter / Together (all OpenAI-wire-compatible)
 google-genai>=1.0   # Gemini provider (unified SDK; do NOT install google-generativeai)
 anthropic>=0.116    # Anthropic (Claude) provider
+ollama>=0.6         # Ollama provider (native client; Ollama's own OpenAI-compat endpoint is experimental)
 mcp>=1.28,<2.0       # MCP client integration (capped below 2.0's breaking rewrite -- see CHANGELOG 0.4.1)
-# rag: reuses openai / google-genai above for embeddings; no extra SDK for the in-memory vector store
+# rag: reuses openai / google-genai above for embeddings
+pinecone>=9.0        # Pinecone vector store (current package name; "pinecone-client" is deprecated)
+weaviate-client>=4.0 # Weaviate vector store (v4 client API)
 
 # Orchestration backends (optional)
 langgraph>=0.2      # only needed if you use workflow.use_langgraph()

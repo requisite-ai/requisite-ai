@@ -10,7 +10,7 @@ from __future__ import annotations
 
 import sys
 import types
-from typing import Any
+from typing import Any, Optional
 
 import pytest
 
@@ -260,6 +260,11 @@ def test_default_vector_store_registry_has_in_memory() -> None:
     assert store.name == "in_memory"
 
 
+def test_default_vector_store_registry_has_pinecone_and_weaviate() -> None:
+    assert "pinecone" in default_vector_store_registry.available()
+    assert "weaviate" in default_vector_store_registry.available()
+
+
 def test_embedding_registry_unknown_raises() -> None:
     registry = EmbeddingRegistry()
     with pytest.raises(ConfigurationException):
@@ -366,3 +371,278 @@ def test_gemini_embedding_provider_missing_key_raises() -> None:
     provider = GeminiEmbeddingProvider(api_key=None)
     with pytest.raises(ConfigurationException):
         provider.embed(["hi"])
+
+
+# ---------------------------------------------------------------------------
+# Pinecone vector store (SDK faked via sys.modules)
+# ---------------------------------------------------------------------------
+
+
+class _FakePineconeIndex:
+    def __init__(self) -> None:
+        self._vectors: dict[str, tuple[list[float], dict[str, Any]]] = {}
+
+    def upsert(self, *, vectors: Any, namespace: str = "") -> None:
+        for chunk_id, values, metadata in vectors:
+            self._vectors[chunk_id] = (list(values), dict(metadata))
+
+    def query(
+        self,
+        *,
+        vector: list[float],
+        top_k: int,
+        namespace: str = "",
+        include_metadata: bool = False,
+    ) -> Any:
+        scored = [
+            (chunk_id, _cosine_similarity(vector, values), metadata)
+            for chunk_id, (values, metadata) in self._vectors.items()
+        ]
+        scored.sort(key=lambda item: item[1], reverse=True)
+        matches = [
+            types.SimpleNamespace(id=chunk_id, score=score, metadata=metadata)
+            for chunk_id, score, metadata in scored[:top_k]
+        ]
+        return types.SimpleNamespace(matches=matches)
+
+    def delete(self, *, ids: list[str], namespace: str = "") -> None:
+        for chunk_id in ids:
+            self._vectors.pop(chunk_id, None)
+
+
+class _FakePineconeClient:
+    def __init__(self, **kwargs: Any) -> None:
+        self.kwargs = kwargs
+        self._indexes: dict[str, _FakePineconeIndex] = {}
+
+    def has_index(self, name: str) -> bool:
+        return name in self._indexes
+
+    def create_index(self, *, name: str, spec: Any, dimension: int, metric: str) -> None:
+        self._indexes[name] = _FakePineconeIndex()
+
+    def index(self, *, name: str = "", host: str = "") -> _FakePineconeIndex:
+        return self._indexes[name]
+
+
+@pytest.fixture
+def fake_pinecone_module(monkeypatch: pytest.MonkeyPatch) -> types.ModuleType:
+    fake_module = types.ModuleType("pinecone")
+    fake_module.Pinecone = _FakePineconeClient  # type: ignore[attr-defined]
+    fake_module.ServerlessSpec = lambda **kwargs: kwargs  # type: ignore[attr-defined]
+    monkeypatch.setitem(sys.modules, "pinecone", fake_module)
+    return fake_module
+
+
+def test_pinecone_vector_store_add_and_search(fake_pinecone_module: types.ModuleType) -> None:
+    from requisite.rag.vectorstores.pinecone import PineconeVectorStore
+
+    store = PineconeVectorStore(api_key="pc-test", index_name="demo", dimension=2)
+    store.add(
+        [
+            Chunk(id="1", text="cats are great", embedding=[1.0, 0.0], metadata={"topic": "pets"}),
+            Chunk(id="2", text="dogs are great", embedding=[0.0, 1.0]),
+        ]
+    )
+    results = store.search([1.0, 0.0], top_k=1)
+    assert len(results) == 1
+    assert results[0].chunk.id == "1"
+    assert results[0].chunk.text == "cats are great"
+    assert results[0].chunk.metadata == {"topic": "pets"}
+
+
+def test_pinecone_vector_store_delete(fake_pinecone_module: types.ModuleType) -> None:
+    from requisite.rag.vectorstores.pinecone import PineconeVectorStore
+
+    store = PineconeVectorStore(api_key="pc-test", index_name="demo", dimension=2)
+    store.add([Chunk(id="1", text="cats", embedding=[1.0, 0.0])])
+    store.delete(["1"])
+    assert store.search([1.0, 0.0], top_k=5) == []
+
+
+def test_pinecone_vector_store_requires_dimension_to_create(
+    fake_pinecone_module: types.ModuleType,
+) -> None:
+    from requisite.rag.vectorstores.pinecone import PineconeVectorStore
+
+    store = PineconeVectorStore(api_key="pc-test", index_name="demo")
+    with pytest.raises(ConfigurationException, match="dimension"):
+        store.add([Chunk(id="1", text="cats", embedding=[1.0, 0.0])])
+
+
+def test_pinecone_vector_store_missing_sdk_raises(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setitem(sys.modules, "pinecone", None)
+    from requisite.rag.vectorstores.pinecone import PineconeVectorStore
+
+    store = PineconeVectorStore(api_key="pc-test", index_name="demo", dimension=2)
+    with pytest.raises(ConfigurationException):
+        store.add([Chunk(id="1", text="cats", embedding=[1.0, 0.0])])
+
+
+# ---------------------------------------------------------------------------
+# Weaviate vector store (SDK faked via sys.modules)
+# ---------------------------------------------------------------------------
+
+
+class _FakeWeaviateObject:
+    def __init__(self, properties: dict[str, Any], distance: float) -> None:
+        self.properties = properties
+        self.metadata = types.SimpleNamespace(distance=distance)
+
+
+class _FakeWeaviateDataObject:
+    def __init__(
+        self, *, properties: dict[str, Any], uuid: str, vector: Optional[list[float]] = None
+    ) -> None:
+        self.properties = properties
+        self.uuid = uuid
+        self.vector = vector
+
+
+class _FakeWeaviateData:
+    def __init__(self, store: dict[str, tuple[dict[str, Any], list[float]]]) -> None:
+        self._store = store
+
+    def insert_many(self, objects: Any) -> Any:
+        for obj in objects:
+            self._store[obj.uuid] = (obj.properties, obj.vector or [])
+        return types.SimpleNamespace()
+
+    def delete_by_id(self, uuid: str) -> bool:
+        return self._store.pop(uuid, None) is not None
+
+
+class _FakeWeaviateQuery:
+    def __init__(self, store: dict[str, tuple[dict[str, Any], list[float]]]) -> None:
+        self._store = store
+
+    def near_vector(
+        self,
+        *,
+        near_vector: list[float],
+        limit: int,
+        return_metadata: Any = None,
+        return_properties: Any = None,
+    ) -> Any:
+        scored = [
+            (1.0 - _cosine_similarity(near_vector, vector), properties)
+            for properties, vector in self._store.values()
+        ]
+        scored.sort(key=lambda item: item[0])
+        objects = [_FakeWeaviateObject(props, distance) for distance, props in scored[:limit]]
+        return types.SimpleNamespace(objects=objects)
+
+
+class _FakeWeaviateCollection:
+    def __init__(self) -> None:
+        self._store: dict[str, tuple[dict[str, Any], list[float]]] = {}
+        self.data = _FakeWeaviateData(self._store)
+        self.query = _FakeWeaviateQuery(self._store)
+
+
+class _FakeWeaviateCollections:
+    def __init__(self) -> None:
+        self._collections: dict[str, _FakeWeaviateCollection] = {}
+
+    def exists(self, name: str) -> bool:
+        return name in self._collections
+
+    def create(self, *, name: str, **kwargs: Any) -> _FakeWeaviateCollection:
+        collection = _FakeWeaviateCollection()
+        self._collections[name] = collection
+        return collection
+
+    def get(self, name: str) -> _FakeWeaviateCollection:
+        return self._collections[name]
+
+
+class _FakeWeaviateClient:
+    def __init__(self) -> None:
+        self.collections = _FakeWeaviateCollections()
+
+
+@pytest.fixture
+def fake_weaviate_module(monkeypatch: pytest.MonkeyPatch) -> types.ModuleType:
+    fake_module = types.ModuleType("weaviate")
+    fake_module.connect_to_local = lambda **kwargs: _FakeWeaviateClient()  # type: ignore[attr-defined]
+    fake_module.connect_to_weaviate_cloud = (  # type: ignore[attr-defined]
+        lambda **kwargs: _FakeWeaviateClient()
+    )
+
+    fake_classes_module = types.ModuleType("weaviate.classes")
+    fake_config_module = types.ModuleType("weaviate.classes.config")
+    fake_config_module.Configure = types.SimpleNamespace(  # type: ignore[attr-defined]
+        Vectorizer=types.SimpleNamespace(none=lambda: None),
+        VectorIndex=types.SimpleNamespace(hnsw=lambda **kwargs: None),
+    )
+    fake_config_module.Property = lambda **kwargs: kwargs  # type: ignore[attr-defined]
+    fake_config_module.DataType = types.SimpleNamespace(TEXT="text")  # type: ignore[attr-defined]
+    fake_config_module.VectorDistances = types.SimpleNamespace(COSINE="cosine")  # type: ignore[attr-defined]
+
+    fake_data_module = types.ModuleType("weaviate.classes.data")
+    fake_data_module.DataObject = _FakeWeaviateDataObject  # type: ignore[attr-defined]
+
+    fake_query_module = types.ModuleType("weaviate.classes.query")
+    fake_query_module.MetadataQuery = lambda **kwargs: kwargs  # type: ignore[attr-defined]
+
+    monkeypatch.setitem(sys.modules, "weaviate", fake_module)
+    monkeypatch.setitem(sys.modules, "weaviate.classes", fake_classes_module)
+    monkeypatch.setitem(sys.modules, "weaviate.classes.config", fake_config_module)
+    monkeypatch.setitem(sys.modules, "weaviate.classes.data", fake_data_module)
+    monkeypatch.setitem(sys.modules, "weaviate.classes.query", fake_query_module)
+    return fake_module
+
+
+def test_weaviate_vector_store_add_and_search(fake_weaviate_module: types.ModuleType) -> None:
+    from requisite.rag.vectorstores.weaviate import WeaviateVectorStore
+
+    store = WeaviateVectorStore(url="https://example.weaviate.network", api_key="w-test")
+    store.add(
+        [
+            Chunk(id="1", text="cats are great", embedding=[1.0, 0.0], metadata={"topic": "pets"}),
+            Chunk(id="2", text="dogs are great", embedding=[0.0, 1.0]),
+        ]
+    )
+    results = store.search([1.0, 0.0], top_k=1)
+    assert len(results) == 1
+    assert results[0].chunk.id == "1"
+    assert results[0].chunk.text == "cats are great"
+    assert results[0].chunk.metadata == {"topic": "pets"}
+
+
+def test_weaviate_vector_store_delete(fake_weaviate_module: types.ModuleType) -> None:
+    from requisite.rag.vectorstores.weaviate import WeaviateVectorStore
+
+    store = WeaviateVectorStore(url="https://example.weaviate.network", api_key="w-test")
+    store.add([Chunk(id="1", text="cats", embedding=[1.0, 0.0])])
+    store.delete(["1"])
+    assert store.search([1.0, 0.0], top_k=5) == []
+
+
+def test_weaviate_vector_store_local_connection_needs_no_api_key(
+    fake_weaviate_module: types.ModuleType,
+) -> None:
+    from requisite.rag.vectorstores.weaviate import WeaviateVectorStore
+
+    store = WeaviateVectorStore()
+    store.add([Chunk(id="1", text="cats", embedding=[1.0, 0.0])])
+    assert store.search([1.0, 0.0], top_k=1)[0].chunk.id == "1"
+
+
+def test_weaviate_vector_store_cloud_requires_api_key(
+    fake_weaviate_module: types.ModuleType,
+) -> None:
+    from requisite.rag.vectorstores.weaviate import WeaviateVectorStore
+
+    store = WeaviateVectorStore(url="https://example.weaviate.network")
+    with pytest.raises(ConfigurationException, match="api_key"):
+        store.add([Chunk(id="1", text="cats", embedding=[1.0, 0.0])])
+
+
+def test_weaviate_vector_store_missing_sdk_raises(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setitem(sys.modules, "weaviate", None)
+    from requisite.rag.vectorstores.weaviate import WeaviateVectorStore
+
+    store = WeaviateVectorStore()
+    with pytest.raises(ConfigurationException):
+        store.add([Chunk(id="1", text="cats", embedding=[1.0, 0.0])])

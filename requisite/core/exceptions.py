@@ -127,3 +127,31 @@ class RateLimitException(AIException):
     would need to wait longer than its configured ``max_wait_seconds``
     for capacity, rather than waiting indefinitely.
     """
+
+
+class VectorStoreException(AIException):
+    """Raised when a :class:`~requisite.rag.base.BaseVectorStore` operation
+    (add/search/delete, or the underlying client/index setup) fails.
+
+    Parameters
+    ----------
+    message:
+        Human readable description of the failure.
+    store:
+        Name of the vector store that raised the error (e.g. ``"pinecone"``).
+    original_error:
+        The underlying exception raised by the vector store's SDK,
+        preserved for debugging via ``raise ... from original_error``.
+    """
+
+    def __init__(
+        self,
+        message: str,
+        *,
+        store: Optional[str] = None,
+        original_error: Optional[BaseException] = None,
+        details: Optional[dict[str, Any]] = None,
+    ) -> None:
+        super().__init__(message, details=details)
+        self.store = store
+        self.original_error = original_error

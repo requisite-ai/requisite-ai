@@ -7,6 +7,42 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.6.0] - 2026-08-08
+
+### Added
+
+- Three new providers: `OpenRouterProvider` and `TogetherProvider`
+  (`provider="openrouter"` / `"together"` -- thin `OpenAIProvider`
+  subclasses, same pattern as Groq/Azure OpenAI per ADR-0002, confirmed
+  OpenAI-wire-compatible against each vendor's current docs) and
+  `OllamaProvider` (`provider="ollama"` -- a full translation layer using
+  the native `ollama` client, *not* the `OpenAIProvider`-subclass
+  pattern, since Ollama's own OpenAI-compatible endpoint is documented
+  by Ollama itself as experimental). `Settings` gains
+  `openrouter_api_key`, `together_api_key`, `ollama_api_key`, and
+  `ollama_host` fields.
+- Two new RAG vector stores: `PineconeVectorStore`
+  (`requisite.rag.vectorstores.pinecone`, `pip install
+  requisite-ai[pinecone]`) and `WeaviateVectorStore`
+  (`requisite.rag.vectorstores.weaviate`, `pip install
+  requisite-ai[weaviate]`), both implementing `BaseVectorStore` and
+  registered in `default_vector_store_registry` as `"pinecone"` /
+  `"weaviate"`. Both verified against their current SDKs (`pinecone>=9.0`,
+  `weaviate-client>=4.0`) -- Pinecone's index creation uses the current
+  serverless `cloud`/`region` spec, not the older, now-removed
+  `environment=` API; Weaviate uses the current v4 `WeaviateClient`
+  collections API, not the older v3 `weaviate.Client(...)`. New
+  `VectorStoreException(AIException)` for vector store operation
+  failures, matching `ProviderException`'s shape.
+- New optional dependency groups: `openrouter`, `together`, `ollama`,
+  `pinecone`, `weaviate` (all included in the `all` extra).
+
+All eight providers and all three vector stores are new implementations
+of existing interfaces (`BaseProvider` / `BaseVectorStore`) -- no public
+API shape changed for existing code.
+
+## [0.5.1] - 2026-08-08
+
 ### Changed
 
 - `.github/workflows/publish.yml` no longer trusts that `main`'s branch
@@ -17,15 +53,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   triggered `workflow_dispatch` could target any branch/commit and skip
   verification entirely, regardless of what protection `main` has.
 
-## [0.5.1] - 2026-08-08
-
 ### Fixed
 
 - Republished under a new version after a `0.5.0` upload attempt was
   deleted from PyPI: PyPI permanently blocks re-uploading a filename
   once used, even after deletion (`400 This filename was previously
   used by a file that has since been deleted`), so `0.5.0` can never be
-  published again. No code changes from `0.5.0` -- version bump only.
+  published again. No other code changes from `0.5.0` besides the CI
+  gate above.
 
 ## [0.5.0] - 2026-08-08
 
@@ -302,7 +337,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `pydantic-settings`-based `Settings`, `Message`/`ChatResponse` models,
   and the `AIException` hierarchy.
 
-[Unreleased]: https://github.com/requisite-ai/requisite-ai/compare/v0.5.1...HEAD
+[Unreleased]: https://github.com/requisite-ai/requisite-ai/compare/v0.6.0...HEAD
+[0.6.0]: https://github.com/requisite-ai/requisite-ai/compare/v0.5.1...v0.6.0
 [0.5.1]: https://github.com/requisite-ai/requisite-ai/compare/v0.5.0...v0.5.1
 [0.5.0]: https://github.com/requisite-ai/requisite-ai/compare/v0.4.1...v0.5.0
 [0.4.1]: https://github.com/requisite-ai/requisite-ai/compare/v0.4.0...v0.4.1

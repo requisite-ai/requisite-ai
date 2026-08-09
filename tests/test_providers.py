@@ -48,6 +48,12 @@ class DummyProvider(BaseProvider):
 def test_default_registry_knows_builtin_providers() -> None:
     assert "openai" in default_registry.available()
     assert "gemini" in default_registry.available()
+    assert "anthropic" in default_registry.available()
+    assert "groq" in default_registry.available()
+    assert "azure_openai" in default_registry.available()
+    assert "openrouter" in default_registry.available()
+    assert "together" in default_registry.available()
+    assert "ollama" in default_registry.available()
 
 
 def test_register_and_create_custom_provider() -> None:
@@ -592,3 +598,181 @@ def test_azure_openai_provider_requires_endpoint() -> None:
 
     with pytest.raises(ConfigurationException, match="azure_endpoint"):
         AzureOpenAIProvider(api_key="az-test")
+
+
+# ---------------------------------------------------------------------------
+# OpenRouter provider tests (reuses the OpenAI-compatible fake client)
+# ---------------------------------------------------------------------------
+
+
+def test_openrouter_provider_uses_openrouter_base_url(
+    fake_openai_module: types.ModuleType,
+) -> None:
+    captured_kwargs: dict[str, Any] = {}
+
+    class _CapturingClient(_FakeOpenAIClient):
+        def __init__(self, **kwargs: Any) -> None:
+            captured_kwargs.update(kwargs)
+            super().__init__(**kwargs)
+
+    fake_openai_module.OpenAI = _CapturingClient  # type: ignore[attr-defined]
+
+    from requisite.providers.openrouter_provider import OpenRouterProvider
+
+    provider = OpenRouterProvider(api_key="sk-or-test")
+    response = provider.chat([Message.user("hi")])
+    assert response.content == "echo: hi"
+    assert response.provider == "openrouter"
+    assert captured_kwargs["base_url"] == "https://openrouter.ai/api/v1"
+
+
+# ---------------------------------------------------------------------------
+# Together AI provider tests (reuses the OpenAI-compatible fake client)
+# ---------------------------------------------------------------------------
+
+
+def test_together_provider_uses_together_base_url(fake_openai_module: types.ModuleType) -> None:
+    captured_kwargs: dict[str, Any] = {}
+
+    class _CapturingClient(_FakeOpenAIClient):
+        def __init__(self, **kwargs: Any) -> None:
+            captured_kwargs.update(kwargs)
+            super().__init__(**kwargs)
+
+    fake_openai_module.OpenAI = _CapturingClient  # type: ignore[attr-defined]
+
+    from requisite.providers.together_provider import TogetherProvider
+
+    provider = TogetherProvider(api_key="together-test")
+    response = provider.chat([Message.user("hi")])
+    assert response.content == "echo: hi"
+    assert response.provider == "together"
+    assert captured_kwargs["base_url"] == "https://api.together.ai/v1"
+
+
+# ---------------------------------------------------------------------------
+# Ollama provider tests (SDK faked via sys.modules)
+# ---------------------------------------------------------------------------
+
+
+class _FakeOllamaFunction:
+    def __init__(self, name: str, arguments: dict[str, Any]) -> None:
+        self.name = name
+        self.arguments = arguments
+
+
+class _FakeOllamaToolCall:
+    def __init__(self, name: str, arguments: dict[str, Any]) -> None:
+        self.function = _FakeOllamaFunction(name, arguments)
+
+
+class _FakeOllamaMessage:
+    def __init__(
+        self, content: str, *, tool_calls: Optional[list[_FakeOllamaToolCall]] = None
+    ) -> None:
+        self.content = content
+        self.tool_calls = tool_calls
+
+
+class _FakeOllamaChatResponse:
+    def __init__(
+        self,
+        content: str,
+        *,
+        tool_calls: Optional[list[_FakeOllamaToolCall]] = None,
+        done_reason: str = "stop",
+        done: bool = True,
+    ) -> None:
+        self.message = _FakeOllamaMessage(content, tool_calls=tool_calls)
+        self.done_reason = done_reason
+        self.done = done
+        self.prompt_eval_count = 3
+        self.eval_count = 4
+
+
+class _FakeOllamaClient:
+    def __init__(self, **kwargs: Any) -> None:
+        self.kwargs = kwargs
+
+    def chat(
+        self, *, model: str, messages: list[dict[str, Any]], stream: bool = False, **kwargs: Any
+    ) -> Any:
+        if stream:
+            return iter(
+                [
+                    _FakeOllamaChatResponse("echo: ", done=False),
+                    _FakeOllamaChatResponse("hi", done=True),
+                ]
+            )
+        last_content = messages[-1]["content"] if messages else ""
+        return _FakeOllamaChatResponse(f"echo: {last_content}")
+
+
+@pytest.fixture
+def fake_ollama_module(monkeypatch: pytest.MonkeyPatch) -> types.ModuleType:
+    fake_module = types.ModuleType("ollama")
+    fake_module.Client = _FakeOllamaClient  # type: ignore[attr-defined]
+    fake_module.AsyncClient = _FakeOllamaClient  # type: ignore[attr-defined]
+    monkeypatch.setitem(sys.modules, "ollama", fake_module)
+    return fake_module
+
+
+def test_ollama_provider_chat(fake_ollama_module: types.ModuleType) -> None:
+    from requisite.providers.ollama_provider import OllamaProvider
+
+    provider = OllamaProvider(model="llama3.2")
+    response = provider.chat([Message.user("hi")])
+    assert response.content == "echo: hi"
+    assert response.provider == "ollama"
+    assert response.usage.total_tokens == 7
+
+
+def test_ollama_provider_parses_tool_calls(fake_ollama_module: types.ModuleType) -> None:
+    class _ToolCallClient(_FakeOllamaClient):
+        def chat(self, *, model, messages, stream=False, **kwargs):  # noqa: ANN001
+            return _FakeOllamaChatResponse(
+                "", tool_calls=[_FakeOllamaToolCall("get_weather", {"city": "Paris"})]
+            )
+
+    fake_ollama_module.Client = _ToolCallClient  # type: ignore[attr-defined]
+
+    from requisite.providers.ollama_provider import OllamaProvider
+    from requisite.tools.base import Tool
+
+    def get_weather(city: str) -> str:
+        return f"sunny in {city}"
+
+    provider = OllamaProvider(model="llama3.2")
+    response = provider.chat(
+        [Message.user("weather in Paris?")], tools=[Tool.from_function(get_weather)]
+    )
+    assert response.has_tool_calls
+    assert response.tool_calls[0].name == "get_weather"
+    assert response.tool_calls[0].arguments == {"city": "Paris"}
+
+
+def test_ollama_provider_stream(fake_ollama_module: types.ModuleType) -> None:
+    from requisite.providers.ollama_provider import OllamaProvider
+
+    provider = OllamaProvider(model="llama3.2")
+    chunks = list(provider.stream([Message.user("hi")]))
+    assert [c.delta for c in chunks] == ["echo: ", "hi"]
+    assert chunks[-1].is_final
+
+
+def test_ollama_provider_missing_sdk_raises_configuration_exception(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setitem(sys.modules, "ollama", None)
+    from requisite.providers.ollama_provider import OllamaProvider
+
+    provider = OllamaProvider(model="llama3.2")
+    with pytest.raises(ConfigurationException):
+        provider.chat([Message.user("hi")])
+
+
+def test_ollama_provider_does_not_require_api_key() -> None:
+    from requisite.providers.ollama_provider import OllamaProvider
+
+    provider = OllamaProvider(model="llama3.2")
+    provider.validate_config()  # must not raise, unlike the BaseProvider default

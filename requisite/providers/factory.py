@@ -151,11 +151,29 @@ def _register_builtin_providers(registry: ProviderRegistry) -> None:
 
         return AzureOpenAIProvider(**kwargs)
 
+    def _build_openrouter(**kwargs: Any) -> BaseProvider:
+        from requisite.providers.openrouter_provider import OpenRouterProvider
+
+        return OpenRouterProvider(**kwargs)
+
+    def _build_together(**kwargs: Any) -> BaseProvider:
+        from requisite.providers.together_provider import TogetherProvider
+
+        return TogetherProvider(**kwargs)
+
+    def _build_ollama(**kwargs: Any) -> BaseProvider:
+        from requisite.providers.ollama_provider import OllamaProvider
+
+        return OllamaProvider(**kwargs)
+
     registry.register("openai", _build_openai)
     registry.register("gemini", _build_gemini)
     registry.register("anthropic", _build_anthropic)
     registry.register("groq", _build_groq)
     registry.register("azure_openai", _build_azure_openai)
+    registry.register("openrouter", _build_openrouter)
+    registry.register("together", _build_together)
+    registry.register("ollama", _build_ollama)
 
 
 default_registry = ProviderRegistry()

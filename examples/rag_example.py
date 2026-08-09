@@ -30,6 +30,13 @@ def main() -> None:
     settings = Settings()
     retriever = Retriever(
         embedding_provider=GeminiEmbeddingProvider(api_key=settings.api_key_for("gemini")),
+        # Zero-dependency default, used here so this example runs without any
+        # vector-database account. Swap in a real one the same way you'd swap
+        # a provider -- construct it and pass it here instead:
+        #   from requisite.rag.vectorstores.pinecone import PineconeVectorStore
+        #   vector_store=PineconeVectorStore(api_key="...", index_name="demo", dimension=768)
+        #   from requisite.rag.vectorstores.weaviate import WeaviateVectorStore
+        #   vector_store=WeaviateVectorStore(url="...", api_key="...")
         vector_store=InMemoryVectorStore(),
     )
 

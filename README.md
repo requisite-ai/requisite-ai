@@ -105,12 +105,15 @@ print(ai.chat("Explain LangGraph in one sentence."))
 | Gemini | `"gemini"` | `gemini-2.5-flash`, `gemini-2.5-pro` | Uses the unified `google-genai` SDK |
 | Groq | `"groq"` | `llama-3.3-70b-versatile`, `openai/gpt-oss-20b` | OpenAI-wire-compatible; uses the `openai` package |
 | Azure OpenAI | `"azure_openai"` | your deployment name | Requires `azure_endpoint` (or `AZURE_OPENAI_ENDPOINT`); current v1 GA API, no `api-version` needed |
+| OpenRouter | `"openrouter"` | `openai/gpt-4o-mini`, `anthropic/claude-sonnet-4-6` | OpenAI-wire-compatible; routes to many underlying providers |
+| Together AI | `"together"` | `meta-llama/Llama-4-Maverick-17B-128E-Instruct-FP8` | OpenAI-wire-compatible; hosts open-source models |
+| Ollama | `"ollama"` | `llama3.2`, `qwen3` | Local (or remote) models; uses the native `ollama` client, not an OpenAI-compat shim |
 
 Switching between any of these is the `provider=`/`AZURE_OPENAI_ENDPOINT`
 change shown above — no other code changes. See
 [ADR-0002](docs/adr/0002-provider-kwargs-and-memory-integration.md) for
-why Groq and Azure OpenAI are implemented as thin `OpenAIProvider`
-subclasses rather than separate SDKs.
+why Groq, Azure OpenAI, OpenRouter, and Together AI are implemented as
+thin `OpenAIProvider` subclasses rather than separate SDKs.
 
 ### Structured output
 
@@ -388,10 +391,21 @@ retriever.add_texts(long_document_text, chunk_size=1000, chunk_overlap=200)
 ```
 
 `InMemoryVectorStore` is the zero-dependency default — pure-Python cosine
-similarity, fine for a few thousand chunks. Pinecone and Weaviate
-integrations are planned (`PINECONE_API_KEY`/`WEAVIATE_URL` are already
-reserved in `.env.example`) but not yet implemented — see
-[ADR-0005](docs/adr/0005-rag-integration.md) for the interface
+similarity, fine for a few thousand chunks. Swap in a real vector
+database the same way you'd swap a provider — construct it and pass it
+to `Retriever(vector_store=...)`:
+
+```python
+from requisite.rag.vectorstores.pinecone import PineconeVectorStore
+# pip install requisite-ai[pinecone]
+vector_store = PineconeVectorStore(api_key="...", index_name="my-index", dimension=1536)
+
+from requisite.rag.vectorstores.weaviate import WeaviateVectorStore
+# pip install requisite-ai[weaviate]
+vector_store = WeaviateVectorStore(url="https://my-cluster.weaviate.network", api_key="...")
+```
+
+See [ADR-0005](docs/adr/0005-rag-integration.md) for the interface
 decomposition (embeddings / vector stores / retrievers are three
 independent extension points) and why the in-memory default was chosen
 over requiring a real vector DB from day one.
@@ -560,7 +574,8 @@ requisite/
 │                   # ToolCall, ...) and the AIException hierarchy
 ├── config/         # Settings (pydantic-settings, reads .env)
 ├── providers/      # BaseProvider interface + OpenAI, Anthropic, Gemini, Groq,
-│                   # Azure OpenAI + ProviderRegistry (extensible, DI-friendly)
+│                   # Azure OpenAI, OpenRouter, Together AI, Ollama
+│                   # + ProviderRegistry (extensible, DI-friendly)
 ├── tools/          # Tool, @tool decorator, ToolRegistry, JSON Schema derivation
 ├── skills/         # BaseSkill, SkillRegistry -- reusable higher-level capabilities
 ├── capabilities/   # CapabilityRegistry -- resolve a named capability (e.g.
@@ -568,7 +583,7 @@ requisite/
 ├── mcp/            # BaseMCPClient + MCPClient (stdio + Streamable HTTP)
 │                   # + MCPClientRegistry -- bridges MCP tools into capabilities
 ├── rag/            # BaseEmbeddingProvider, BaseVectorStore, BaseRetriever
-│                   # + Retriever (dense) + InMemoryVectorStore
+│                   # + Retriever (dense) + InMemory/Pinecone/Weaviate vector stores
 ├── memory/         # BaseMemory + InProcessMemory + MemoryRegistry, plus
 │                   # BaseConversationPolicy (MessageCountPolicy, SummarizingPolicy)
 ├── prompts/        # PromptTemplate, ChatPromptTemplate, PromptTemplateRegistry
@@ -630,11 +645,11 @@ tested against fully in-memory fake providers.
 
 ## Roadmap
 
-Implemented: 5 providers (OpenAI, Anthropic, Gemini, Groq, Azure OpenAI),
-structured outputs, tool calling, skills, capability resolution
-(`agent.requires(...)`), MCP client integration (stdio + Streamable
-HTTP), RAG (embeddings, in-memory vector store, dense retrieval —
-Pinecone/Weaviate still planned), memory + conversation policies
+Implemented: 8 providers (OpenAI, Anthropic, Gemini, Groq, Azure OpenAI,
+OpenRouter, Together AI, Ollama), structured outputs, tool calling,
+skills, capability resolution (`agent.requires(...)`), MCP client
+integration (stdio + Streamable HTTP), RAG (embeddings, in-memory /
+Pinecone / Weaviate vector stores, dense retrieval), memory + conversation policies
 (`Agent(memory=..., conversation_policy=...)`), prompt templates,
 structured logging, agents + registry, multi-agent workflows (sequential,
 parallel, reflection, planner, supervisor on the native backend;

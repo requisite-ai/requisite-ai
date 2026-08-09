@@ -4,12 +4,12 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "requisite-ai"
-version = "0.5.1"
+version = "0.6.0"
 description = "A provider-agnostic, plugin-based framework for building AI applications and agents. Declare what you need -- providers, tools, capabilities -- not which SDK provides it."
 readme = "README.md"
 requires-python = ">=3.10"
 license = { text = "MIT" }
-keywords = ["ai", "agents", "llm", "openai", "gemini", "agentic", "orchestration", "mcp"]
+keywords = ["ai", "agents", "llm", "openai", "gemini", "ollama", "agentic", "orchestration", "mcp", "rag"]
 dependencies = [
     "pydantic>=2.7",
     "pydantic-settings>=2.3",
@@ -25,6 +25,9 @@ gemini = ["google-genai>=1.0"]
 anthropic = ["anthropic>=0.116"]
 groq = ["openai>=1.35"]          # Groq is OpenAI-wire-compatible; no separate SDK needed
 azure_openai = ["openai>=1.35"]  # Azure OpenAI v1 GA API also uses the plain openai client
+openrouter = ["openai>=1.35"]    # OpenRouter is OpenAI-wire-compatible; no separate SDK needed
+together = ["openai>=1.35"]      # Together AI is OpenAI-wire-compatible; no separate SDK needed
+ollama = ["ollama>=0.6"]         # native client -- Ollama's own OpenAI-compat endpoint is experimental
 langgraph = ["langgraph>=0.2"]
 # mcp 2.0.0 is a breaking rewrite (restructured package layout, renamed
 # CallToolResult.isError/structuredContent -> is_error/structured_content,
@@ -32,13 +35,18 @@ langgraph = ["langgraph>=0.2"]
 # capped below it until requisite migrates to the 2.x API as its own
 # deliberate change. See CHANGELOG.md's 0.4.1 entry.
 mcp = ["mcp>=1.28,<2.0"]
+pinecone = ["pinecone>=9.0"]        # current package name; the older "pinecone-client" is deprecated
+weaviate = ["weaviate-client>=4.0"]  # v4 client API; v3's weaviate.Client(...) is a different, older API
 rag = ["openai>=1.35", "google-genai>=1.0"]  # embedding providers; no vector-store SDK needed for the in-memory default
 all = [
     "openai>=1.35",
     "google-genai>=1.0",
     "anthropic>=0.116",
+    "ollama>=0.6",
     "langgraph>=0.2",
     "mcp>=1.28,<2.0",
+    "pinecone>=9.0",
+    "weaviate-client>=4.0",
 ]
 dev = ["pytest>=8.0", "pytest-asyncio>=0.23", "pytest-cov>=5.0", "ruff==0.14.0", "mypy>=1.10"]
 
@@ -64,5 +72,14 @@ strict = true
 # and imported lazily inside a try/except at call time -- don't fail
 # type-checking for users who haven't installed all of them.
 [[tool.mypy.overrides]]
-module = ["openai.*", "google.*", "anthropic.*", "langgraph.*", "mcp.*"]
+module = [
+    "openai.*",
+    "google.*",
+    "anthropic.*",
+    "langgraph.*",
+    "mcp.*",
+    "ollama.*",
+    "pinecone.*",
+    "weaviate.*",
+]
 ignore_missing_imports = true

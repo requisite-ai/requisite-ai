@@ -107,6 +107,22 @@ class Settings(BaseSettings):
             "provider='azure_openai' is used."
         ),
     )
+    openrouter_api_key: Optional[SecretStr] = Field(default=None)
+    together_api_key: Optional[SecretStr] = Field(default=None)
+    ollama_api_key: Optional[SecretStr] = Field(
+        default=None,
+        description=(
+            "Only needed for Ollama Cloud or a proxied/authenticated Ollama "
+            "deployment -- a purely local server needs no key."
+        ),
+    )
+    ollama_host: Optional[str] = Field(
+        default=None,
+        description=(
+            "Ollama server URL, e.g. 'http://localhost:11434'. Leave unset to use "
+            "the ollama SDK's own default resolution (localhost, or OLLAMA_HOST)."
+        ),
+    )
 
     default_provider: str = Field(default="openai")
     model: str = Field(default="gpt-4o-mini")
@@ -128,7 +144,8 @@ class Settings(BaseSettings):
         ----------
         provider:
             Provider identifier, e.g. ``"openai"``, ``"gemini"``,
-            ``"anthropic"``, ``"groq"``, or ``"azure_openai"``.
+            ``"anthropic"``, ``"groq"``, ``"azure_openai"``,
+            ``"openrouter"``, ``"together"``, or ``"ollama"``.
 
         Returns
         -------
@@ -141,6 +158,9 @@ class Settings(BaseSettings):
             "anthropic": self.anthropic_api_key,
             "groq": self.groq_api_key,
             "azure_openai": self.azure_openai_api_key,
+            "openrouter": self.openrouter_api_key,
+            "together": self.together_api_key,
+            "ollama": self.ollama_api_key,
         }
         secret = mapping.get(provider.lower())
         return secret.get_secret_value() if secret else None
@@ -151,10 +171,10 @@ class Settings(BaseSettings):
 
         Most providers need nothing extra here. This exists specifically
         for providers whose constructor requires configuration that has
-        no equivalent on other providers -- today, only
-        ``azure_openai``'s ``azure_endpoint``. See ADR-0002 for the
-        reasoning behind keeping this generic rather than special-casing
-        Azure inside :class:`~requisite.ai.AI`.
+        no equivalent on other providers -- ``azure_openai``'s
+        ``azure_endpoint``, and ``ollama``'s ``host``. See ADR-0002 for
+        the reasoning behind keeping this generic rather than
+        special-casing individual providers inside :class:`~requisite.ai.AI`.
 
         Parameters
         ----------
@@ -169,6 +189,8 @@ class Settings(BaseSettings):
         """
         if provider.lower() == "azure_openai":
             return {"azure_endpoint": self.azure_openai_endpoint}
+        if provider.lower() == "ollama":
+            return {"host": self.ollama_host}
         return {}
 
 

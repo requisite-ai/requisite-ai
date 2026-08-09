@@ -98,7 +98,19 @@ def _register_builtin_vector_stores(registry: VectorStoreRegistry) -> None:
 
         return InMemoryVectorStore(**kwargs)
 
+    def _build_pinecone(**kwargs: Any) -> BaseVectorStore:
+        from requisite.rag.vectorstores.pinecone import PineconeVectorStore
+
+        return PineconeVectorStore(**kwargs)
+
+    def _build_weaviate(**kwargs: Any) -> BaseVectorStore:
+        from requisite.rag.vectorstores.weaviate import WeaviateVectorStore
+
+        return WeaviateVectorStore(**kwargs)
+
     registry.register("in_memory", _build_in_memory)
+    registry.register("pinecone", _build_pinecone)
+    registry.register("weaviate", _build_weaviate)
 
 
 default_embedding_registry = EmbeddingRegistry()
