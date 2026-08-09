@@ -7,6 +7,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.6.1] - 2026-08-08
+
+### Fixed
+
+- `mypy` was declared `mypy>=1.10` in `pyproject.toml`'s `dev` extra and
+  `requirements.txt` -- an unbounded floor, not an exact pin -- despite
+  `DEVELOPMENT.md` explicitly documenting "dev tool versions (`ruff`,
+  `mypy`) are pinned exactly." In practice this meant CI/local installs
+  had already silently drifted across a major version (mypy 1.x -> 2.x)
+  with nobody deciding that deliberately -- the same class of risk the
+  ruff 0.16.0 incident (0.3.2) was supposed to have closed for good.
+  Verified `mypy==2.3.0` (current latest) is clean against `requisite
+  --strict` and `examples --strict` before pinning to it exactly.
+- Bumped the exact `ruff` pin from `0.14.0` to `0.14.14` -- the latest
+  patch release within the same `0.14.x` line (no new default-enabled
+  lint rules, unlike the `0.15`/`0.16` lines), verified clean against
+  `ruff check .` / `ruff format --check .` before pinning.
+
 ## [0.6.0] - 2026-08-08
 
 ### Added
@@ -337,7 +355,8 @@ API shape changed for existing code.
   `pydantic-settings`-based `Settings`, `Message`/`ChatResponse` models,
   and the `AIException` hierarchy.
 
-[Unreleased]: https://github.com/requisite-ai/requisite-ai/compare/v0.6.0...HEAD
+[Unreleased]: https://github.com/requisite-ai/requisite-ai/compare/v0.6.1...HEAD
+[0.6.1]: https://github.com/requisite-ai/requisite-ai/compare/v0.6.0...v0.6.1
 [0.6.0]: https://github.com/requisite-ai/requisite-ai/compare/v0.5.1...v0.6.0
 [0.5.1]: https://github.com/requisite-ai/requisite-ai/compare/v0.5.0...v0.5.1
 [0.5.0]: https://github.com/requisite-ai/requisite-ai/compare/v0.4.1...v0.5.0
