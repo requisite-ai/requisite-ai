@@ -20,6 +20,7 @@ Examples
 
 from __future__ import annotations
 
+import asyncio
 import logging
 from collections.abc import Callable, Sequence
 from typing import Any, Optional, Union
@@ -412,9 +413,17 @@ class Agent:
             messages.append(
                 Message.assistant_tool_calls(response.tool_calls, content=response.content)
             )
-            for call in response.tool_calls:
-                tool_instance = self._tool_registry.get(call.name)
-                result = await tool_instance.aexecute(**call.arguments)
+            # Independent tool calls from the same turn run concurrently --
+            # asyncio.gather preserves input order in its results regardless
+            # of completion order, so messages/tools_executed stay
+            # deterministic even though execution isn't sequential.
+            results = await asyncio.gather(
+                *(
+                    self._tool_registry.get(call.name).aexecute(**call.arguments)
+                    for call in response.tool_calls
+                )
+            )
+            for call, result in zip(response.tool_calls, results):
                 tools_executed.append(call.name)
                 messages.append(
                     Message.tool_result(str(result), tool_call_id=call.id, name=call.name)

@@ -175,6 +175,104 @@ async def test_agent_arun_executes_tool_and_returns_final_answer(
     assert result.tool_calls_executed == ["get_weather"]
 
 
+class MultiToolCallProvider(BaseProvider):
+    """A fake provider that requests three tool calls in one turn, then answers."""
+
+    def __init__(self, **kwargs: Any) -> None:
+        super().__init__(api_key="fake-key", model=kwargs.get("model", "fake-model"))
+        self._call_count = 0
+
+    @property
+    def name(self) -> str:
+        return "multi"
+
+    def chat(
+        self,
+        messages: Sequence[Message],
+        *,
+        model=None,
+        temperature=None,
+        tools=None,
+        response_model=None,
+        **kwargs,
+    ) -> ChatResponse:
+        self._call_count += 1
+        if self._call_count == 1:
+            return ChatResponse(
+                content="",
+                model=self._model,
+                provider=self.name,
+                tool_calls=[
+                    ToolCall(id="call_1", name="slow_echo", arguments={"value": "a"}),
+                    ToolCall(id="call_2", name="slow_echo", arguments={"value": "b"}),
+                    ToolCall(id="call_3", name="slow_echo", arguments={"value": "c"}),
+                ],
+            )
+        return ChatResponse(
+            content="done",
+            model=self._model,
+            provider=self.name,
+            usage=Usage(total_tokens=10),
+        )
+
+    async def achat(
+        self, messages, *, model=None, temperature=None, tools=None, response_model=None, **kwargs
+    ) -> ChatResponse:
+        return self.chat(
+            messages,
+            model=model,
+            temperature=temperature,
+            tools=tools,
+            response_model=response_model,
+            **kwargs,
+        )
+
+    def stream(
+        self, messages, *, model=None, temperature=None, tools=None, response_model=None, **kwargs
+    ):  # pragma: no cover
+        raise NotImplementedError
+
+    async def astream(
+        self, messages, *, model=None, temperature=None, tools=None, response_model=None, **kwargs
+    ):  # pragma: no cover
+        raise NotImplementedError
+        yield  # pragma: no cover
+
+
+@pytest.mark.asyncio
+async def test_agent_arun_executes_independent_tool_calls_concurrently() -> None:
+    import asyncio
+    import time
+
+    registry = ProviderRegistry()
+    registry.register("multi", MultiToolCallProvider)
+    settings = Settings(default_provider="multi", model="fake-model")
+
+    @tool
+    async def slow_echo(value: str) -> str:
+        """Sleep briefly, then echo the given value."""
+        await asyncio.sleep(0.2)
+        return f"echo:{value}"
+
+    agent = Agent(
+        name="Multi Tool Agent",
+        provider="multi",
+        tools=[slow_echo],
+        settings=settings,
+        registry=registry,
+    )
+
+    start = time.monotonic()
+    result = await agent.arun("run all three")
+    elapsed = time.monotonic() - start
+
+    # Three tools each sleeping 0.2s would take >=0.6s run sequentially;
+    # run concurrently they should complete in well under that.
+    assert elapsed < 0.4
+    assert result.content == "done"
+    assert result.tool_calls_executed == ["slow_echo", "slow_echo", "slow_echo"]
+
+
 def test_agent_raises_when_max_iterations_exceeded(
     registry_with_scripted: ProviderRegistry,
 ) -> None:

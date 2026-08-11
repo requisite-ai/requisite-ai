@@ -7,6 +7,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.6.2] - 2026-08-10
+
+### Fixed
+
+- `Agent.arun()`'s tool-calling loop awaited each of a turn's tool calls
+  one at a time (`for call in response.tool_calls: await
+  tool_instance.aexecute(...)`) even though providers already return the
+  full list of independent tool calls for that turn up front. In an
+  async context this was pure wasted latency -- three tools each taking
+  200ms serialized to 600ms instead of running concurrently. Now uses
+  `asyncio.gather` to run them concurrently; `asyncio.gather` preserves
+  input order in its results regardless of completion order, so
+  `tool_calls_executed` and the resulting `tool_result` messages stay
+  deterministic. `Agent.run()` (the sync path) is unaffected -- sync
+  execution has no concurrency to exploit here. See
+  `tests/test_agents.py::test_agent_arun_executes_independent_tool_calls_concurrently`.
+
 ## [0.6.1] - 2026-08-08
 
 ### Fixed
