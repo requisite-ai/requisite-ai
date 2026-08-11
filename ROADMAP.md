@@ -116,8 +116,8 @@ or care whether `"github"` is resolved by a native tool or an MCP server.
 | `BaseMemory` interface + registry — specified in [ADR-0001](docs/adr/0001-core-architecture-and-interfaces.md), implemented per [ADR-0002](docs/adr/0002-provider-kwargs-and-memory-integration.md) | ✅ |
 | Conversation memory (in-process, ships as the default in core) | ✅ |
 | `Agent(memory=..., session_id=...)` integration | ✅ |
-| Redis-backed memory | 📋 |
-| SQLite-backed memory | 📋 |
+| Redis-backed memory | ✅ — `RedisMemory`, `pip install requisite-ai[redis]` |
+| SQLite-backed memory | ✅ — `SQLiteMemory`, zero extra dependency (stdlib `sqlite3`) |
 | Vector-database-backed memory | 📋 |
 | Knowledge-graph-backed memory | 💭 |
 

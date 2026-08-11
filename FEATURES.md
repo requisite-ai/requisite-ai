@@ -42,7 +42,7 @@ Status legend: ✅ Done · 🚧 Partial · 📋 Not started · N/A Deliberately 
 | Agentic execution | 🚧 | `Agent`'s own tool-calling loop is agentic (model decides which tool); the supervisor/planner strategies add model-decided agent delegation (ADR-0007); full autonomous planning across agents/skills/MCP beyond that is 📋 — see Agentic Mode below |
 | MCP client integration | ✅ | `MCPClient` (stdio + Streamable HTTP) — ADR-0004 |
 | MCP server integration | 📋 | |
-| Memory | ✅ | `BaseMemory`, `InProcessMemory`, wired into `Agent(memory=..., session_id=...)` |
+| Memory | ✅ | `BaseMemory`, `InProcessMemory`/`SQLiteMemory`/`RedisMemory`, wired into `Agent(memory=..., session_id=...)` |
 | Retrieval | ✅ | `Retriever.retrieve()` / `.aretrieve()` |
 | RAG | 🚧 | Core interfaces + in-memory/Pinecone/Weaviate vector stores shipped (ADR-0005); hybrid search, re-ranking, context compression still 📋 — see RAG table below |
 | Prompt templates | ✅ | `PromptTemplate`, `ChatPromptTemplate`, `PromptTemplateRegistry` — ADR-0003 |
@@ -183,8 +183,8 @@ Status legend: ✅ Done · 🚧 Partial · 📋 Not started · N/A Deliberately 
 |---|---|---|
 | `BaseMemory` interface | ✅ | ADR-0001 (spec) / ADR-0002 (implementation) |
 | Conversation memory | ✅ | `InProcessMemory` |
-| Redis-backed memory | 📋 | `AWS_*` / general cloud creds reserved in `.env.example` for this class of backend |
-| SQLite-backed memory | 📋 | |
+| Redis-backed memory | ✅ | `RedisMemory` (`requisite.memory.redis`, `pip install requisite-ai[redis]`) |
+| SQLite-backed memory | ✅ | `SQLiteMemory` (`requisite.memory.sqlite`) — zero extra dependency, stdlib `sqlite3` |
 | Vector-database-backed memory | 📋 | Depends on RAG's vector store work |
 | Postgres-backed memory | 📋 | |
 | Knowledge-graph-backed memory | 📋 | |

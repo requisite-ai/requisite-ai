@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "requisite-ai"
-version = "0.6.2"
+version = "0.7.0"
 description = "A provider-agnostic, plugin-based framework for building AI applications and agents. Declare what you need -- providers, tools, capabilities -- not which SDK provides it."
 readme = "README.md"
 requires-python = ">=3.10"
@@ -38,6 +38,7 @@ mcp = ["mcp>=1.28,<2.0"]
 pinecone = ["pinecone>=9.0"]        # current package name; the older "pinecone-client" is deprecated
 weaviate = ["weaviate-client>=4.0"]  # v4 client API; v3's weaviate.Client(...) is a different, older API
 rag = ["openai>=1.35", "google-genai>=1.0"]  # embedding providers; no vector-store SDK needed for the in-memory default
+redis = ["redis>=5.0"]  # ships both sync redis.Redis and (4.2+) redis.asyncio.Redis -- no separate aioredis package
 all = [
     "openai>=1.35",
     "google-genai>=1.0",
@@ -47,6 +48,7 @@ all = [
     "mcp>=1.28,<2.0",
     "pinecone>=9.0",
     "weaviate-client>=4.0",
+    "redis>=5.0",
 ]
 dev = ["pytest>=8.0", "pytest-asyncio>=0.23", "pytest-cov>=5.0", "ruff==0.14.14", "mypy==2.3.0"]
 
@@ -81,5 +83,6 @@ module = [
     "ollama.*",
     "pinecone.*",
     "weaviate.*",
+    "redis.*",
 ]
 ignore_missing_imports = true

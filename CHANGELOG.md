@@ -7,6 +7,48 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.7.0] - 2026-08-10
+
+### Added
+
+- Two new `BaseMemory` implementations: `SQLiteMemory`
+  (`requisite.memory.sqlite`, zero extra dependency -- stdlib `sqlite3`)
+  and `RedisMemory` (`requisite.memory.redis`, `pip install
+  requisite-ai[redis]`, `redis>=5.0` -- ships both the sync `redis.Redis`
+  client and, since 4.2+, the built-in `redis.asyncio.Redis` async client
+  with no separate `aioredis` package needed). Both registered in
+  `default_memory_registry` as `"sqlite"` / `"redis"`, so
+  `Agent(memory=default_memory_registry.create("sqlite", db_path=...))`
+  works the same way `"in_process"` already does. `SQLiteMemory` is
+  exported from `requisite`/`requisite.memory` directly like
+  `InProcessMemory`; `RedisMemory` follows the same not-eagerly-imported
+  treatment as `PineconeVectorStore`/`WeaviateVectorStore` so importing
+  `requisite` never requires `redis` to be installed.
+- `RedisMemory.aload`/`.aappend`/`.aclear` are true async overrides
+  backed by a separately-built `redis.asyncio.Redis` client, not the
+  `BaseMemory` default's thread-wrapped sync fallback -- the case that
+  base class's docstring calls out as worth overriding for.
+- New `MemoryException(AIException)` for memory backend operation
+  failures (connection/session setup, load/append/clear), matching
+  `VectorStoreException`'s shape (`backend=` instead of `store=`).
+- New optional dependency group `redis` (included in the `all` extra).
+  `redis.*` added to `[tool.mypy.overrides]`'s ignore-missing-imports
+  list alongside the other optional SDKs.
+- `REDIS_URL` added to `.env.example`, read directly by `RedisMemory`
+  (falls back to it when `url=` is omitted -- unlike the Pinecone/OpenAI
+  SDKs, `redis-py` does not read this env var on its own, so the fallback
+  is implemented in `RedisMemory` itself), not by `Settings`.
+
+### Fixed
+
+- `VectorStoreException` (added in 0.6.0) was never added to
+  `requisite`'s top-level exports -- every other concrete exception was
+  reachable as `from requisite import ...` except this one. Fixed
+  alongside the `MemoryException` addition above.
+
+Both new memory backends are new implementations of the existing
+`BaseMemory` interface -- no public API shape changed for existing code.
+
 ## [0.6.2] - 2026-08-10
 
 ### Fixed

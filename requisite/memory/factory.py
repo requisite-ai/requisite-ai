@@ -3,9 +3,10 @@ Memory registry.
 
 Mirrors :class:`requisite.providers.factory.ProviderRegistry`'s shape: a
 plain, instantiable class (not a singleton) mapping backend names to
-constructors, pre-populated with the framework's built-in ``"in_process"``
-backend. Third-party packages register their own memory backend
-(Redis, SQLite, a vector store, ...) the same way new providers are added.
+constructors, pre-populated with the framework's built-in ``"in_process"``,
+``"sqlite"``, and ``"redis"`` backends. Third-party packages register
+their own memory backend (a vector store, a cloud database, ...) the
+same way new providers are added.
 """
 
 from __future__ import annotations
@@ -63,7 +64,19 @@ def _register_builtin_backends(registry: MemoryRegistry) -> None:
 
         return InProcessMemory(**kwargs)
 
+    def _build_sqlite(**kwargs: Any) -> BaseMemory:
+        from requisite.memory.sqlite import SQLiteMemory
+
+        return SQLiteMemory(**kwargs)
+
+    def _build_redis(**kwargs: Any) -> BaseMemory:
+        from requisite.memory.redis import RedisMemory
+
+        return RedisMemory(**kwargs)
+
     registry.register("in_process", _build_in_process)
+    registry.register("sqlite", _build_sqlite)
+    registry.register("redis", _build_redis)
 
 
 default_registry = MemoryRegistry()

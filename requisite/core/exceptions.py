@@ -155,3 +155,31 @@ class VectorStoreException(AIException):
         super().__init__(message, details=details)
         self.store = store
         self.original_error = original_error
+
+
+class MemoryException(AIException):
+    """Raised when a :class:`~requisite.memory.base.BaseMemory` operation
+    (load/append/clear, or the underlying connection/session setup) fails.
+
+    Parameters
+    ----------
+    message:
+        Human readable description of the failure.
+    backend:
+        Name of the memory backend that raised the error (e.g. ``"redis"``).
+    original_error:
+        The underlying exception raised by the backend's client/driver,
+        preserved for debugging via ``raise ... from original_error``.
+    """
+
+    def __init__(
+        self,
+        message: str,
+        *,
+        backend: Optional[str] = None,
+        original_error: Optional[BaseException] = None,
+        details: Optional[dict[str, Any]] = None,
+    ) -> None:
+        super().__init__(message, details=details)
+        self.backend = backend
+        self.original_error = original_error

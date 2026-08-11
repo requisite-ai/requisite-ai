@@ -110,11 +110,13 @@ from requisite.core.exceptions import (
     CapabilityException,
     ConfigurationException,
     MCPException,
+    MemoryException,
     PromptException,
     ProviderException,
     RateLimitException,
     SkillException,
     ToolException,
+    VectorStoreException,
 )
 from requisite.core.interfaces import ChatResponse, Message, Role, ToolCall
 from requisite.core.rate_limiter import RateLimiter
@@ -127,6 +129,7 @@ from requisite.memory.base import BaseMemory
 from requisite.memory.factory import MemoryRegistry
 from requisite.memory.in_process import InProcessMemory
 from requisite.memory.policies import BaseConversationPolicy, MessageCountPolicy, SummarizingPolicy
+from requisite.memory.sqlite import SQLiteMemory
 from requisite.orchestrators.base import WorkflowResult
 from requisite.prompts import default_prompt_registry
 from requisite.prompts.registry import PromptTemplateRegistry
@@ -188,6 +191,7 @@ __all__ = [
     "MCPClient",
     "MCPClientRegistry",
     "MCPException",
+    "MemoryException",
     "MemoryRegistry",
     # Messages / responses
     "Message",
@@ -204,6 +208,7 @@ __all__ = [
     "RateLimiter",
     "Retriever",
     "Role",
+    "SQLiteMemory",
     "ScoredChunk",
     "Settings",
     "SkillException",
@@ -213,6 +218,7 @@ __all__ = [
     "ToolCall",
     "ToolException",
     "ToolRegistry",
+    "VectorStoreException",
     "VectorStoreRegistry",
     # Multi-agent workflows
     "Workflow",
@@ -229,4 +235,4 @@ __all__ = [
     "tool",
 ]
 
-__version__ = "0.6.2"
+__version__ = "0.7.0"
