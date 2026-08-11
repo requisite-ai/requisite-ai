@@ -80,7 +80,7 @@ construction (each lives in its own module, imported lazily).
 | Planner strategy | ✅ — `native` orchestrator only; see [ADR-0007](docs/adr/0007-multi-agent-orchestration-strategies.md) |
 | Reflection strategy (agent critiques and revises its own output) | ✅ — `native` orchestrator only; see [ADR-0007](docs/adr/0007-multi-agent-orchestration-strategies.md) |
 | Debate / critic / consensus strategies | ✅ — `native` orchestrator only; see [ADR-0011](docs/adr/0011-critic-and-consensus-strategies.md), [ADR-0012](docs/adr/0012-debate-and-map-reduce-strategies.md) |
-| Hierarchical strategy | 📋 |
+| Hierarchical strategy | ✅ — `native` orchestrator only; a delegate may be an `Agent` or a named `Workflow` (nested "team"), giving real recursive delegation; see [ADR-0013](docs/adr/0013-hierarchical-strategy.md) |
 | Map-reduce strategy | ✅ — `native` orchestrator only; work items via `map_items=`, round-robin across mappers; see [ADR-0012](docs/adr/0012-debate-and-map-reduce-strategies.md) |
 | Tree-of-thoughts strategy | 📋 |
 | General graph execution (arbitrary DAGs, not just linear/parallel) | 📋 |

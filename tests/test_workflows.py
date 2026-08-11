@@ -14,6 +14,7 @@ from requisite.agents.agent import Agent
 from requisite.config.settings import Settings
 from requisite.core.exceptions import AgentException, ConfigurationException
 from requisite.core.interfaces import ChatResponse, Message, StreamChunk
+from requisite.orchestrators.base import WorkflowResult
 from requisite.orchestrators.factory import (
     OrchestratorRegistry,
     default_registry as default_orchestrator_registry,
@@ -776,6 +777,124 @@ async def test_workflow_arun_map_reduce() -> None:
 
     assert result.content == "final"
     assert len(result.steps) == 3
+
+
+# ---------------------------------------------------------------------------
+# Hierarchical strategy
+# ---------------------------------------------------------------------------
+
+
+def test_workflow_hierarchical_delegates_to_agent_then_finishes() -> None:
+    decisions = [
+        _SupervisorDecision(action="delegate", worker="Researcher", task="Find facts about RAG"),
+        _SupervisorDecision(
+            action="finish", final_answer="RAG combines retrieval with generation."
+        ),
+    ]
+    coordinator = make_agent_with_provider(
+        "Coordinator", ScriptedSupervisorProvider(decisions=decisions)
+    )
+    researcher = make_agent("Researcher", "research")
+
+    workflow = Workflow().hierarchical()
+    workflow.add(coordinator).add(researcher)
+    result = workflow.run("Explain RAG")
+
+    assert result.strategy == "hierarchical"
+    assert result.orchestrator == "native"
+    assert result.content == "RAG combines retrieval with generation."
+    assert len(result.steps) == 1
+    assert result.steps[0].agent_name == "Researcher"
+
+
+def test_workflow_hierarchical_delegates_to_nested_workflow() -> None:
+    decisions = [
+        _SupervisorDecision(action="delegate", worker="ResearchTeam", task="Find facts about RAG"),
+        _SupervisorDecision(action="finish", final_answer="done"),
+    ]
+    coordinator = make_agent_with_provider(
+        "Coordinator", ScriptedSupervisorProvider(decisions=decisions)
+    )
+    research_team = Workflow(name="ResearchTeam")
+    research_team.add(make_agent("SubResearcher", "research"))
+
+    workflow = Workflow().hierarchical()
+    workflow.add(coordinator).add(research_team)
+    result = workflow.run("Explain RAG")
+
+    assert result.content == "done"
+    assert len(result.steps) == 1
+    # The delegate result is a WorkflowResult (from the nested team), not an AgentResult.
+    assert isinstance(result.steps[0], WorkflowResult)
+    assert result.steps[0].content == "research:Find facts about RAG"
+    assert result.steps[0].strategy == "sequential"
+
+
+def test_workflow_hierarchical_requires_at_least_two_agents() -> None:
+    workflow = Workflow().hierarchical()
+    workflow.add(make_agent("Solo", "solo"))
+    with pytest.raises(ConfigurationException, match="hierarchical"):
+        workflow.run("task")
+
+
+def test_workflow_hierarchical_coordinator_must_be_agent() -> None:
+    sub_team = Workflow(name="Team")
+    sub_team.add(make_agent("Leaf", "leaf"))
+    not_a_coordinator = Workflow(name="NotACoordinator")
+
+    workflow = Workflow().hierarchical()
+    workflow.add(not_a_coordinator).add(sub_team)
+    with pytest.raises(ConfigurationException, match="Agent"):
+        workflow.run("task")
+
+
+def test_workflow_hierarchical_unnamed_workflow_delegate_raises() -> None:
+    coordinator = make_agent_with_provider("Coordinator", ScriptedSupervisorProvider(decisions=[]))
+    unnamed_team = Workflow()  # no name=
+    unnamed_team.add(make_agent("Leaf", "leaf"))
+
+    workflow = Workflow().hierarchical()
+    workflow.add(coordinator).add(unnamed_team)
+    with pytest.raises(ConfigurationException, match="name"):
+        workflow.run("task")
+
+
+def test_workflow_hierarchical_duplicate_delegate_names_raises() -> None:
+    workflow = Workflow().hierarchical()
+    workflow.add(make_agent("Coordinator", "c"))
+    workflow.add(make_agent("Dup", "a")).add(make_agent("Dup", "b"))
+    with pytest.raises(ConfigurationException, match="unique delegate names"):
+        workflow.run("task")
+
+
+def test_workflow_hierarchical_exceeds_max_rounds_raises() -> None:
+    decisions = [
+        _SupervisorDecision(action="delegate", worker="Researcher", task="Find facts")
+        for _ in range(3)
+    ]
+    coordinator = make_agent_with_provider(
+        "Coordinator", ScriptedSupervisorProvider(decisions=decisions)
+    )
+    researcher = make_agent("Researcher", "research")
+
+    workflow = Workflow().hierarchical()
+    workflow.add(coordinator).add(researcher)
+    with pytest.raises(AgentException, match="max_rounds"):
+        workflow.run("task", max_rounds=3)
+
+
+@pytest.mark.asyncio
+async def test_workflow_arun_hierarchical() -> None:
+    decisions = [_SupervisorDecision(action="finish", final_answer="done")]
+    coordinator = make_agent_with_provider(
+        "Coordinator", ScriptedSupervisorProvider(decisions=decisions)
+    )
+    workflow = Workflow().hierarchical()
+    workflow.add(coordinator).add(make_agent("Worker", "w"))
+
+    result = await workflow.arun("task")
+
+    assert result.content == "done"
 
 
 def test_default_orchestrator_registry_has_native_and_langgraph() -> None:

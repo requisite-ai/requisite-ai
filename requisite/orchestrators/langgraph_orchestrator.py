@@ -95,7 +95,7 @@ class LangGraphOrchestrator(BaseOrchestrator):
 
     def run(
         self,
-        steps: Sequence["Agent"],
+        steps: Sequence[Any],
         input: Optional[str],  # noqa: A002
         *,
         strategy: str = "sequential",
@@ -122,7 +122,7 @@ class LangGraphOrchestrator(BaseOrchestrator):
 
     async def arun(
         self,
-        steps: Sequence["Agent"],
+        steps: Sequence[Any],
         input: Optional[str],  # noqa: A002
         *,
         strategy: str = "sequential",

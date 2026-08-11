@@ -194,6 +194,45 @@ def main() -> None:
     print(map_reduce_result.content)
     print(f"(mapped by: {[s.agent_name for s in map_reduce_result.steps[:-1]]})")
 
+    # Hierarchical: a top-level coordinator delegates to either a plain
+    # agent or a named sub-team Workflow -- delegating to a Workflow
+    # runs whatever strategy it's configured with, so a "team" can
+    # itself be a supervisor delegating further, giving real 2-level
+    # recursive hierarchy.
+    team_lead = Agent(
+        name="ResearchTeamLead",
+        provider="gemini",
+        system_prompt="You coordinate a small research team, delegating one subtask at a time.",
+        rate_limiter=shared_rate_limit,
+    )
+    team_researcher = Agent(
+        name="TeamResearcher", provider="gemini", rate_limiter=shared_rate_limit
+    )
+    research_team = Workflow(name="ResearchTeam").supervisor()
+    research_team.add(team_lead).add(team_researcher)
+
+    director = Agent(
+        name="Director",
+        provider="gemini",
+        system_prompt=(
+            "You coordinate a small organization, delegating one subtask at a time "
+            "to either the Writer or the ResearchTeam."
+        ),
+        rate_limiter=shared_rate_limit,
+    )
+    hierarchical_workflow = Workflow().hierarchical()
+    hierarchical_workflow.add(director).add(writer).add(research_team)
+    hierarchical_result = hierarchical_workflow.run(
+        "Research what the Model Context Protocol (MCP) is, then write a two-sentence summary.",
+        max_rounds=4,
+    )
+    print("\n--- hierarchical (native) ---")
+    print(hierarchical_result.content)
+    print(
+        "(delegated to: "
+        f"{[getattr(s, 'agent_name', 'ResearchTeam (nested Workflow)') for s in hierarchical_result.steps]})"
+    )
+
 
 if __name__ == "__main__":
     main()

@@ -1,16 +1,17 @@
 """
 Native orchestrator: sequential, parallel, reflection, planner,
-supervisor, critic, consensus, debate, and map-reduce execution -- no
-external orchestration framework required.
+supervisor, critic, consensus, debate, map-reduce, and hierarchical
+execution -- no external orchestration framework required.
 
 This is the default backend for :class:`~requisite.workflows.workflow.Workflow`.
-Further strategies (hierarchical, tree-of-thoughts, general graph
-execution) are natural extensions of this class -- add a
-``_run_<strategy>`` / ``_arun_<strategy>`` pair and a branch in
-:meth:`NativeOrchestrator.run` / :meth:`NativeOrchestrator.arun`; nothing
-else needs to change. See ``docs/adr/0011-critic-and-consensus-strategies.md``
-and ``docs/adr/0012-debate-and-map-reduce-strategies.md`` for which of
-those fit this flat coordinator/worker shape directly and which don't.
+Further strategies (tree-of-thoughts, general graph execution) are
+natural extensions of this class -- add a ``_run_<strategy>`` /
+``_arun_<strategy>`` pair and a branch in :meth:`NativeOrchestrator.run`
+/ :meth:`NativeOrchestrator.arun`; nothing else needs to change. See
+``docs/adr/0011-critic-and-consensus-strategies.md``,
+``docs/adr/0012-debate-and-map-reduce-strategies.md``, and
+``docs/adr/0013-hierarchical-strategy.md`` for which of those fit this
+flat coordinator/worker shape directly and which don't.
 """
 
 from __future__ import annotations
@@ -261,6 +262,14 @@ class NativeOrchestrator(BaseOrchestrator):
         agents (``steps[1:]``) each process one item from ``map_items``
         (assigned round-robin, run concurrently), after which the
         reducer combines every item's result into one final answer.
+
+    Hierarchical strategy
+        Same shape as ``supervisor``, except a delegate (``steps[1:]``)
+        may be either an ``Agent`` or a named
+        :class:`~requisite.workflows.workflow.Workflow` ("team").
+        Delegating to a ``Workflow`` runs whatever strategy it's
+        configured with -- including another ``supervisor`` or
+        ``hierarchical`` -- giving real recursive delegation.
     """
 
     _STRATEGIES = (
@@ -273,6 +282,7 @@ class NativeOrchestrator(BaseOrchestrator):
         "consensus",
         "debate",
         "map_reduce",
+        "hierarchical",
     )
 
     @property
@@ -281,7 +291,7 @@ class NativeOrchestrator(BaseOrchestrator):
 
     def run(
         self,
-        steps: Sequence["Agent"],
+        steps: Sequence[Any],
         input: Optional[str],  # noqa: A002
         *,
         strategy: str = "sequential",
@@ -310,6 +320,8 @@ class NativeOrchestrator(BaseOrchestrator):
             return self._run_debate(steps, input, **kwargs)
         if strategy == "map_reduce":
             return self._run_map_reduce(steps, input, **kwargs)
+        if strategy == "hierarchical":
+            return self._run_hierarchical(steps, input, **kwargs)
         raise ConfigurationException(
             f"Unknown execution strategy '{strategy}' for the native orchestrator. "
             f"Supported: {', '.join(self._STRATEGIES)}.",
@@ -317,7 +329,7 @@ class NativeOrchestrator(BaseOrchestrator):
 
     async def arun(
         self,
-        steps: Sequence["Agent"],
+        steps: Sequence[Any],
         input: Optional[str],  # noqa: A002
         *,
         strategy: str = "sequential",
@@ -346,6 +358,8 @@ class NativeOrchestrator(BaseOrchestrator):
             return await self._arun_debate(steps, input, **kwargs)
         if strategy == "map_reduce":
             return await self._arun_map_reduce(steps, input, **kwargs)
+        if strategy == "hierarchical":
+            return await self._arun_hierarchical(steps, input, **kwargs)
         raise ConfigurationException(
             f"Unknown execution strategy '{strategy}' for the native orchestrator. "
             f"Supported: {', '.join(self._STRATEGIES)}.",
@@ -589,34 +603,8 @@ class NativeOrchestrator(BaseOrchestrator):
         **kwargs: Any,
     ) -> WorkflowResult:
         supervisor, workers = self._split_coordinator_and_workers(steps, role="supervisor")
-
-        results: list["AgentResult"] = []
-        transcript: list[tuple[str, str, str]] = []
-
-        for _ in range(max_rounds):
-            decision = supervisor.ai.chat(
-                _supervisor_prompt(input, list(workers), transcript),
-                response_model=_SupervisorDecision,
-            )
-            if decision.action == "finish":
-                return WorkflowResult(
-                    content=decision.final_answer or "",
-                    steps=results,
-                    orchestrator=self.name,
-                    strategy="supervisor",
-                )
-
-            worker = self._resolve_delegate(
-                decision, supervisor_name=supervisor.name, workers=workers
-            )
-            subtask = decision.task or input
-            result = worker.run(subtask, **kwargs)
-            results.append(result)
-            transcript.append((worker.name, subtask, result.content))
-
-        raise AgentException(
-            f"Workflow supervisor '{supervisor.name}' exceeded max_rounds={max_rounds} "
-            f"without reaching a final answer.",
+        return self._run_delegation_loop(
+            supervisor, workers, input, max_rounds=max_rounds, strategy_name="supervisor", **kwargs
         )
 
     async def _arun_supervisor(
@@ -628,13 +616,69 @@ class NativeOrchestrator(BaseOrchestrator):
         **kwargs: Any,
     ) -> WorkflowResult:
         supervisor, workers = self._split_coordinator_and_workers(steps, role="supervisor")
+        return await self._arun_delegation_loop(
+            supervisor, workers, input, max_rounds=max_rounds, strategy_name="supervisor", **kwargs
+        )
 
-        results: list["AgentResult"] = []
+    def _run_hierarchical(
+        self,
+        steps: Sequence[Any],
+        input: str,  # noqa: A002
+        *,
+        max_rounds: int = 6,
+        **kwargs: Any,
+    ) -> WorkflowResult:
+        coordinator, delegates = self._split_coordinator_and_delegates(steps, role="hierarchical")
+        return self._run_delegation_loop(
+            coordinator,
+            delegates,
+            input,
+            max_rounds=max_rounds,
+            strategy_name="hierarchical",
+            **kwargs,
+        )
+
+    async def _arun_hierarchical(
+        self,
+        steps: Sequence[Any],
+        input: str,  # noqa: A002
+        *,
+        max_rounds: int = 6,
+        **kwargs: Any,
+    ) -> WorkflowResult:
+        coordinator, delegates = self._split_coordinator_and_delegates(steps, role="hierarchical")
+        return await self._arun_delegation_loop(
+            coordinator,
+            delegates,
+            input,
+            max_rounds=max_rounds,
+            strategy_name="hierarchical",
+            **kwargs,
+        )
+
+    def _run_delegation_loop(
+        self,
+        coordinator: "Agent",
+        delegates: dict[str, Any],
+        input: str,  # noqa: A002
+        *,
+        max_rounds: int,
+        strategy_name: str,
+        **kwargs: Any,
+    ) -> WorkflowResult:
+        """Shared by ``supervisor`` and ``hierarchical`` -- structurally
+        identical round loops (same decision model, same "finish"
+        termination, same transcript shape); the only difference between
+        the two strategies is which split-helper validated/built
+        ``delegates``, so that's the only part not shared. See
+        ``docs/adr/0013-hierarchical-strategy.md``.
+        """
+        results: list[Any] = []
         transcript: list[tuple[str, str, str]] = []
 
         for _ in range(max_rounds):
-            decision = await supervisor.ai.achat(
-                _supervisor_prompt(input, list(workers), transcript),
+            decision = coordinator.ai.chat(
+                _supervisor_prompt(input, list(delegates), transcript),
                 response_model=_SupervisorDecision,
             )
             if decision.action == "finish":
@@ -642,32 +686,116 @@ class NativeOrchestrator(BaseOrchestrator):
                     content=decision.final_answer or "",
                     steps=results,
                     orchestrator=self.name,
-                    strategy="supervisor",
+                    strategy=strategy_name,
                 )
 
-            worker = self._resolve_delegate(
-                decision, supervisor_name=supervisor.name, workers=workers
+            delegate = self._resolve_delegate(
+                decision, supervisor_name=coordinator.name, workers=delegates
             )
             subtask = decision.task or input
-            result = await worker.arun(subtask, **kwargs)
+            result = delegate.run(subtask, **kwargs)
             results.append(result)
-            transcript.append((worker.name, subtask, result.content))
+            transcript.append((delegate.name, subtask, result.content))
 
         raise AgentException(
-            f"Workflow supervisor '{supervisor.name}' exceeded max_rounds={max_rounds} "
+            f"Workflow {strategy_name} '{coordinator.name}' exceeded max_rounds={max_rounds} "
+            f"without reaching a final answer.",
+        )
+
+    async def _arun_delegation_loop(
+        self,
+        coordinator: "Agent",
+        delegates: dict[str, Any],
+        input: str,  # noqa: A002
+        *,
+        max_rounds: int,
+        strategy_name: str,
+        **kwargs: Any,
+    ) -> WorkflowResult:
+        """Async counterpart to :meth:`_run_delegation_loop`."""
+        results: list[Any] = []
+        transcript: list[tuple[str, str, str]] = []
+
+        for _ in range(max_rounds):
+            decision = await coordinator.ai.achat(
+                _supervisor_prompt(input, list(delegates), transcript),
+                response_model=_SupervisorDecision,
+            )
+            if decision.action == "finish":
+                return WorkflowResult(
+                    content=decision.final_answer or "",
+                    steps=results,
+                    orchestrator=self.name,
+                    strategy=strategy_name,
+                )
+
+            delegate = self._resolve_delegate(
+                decision, supervisor_name=coordinator.name, workers=delegates
+            )
+            subtask = decision.task or input
+            result = await delegate.arun(subtask, **kwargs)
+            results.append(result)
+            transcript.append((delegate.name, subtask, result.content))
+
+        raise AgentException(
+            f"Workflow {strategy_name} '{coordinator.name}' exceeded max_rounds={max_rounds} "
             f"without reaching a final answer.",
         )
 
     @staticmethod
     def _resolve_delegate(
-        decision: _SupervisorDecision, *, supervisor_name: str, workers: dict[str, "Agent"]
-    ) -> "Agent":
+        decision: _SupervisorDecision, *, supervisor_name: str, workers: dict[str, Any]
+    ) -> Any:
         if decision.worker not in workers:
             raise ConfigurationException(
                 f"Supervisor agent '{supervisor_name}' tried to delegate to unknown "
                 f"worker '{decision.worker}'. Available workers: {sorted(workers)}.",
             )
         return workers[decision.worker]
+
+    @staticmethod
+    def _split_coordinator_and_delegates(
+        steps: Sequence[Any], *, role: str
+    ) -> tuple["Agent", dict[str, Any]]:
+        """Split ``steps`` into a coordinating agent + name-addressed delegates.
+
+        Used by the ``hierarchical`` strategy, which -- unlike every
+        other coordinator/worker strategy -- allows each delegate
+        (``steps[1:]``) to be either an :class:`~requisite.agents.agent.Agent`
+        or a named :class:`~requisite.workflows.workflow.Workflow` (a
+        nested "team"). Kept separate from
+        :meth:`_split_coordinator_and_workers` rather than loosening
+        that one, so every other strategy's Agent-only validation stays
+        exactly as strict as before. Duck-typed (``hasattr``, not
+        ``isinstance``) to avoid a real circular import -- ``native.py``
+        cannot import ``Workflow`` at runtime (``native.py`` ->
+        ``workflow.py`` -> ``orchestrators/factory.py`` -> ``native.py``).
+        """
+        if len(steps) < 2:
+            raise ConfigurationException(
+                f"The '{role}' strategy requires at least 2 agents: one {role} "
+                f"(steps[0]) and one or more delegates (steps[1:]). Got {len(steps)}.",
+            )
+        coordinator = steps[0]
+        if not hasattr(coordinator, "ai"):
+            raise ConfigurationException(
+                f"The '{role}' strategy requires steps[0] to be an Agent (it makes "
+                f"the routing decisions) -- got {type(coordinator).__name__}.",
+            )
+        delegates = list(steps[1:])
+        for delegate in delegates:
+            if getattr(delegate, "name", None) is None:
+                raise ConfigurationException(
+                    f"The '{role}' strategy requires every delegate to have a name -- "
+                    f"a Workflow used as a delegate must be constructed with name=... "
+                    f"(got an unnamed {type(delegate).__name__}).",
+                )
+        delegate_names = [delegate.name for delegate in delegates]
+        if len(set(delegate_names)) != len(delegate_names):
+            raise ConfigurationException(
+                f"The '{role}' strategy requires unique delegate names; got {delegate_names}.",
+            )
+        return coordinator, {delegate.name: delegate for delegate in delegates}
 
     def _run_critic(
         self,

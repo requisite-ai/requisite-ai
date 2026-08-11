@@ -26,15 +26,12 @@ Running agents in parallel instead of as a pipeline:
 from __future__ import annotations
 
 import logging
-from typing import TYPE_CHECKING, Any, Optional
+from typing import Any, Optional
 
 from requisite.core.exceptions import ConfigurationException
 from requisite.orchestrators.base import WorkflowResult
 from requisite.orchestrators.factory import OrchestratorRegistry
 from requisite.orchestrators.factory import default_registry as default_orchestrator_registry
-
-if TYPE_CHECKING:
-    from requisite.agents.agent import Agent
 
 logger = logging.getLogger("requisite.workflows")
 
@@ -48,6 +45,7 @@ _KNOWN_STRATEGIES = {
     "consensus",
     "debate",
     "map_reduce",
+    "hierarchical",
 }
 
 
@@ -78,13 +76,16 @@ class Workflow:
         - ``"map_reduce"``: the first agent reduces the results the
           remaining agents produce from ``map_items=`` (see
           :meth:`map_reduce`).
+        - ``"hierarchical"``: same as ``"supervisor"``, except a
+          delegate may also be another named ``Workflow`` ("team"),
+          giving real recursive delegation (see :meth:`hierarchical`).
 
         Further multi-agent strategies remain on the roadmap
-        (hierarchical, tree-of-thoughts, general graph execution) --
-        each becomes a new ``strategy`` value handled by the underlying
-        orchestrator, with no change to this class's public API.
-        ``"reflection"``, ``"planner"``, ``"supervisor"``, ``"critic"``,
-        ``"consensus"``, ``"debate"``, and ``"map_reduce"`` are
+        (tree-of-thoughts, general graph execution) -- each becomes a
+        new ``strategy`` value handled by the underlying orchestrator,
+        with no change to this class's public API. ``"reflection"``,
+        ``"planner"``, ``"supervisor"``, ``"critic"``, ``"consensus"``,
+        ``"debate"``, ``"map_reduce"``, and ``"hierarchical"`` are
         currently only implemented on the ``"native"`` orchestrator
         backend.
     orchestrator:
@@ -96,6 +97,12 @@ class Workflow:
         The :class:`~requisite.orchestrators.factory.OrchestratorRegistry`
         used to resolve ``orchestrator``. Defaults to the framework's
         built-in registry.
+    name:
+        Optional identifier. Not needed for standalone use -- only
+        required when this ``Workflow`` is used as a delegate ("team")
+        inside another workflow's :meth:`hierarchical` strategy, the
+        same way an :class:`~requisite.agents.agent.Agent` needs a name
+        to be addressed by a coordinator.
 
     Examples
     --------
@@ -107,23 +114,32 @@ class Workflow:
     def __init__(
         self,
         *,
+        name: Optional[str] = None,
         strategy: str = "sequential",
         orchestrator: str = "native",
         registry: Optional[OrchestratorRegistry] = None,
     ) -> None:
-        self._steps: list["Agent"] = []
+        self.name = name
+        self._steps: list[Any] = []
         self._strategy = strategy
         self._orchestrator_name = orchestrator
         self._registry = registry or default_orchestrator_registry
 
-    def add(self, agent: "Agent") -> "Workflow":
-        """Append an agent to the pipeline. Returns ``self`` for chaining."""
+    def add(self, agent: Any) -> "Workflow":
+        """Append a step to the pipeline. Returns ``self`` for chaining.
+
+        Normally an :class:`~requisite.agents.agent.Agent`. Under the
+        :meth:`hierarchical` strategy, a step may instead be another
+        named ``Workflow`` used as a delegate ("team") -- see
+        :meth:`hierarchical`.
+        """
         self._steps.append(agent)
         return self
 
     @property
-    def agents(self) -> list["Agent"]:
-        """The agents added so far, in order."""
+    def agents(self) -> list[Any]:
+        """The steps added so far, in order (usually ``Agent`` instances --
+        see :meth:`add`)."""
         return list(self._steps)
 
     def sequential(self) -> "Workflow":
@@ -207,6 +223,24 @@ class Workflow:
         self._strategy = "debate"
         return self
 
+    def hierarchical(self) -> "Workflow":
+        """Switch to the hierarchical strategy. Returns ``self`` for chaining.
+
+        Same shape as :meth:`supervisor`: the first agent added becomes
+        the coordinator, every agent added after it is a delegate the
+        coordinator can route to by name. The difference: a delegate
+        may be either an :class:`~requisite.agents.agent.Agent` *or*
+        another named ``Workflow`` (a "team") -- delegating to a
+        ``Workflow`` runs whatever strategy it's configured with,
+        including another ``supervisor`` or ``hierarchical``, giving
+        real recursive delegation. A ``Workflow`` used this way must be
+        constructed with ``name=...``. Requires at least 2 steps. Pass
+        ``max_rounds=`` to :meth:`run`/:meth:`arun` to bound how many
+        delegation rounds it gets before giving up (default 6).
+        """
+        self._strategy = "hierarchical"
+        return self
+
     def map_reduce(self) -> "Workflow":
         """Switch to the map-reduce strategy. Returns ``self`` for chaining.
 
@@ -284,7 +318,8 @@ class Workflow:
 
     def __repr__(self) -> str:  # pragma: no cover - trivial
         agent_names = [a.name for a in self._steps]
+        name_part = f"name={self.name!r}, " if self.name is not None else ""
         return (
-            f"Workflow(agents={agent_names!r}, strategy={self._strategy!r}, "
+            f"Workflow({name_part}agents={agent_names!r}, strategy={self._strategy!r}, "
             f"orchestrator={self._orchestrator_name!r})"
         )

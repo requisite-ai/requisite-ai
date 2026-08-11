@@ -17,12 +17,9 @@ from __future__ import annotations
 
 from abc import ABC, abstractmethod
 from collections.abc import Sequence
-from typing import TYPE_CHECKING, Any, Optional
+from typing import Any, Optional
 
 from pydantic import BaseModel, ConfigDict, Field
-
-if TYPE_CHECKING:
-    from requisite.agents.agent import Agent
 
 
 class WorkflowResult(BaseModel):
@@ -72,18 +69,29 @@ class BaseOrchestrator(ABC):
     @abstractmethod
     def run(
         self,
-        steps: Sequence["Agent"],
+        steps: Sequence[Any],
         input: Optional[str],  # noqa: A002 - matches the ergonomic `workflow.run(input)` API
         *,
         strategy: str = "sequential",
         **kwargs: Any,
     ) -> WorkflowResult:
-        """Synchronously execute ``steps`` according to ``strategy``."""
+        """Synchronously execute ``steps`` according to ``strategy``.
+
+        ``steps`` is usually a sequence of
+        :class:`~requisite.agents.agent.Agent`. Backends that support
+        the ``"hierarchical"`` strategy also accept
+        :class:`~requisite.workflows.workflow.Workflow` instances mixed
+        in as delegates -- typed ``Any`` here (rather than importing
+        either concrete type) specifically to keep this interface
+        agnostic to that detail, the same way :attr:`WorkflowResult.steps`
+        is already typed ``list[Any]`` for the equivalent reason on the
+        output side.
+        """
 
     @abstractmethod
     async def arun(
         self,
-        steps: Sequence["Agent"],
+        steps: Sequence[Any],
         input: Optional[str],  # noqa: A002
         *,
         strategy: str = "sequential",

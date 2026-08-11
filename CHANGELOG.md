@@ -7,6 +7,40 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.12.0] - 2026-08-11
+
+### Added
+
+- Hierarchical multi-agent strategy -- see
+  [ADR-0013](docs/adr/0013-hierarchical-strategy.md) for the full
+  design, including why this turned out smaller than ADR-0011/ADR-0012
+  originally estimated.
+- `Workflow.hierarchical()`: same shape as `.supervisor()`, except a
+  delegate (`steps[1:]`) may be either an `Agent` or another named
+  `Workflow` ("team") -- delegating to a `Workflow` runs whatever
+  strategy it's configured with, including another `supervisor` or
+  `hierarchical`, giving real recursive delegation.
+- `Workflow(name=...)`: new optional constructor parameter, backward
+  compatible. Only required when a `Workflow` is used as a hierarchical
+  delegate.
+
+### Changed
+
+- `Workflow.add()`/`.agents`, `BaseOrchestrator.run`/`.arun`,
+  `NativeOrchestrator.run`/`.arun`, and `LangGraphOrchestrator.run`/
+  `.arun` now type their `steps` parameter as `Any` rather than
+  `Agent`, so a `Workflow` delegate type-checks under `mypy --strict`
+  at the call site -- matching `WorkflowResult.steps`'s existing
+  `list[Any]` precedent on the output side. No behavior changed for
+  any existing caller; every internal strategy method keeps its
+  previous, more specific typing unchanged.
+- Internal: `_run_supervisor`/`_arun_supervisor` refactored to share a
+  round-loop implementation with the new hierarchical strategy
+  (`_run_delegation_loop`/`_arun_delegation_loop`) -- the two are
+  structurally identical, differing only in how delegates are
+  validated. Verified byte-identical behavior via the existing,
+  unmodified supervisor tests.
+
 ## [0.11.0] - 2026-08-11
 
 ### Added
