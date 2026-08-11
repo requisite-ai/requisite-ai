@@ -14,9 +14,15 @@ from typing import Any, Optional
 
 import pytest
 
+from requisite.ai import AI
 from requisite.capabilities.registry import CapabilityRegistry
+from requisite.config.settings import Settings
 from requisite.core.exceptions import ConfigurationException
-from requisite.rag.base import BaseEmbeddingProvider, Chunk
+from requisite.core.interfaces import ChatResponse
+from requisite.providers.base import BaseProvider
+from requisite.providers.factory import ProviderRegistry
+from requisite.rag.base import BaseEmbeddingProvider, Chunk, ScoredChunk
+from requisite.rag.bm25 import BM25Retriever
 from requisite.rag.chunking import chunk_text
 from requisite.rag.factory import (
     EmbeddingRegistry,
@@ -24,6 +30,8 @@ from requisite.rag.factory import (
     default_embedding_registry,
     default_vector_store_registry,
 )
+from requisite.rag.hybrid_retriever import HybridRetriever
+from requisite.rag.reranker import LLMReranker
 from requisite.rag.retriever import Retriever
 from requisite.rag.vectorstores.in_memory import InMemoryVectorStore, _cosine_similarity
 
@@ -287,6 +295,279 @@ def test_vector_store_registry_register_empty_name_raises() -> None:
     registry = VectorStoreRegistry()
     with pytest.raises(ConfigurationException):
         registry.register("", lambda **kw: InMemoryVectorStore())
+
+
+# ---------------------------------------------------------------------------
+# BM25Retriever
+# ---------------------------------------------------------------------------
+
+
+def test_bm25_retriever_ranks_keyword_matches_higher() -> None:
+    retriever = BM25Retriever()
+    retriever.add_texts(
+        [
+            "The quick brown fox jumps over the lazy dog.",
+            "Bananas are a yellow tropical fruit.",
+        ]
+    )
+    results = retriever.retrieve("quick fox", top_k=2)
+    assert len(results) == 1
+    assert "fox" in results[0].chunk.text.lower()
+
+
+def test_bm25_retriever_no_matching_terms_returns_empty() -> None:
+    retriever = BM25Retriever()
+    retriever.add_texts(["completely unrelated text"])
+    assert retriever.retrieve("zzznotpresentzzz") == []
+
+
+def test_bm25_retriever_empty_corpus_returns_empty() -> None:
+    assert BM25Retriever().retrieve("anything") == []
+
+
+def test_bm25_retriever_delete_removes_from_results() -> None:
+    retriever = BM25Retriever()
+    ids = retriever.add_texts(["the quick brown fox"])
+    retriever.delete(ids)
+    assert retriever.retrieve("quick fox") == []
+
+
+def test_bm25_retriever_accepts_k1_and_b() -> None:
+    retriever = BM25Retriever(k1=1.2, b=0.5)
+    retriever.add_texts(["the quick brown fox jumps"])
+    assert len(retriever.retrieve("fox")) == 1
+
+
+def test_bm25_retriever_add_texts_mismatched_metadata_length_raises() -> None:
+    retriever = BM25Retriever()
+    with pytest.raises(ConfigurationException):
+        retriever.add_texts(["a", "b"], metadatas=[{"x": 1}])
+
+
+def test_bm25_retriever_add_texts_empty_list_returns_empty() -> None:
+    assert BM25Retriever().add_texts([]) == []
+
+
+def test_bm25_retriever_name() -> None:
+    assert BM25Retriever().name == "bm25"
+
+
+def test_bm25_retriever_as_tool_returns_formatted_results() -> None:
+    retriever = BM25Retriever()
+    retriever.add_texts(["Paris is the capital of France."])
+    tool = retriever.as_tool()
+    output = tool.execute(query="capital of France")
+    assert "Paris" in output
+    assert "score=" in output
+
+
+def test_bm25_retriever_as_tool_no_results() -> None:
+    tool = BM25Retriever().as_tool()
+    assert tool.execute(query="anything") == "No relevant information found."
+
+
+@pytest.mark.asyncio
+async def test_bm25_retriever_async_add_and_retrieve() -> None:
+    retriever = BM25Retriever()
+    await retriever.aadd_texts(["the quick brown fox jumps over the lazy dog"])
+    results = await retriever.aretrieve("quick fox")
+    assert len(results) == 1
+
+
+# ---------------------------------------------------------------------------
+# HybridRetriever (dense via FakeEmbeddingProvider + BM25, fused via RRF)
+# ---------------------------------------------------------------------------
+
+
+def test_hybrid_retriever_fuses_dense_and_bm25_winners() -> None:
+    # doc_dense: no words in common with the query, but its FakeEmbeddingProvider
+    # a-e char-count vector points the same direction as the query's.
+    # doc_bm25: shares real words with the query (BM25-favorable), and still has
+    # *some* dense similarity (real English words share letters incidentally).
+    # doc_noise: shares nothing with the query on either signal -- the control.
+    retriever = HybridRetriever(
+        embedding_provider=FakeEmbeddingProvider(), vector_store=InMemoryVectorStore()
+    )
+    retriever.add_texts(
+        [
+            "aabbccddee aabbccddee",  # doc_dense
+            "xylophone information about music",  # doc_bm25
+            "zzz qqq www ppp",  # doc_noise -- zero a-e chars, zero shared words
+        ]
+    )
+
+    results = retriever.retrieve("find the xylophone information", top_k=2)
+
+    result_texts = [r.chunk.text for r in results]
+    assert len(results) == 2
+    assert "xylophone information about music" in result_texts
+    assert "aabbccddee aabbccddee" in result_texts
+    assert "zzz qqq www ppp" not in result_texts
+
+
+def test_hybrid_retriever_add_texts_shares_chunk_ids_across_both_sides() -> None:
+    retriever = HybridRetriever(
+        embedding_provider=FakeEmbeddingProvider(), vector_store=InMemoryVectorStore()
+    )
+    ids = retriever.add_texts(["the quick brown fox"])
+
+    dense_hit = retriever.vector_store.search(
+        retriever.embedding_provider.embed_one("quick fox"), top_k=1
+    )
+    bm25_hit = retriever._bm25_index.search("quick fox", top_k=1)  # noqa: SLF001
+
+    assert dense_hit[0].chunk.id == ids[0]
+    assert bm25_hit[0].chunk.id == ids[0]
+
+
+def test_hybrid_retriever_add_texts_empty_list_returns_empty() -> None:
+    retriever = HybridRetriever(
+        embedding_provider=FakeEmbeddingProvider(), vector_store=InMemoryVectorStore()
+    )
+    assert retriever.add_texts([]) == []
+
+
+def test_hybrid_retriever_add_texts_mismatched_metadata_length_raises() -> None:
+    retriever = HybridRetriever(
+        embedding_provider=FakeEmbeddingProvider(), vector_store=InMemoryVectorStore()
+    )
+    with pytest.raises(ConfigurationException):
+        retriever.add_texts(["a", "b"], metadatas=[{"x": 1}])
+
+
+def test_hybrid_retriever_name() -> None:
+    retriever = HybridRetriever(
+        embedding_provider=FakeEmbeddingProvider(), vector_store=InMemoryVectorStore()
+    )
+    assert retriever.name == "hybrid"
+
+
+def test_hybrid_retriever_as_tool_returns_formatted_results() -> None:
+    retriever = HybridRetriever(
+        embedding_provider=FakeEmbeddingProvider(), vector_store=InMemoryVectorStore()
+    )
+    retriever.add_texts(["Paris is the capital of France."])
+    tool = retriever.as_tool()
+    output = tool.execute(query="capital of France")
+    assert "Paris" in output
+    assert "score=" in output
+
+
+@pytest.mark.asyncio
+async def test_hybrid_retriever_async_add_and_retrieve() -> None:
+    retriever = HybridRetriever(
+        embedding_provider=FakeEmbeddingProvider(), vector_store=InMemoryVectorStore()
+    )
+    await retriever.aadd_texts(["Paris is the capital of France."])
+    results = await retriever.aretrieve("capital of France")
+    assert "Paris" in results[0].chunk.text
+
+
+# ---------------------------------------------------------------------------
+# LLMReranker (scripted fake provider, no real LLM calls)
+# ---------------------------------------------------------------------------
+
+
+class ScriptedRerankProvider(BaseProvider):
+    """Returns a fixed response_model payload, regardless of the prompt."""
+
+    def __init__(self, parsed: dict[str, Any], **kwargs: Any) -> None:
+        super().__init__(api_key="fake-key", model="fake-model")
+        self._parsed = parsed
+
+    @property
+    def name(self) -> str:
+        return "scripted_rerank"
+
+    def chat(
+        self, messages, *, model=None, temperature=None, tools=None, response_model=None, **kwargs
+    ) -> ChatResponse:
+        return ChatResponse(content="", model=self._model, provider=self.name, parsed=self._parsed)
+
+    async def achat(
+        self, messages, *, model=None, temperature=None, tools=None, response_model=None, **kwargs
+    ) -> ChatResponse:
+        return self.chat(
+            messages,
+            model=model,
+            temperature=temperature,
+            tools=tools,
+            response_model=response_model,
+            **kwargs,
+        )
+
+    def stream(
+        self, messages, *, model=None, temperature=None, tools=None, **kwargs
+    ):  # pragma: no cover
+        raise NotImplementedError
+
+    async def astream(
+        self, messages, *, model=None, temperature=None, tools=None, **kwargs
+    ):  # pragma: no cover
+        raise NotImplementedError
+        yield  # pragma: no cover
+
+
+def _reranker_with_scores(parsed_scores: dict[str, Any]) -> LLMReranker:
+    registry = ProviderRegistry()
+    registry.register("scripted_rerank", lambda **kw: ScriptedRerankProvider(parsed_scores))
+    settings = Settings(default_provider="scripted_rerank", model="fake-model")
+    return LLMReranker(ai=AI(settings=settings, registry=registry))
+
+
+def test_llm_reranker_reorders_by_relevance() -> None:
+    reranker = _reranker_with_scores(
+        {"scores": [{"chunk_id": "c1", "relevance": 2.0}, {"chunk_id": "c2", "relevance": 9.0}]}
+    )
+    candidates = [
+        ScoredChunk(chunk=Chunk(id="c1", text="first"), score=0.9),
+        ScoredChunk(chunk=Chunk(id="c2", text="second"), score=0.1),
+    ]
+    result = reranker.rerank("query", candidates)
+    assert [r.chunk.id for r in result] == ["c2", "c1"]
+    assert result[0].score == 9.0
+
+
+def test_llm_reranker_missing_score_falls_back_to_zero() -> None:
+    reranker = _reranker_with_scores({"scores": [{"chunk_id": "c1", "relevance": 5.0}]})
+    candidates = [
+        ScoredChunk(chunk=Chunk(id="c1", text="first"), score=0.1),
+        ScoredChunk(chunk=Chunk(id="c2", text="second"), score=0.9),
+    ]
+    result = reranker.rerank("query", candidates)
+    assert result[-1].chunk.id == "c2"
+    assert result[-1].score == 0.0
+
+
+def test_llm_reranker_top_k_truncates() -> None:
+    reranker = _reranker_with_scores(
+        {"scores": [{"chunk_id": "c1", "relevance": 1.0}, {"chunk_id": "c2", "relevance": 2.0}]}
+    )
+    candidates = [
+        ScoredChunk(chunk=Chunk(id="c1", text="first"), score=0.0),
+        ScoredChunk(chunk=Chunk(id="c2", text="second"), score=0.0),
+    ]
+    result = reranker.rerank("query", candidates, top_k=1)
+    assert len(result) == 1
+    assert result[0].chunk.id == "c2"
+
+
+def test_llm_reranker_empty_results_returns_empty() -> None:
+    reranker = _reranker_with_scores({"scores": []})
+    assert reranker.rerank("query", []) == []
+
+
+@pytest.mark.asyncio
+async def test_llm_reranker_arerank() -> None:
+    reranker = _reranker_with_scores(
+        {"scores": [{"chunk_id": "c1", "relevance": 1.0}, {"chunk_id": "c2", "relevance": 9.0}]}
+    )
+    candidates = [
+        ScoredChunk(chunk=Chunk(id="c1", text="first"), score=0.0),
+        ScoredChunk(chunk=Chunk(id="c2", text="second"), score=0.0),
+    ]
+    result = await reranker.arerank("query", candidates)
+    assert [r.chunk.id for r in result] == ["c2", "c1"]
 
 
 # ---------------------------------------------------------------------------

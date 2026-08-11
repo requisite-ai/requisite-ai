@@ -26,11 +26,13 @@ See ``docs/adr/0005-rag-integration.md`` for the full design.
 
 from requisite.rag.base import (
     BaseEmbeddingProvider,
+    BaseReranker,
     BaseRetriever,
     BaseVectorStore,
     Chunk,
     ScoredChunk,
 )
+from requisite.rag.bm25 import BM25Retriever
 from requisite.rag.chunking import chunk_text
 from requisite.rag.factory import (
     EmbeddingRegistry,
@@ -38,14 +40,20 @@ from requisite.rag.factory import (
     default_embedding_registry,
     default_vector_store_registry,
 )
+from requisite.rag.hybrid_retriever import HybridRetriever
+from requisite.rag.reranker import LLMReranker
 from requisite.rag.retriever import Retriever
 
 __all__ = [
+    "BM25Retriever",
     "BaseEmbeddingProvider",
+    "BaseReranker",
     "BaseRetriever",
     "BaseVectorStore",
     "Chunk",
     "EmbeddingRegistry",
+    "HybridRetriever",
+    "LLMReranker",
     "Retriever",
     "ScoredChunk",
     "VectorStoreRegistry",

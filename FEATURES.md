@@ -44,7 +44,7 @@ Status legend: ✅ Done · 🚧 Partial · 📋 Not started · N/A Deliberately 
 | MCP server integration | 📋 | |
 | Memory | ✅ | `BaseMemory`, `InProcessMemory`/`SQLiteMemory`/`RedisMemory`, wired into `Agent(memory=..., session_id=...)` |
 | Retrieval | ✅ | `Retriever.retrieve()` / `.aretrieve()` |
-| RAG | 🚧 | Core interfaces + in-memory/Pinecone/Weaviate vector stores shipped (ADR-0005); hybrid search, re-ranking, context compression still 📋 — see RAG table below |
+| RAG | 🚧 | Core interfaces, vector stores, hybrid/BM25 retrieval, and re-ranking shipped (ADR-0005, ADR-0010); context compression still 📋 — see RAG table below |
 | Prompt templates | ✅ | `PromptTemplate`, `ChatPromptTemplate`, `PromptTemplateRegistry` — ADR-0003 |
 | Conversation management | ✅ | `Message` history + `BaseMemory` (storage) + `BaseConversationPolicy` (retention: `MessageCountPolicy`, `SummarizingPolicy`) — ADR-0003 |
 | Workflow execution | ✅ | `Workflow.run` / `Workflow.arun` |
@@ -192,17 +192,17 @@ Status legend: ✅ Done · 🚧 Partial · 📋 Not started · N/A Deliberately 
 
 ## RAG
 
-Core interfaces, the in-memory default, and Pinecone/Weaviate are all
-shipped (ADR-0005).
+Core interfaces, the in-memory default, Pinecone/Weaviate (ADR-0005),
+and hybrid/BM25 retrieval + re-ranking (ADR-0010) are all shipped.
 
 | Requirement | Status | Notes |
 |---|---|---|
 | Embedding providers | ✅ | `OpenAIEmbeddingProvider`, `GeminiEmbeddingProvider` |
 | Vector stores | ✅ | `InMemoryVectorStore` (zero deps, matches `InProcessMemory`), `PineconeVectorStore`, `WeaviateVectorStore` |
 | Chunking | ✅ | `chunk_text()` — character-based with overlap; token-aware chunking is a follow-up |
-| Retrievers | ✅ | `Retriever` (dense); exposed as a `CapabilityProvider` via `.as_tool()` — `agent.requires("knowledge_base")`, not a new `Agent` constructor parameter |
-| Hybrid search | 📋 | `BaseRetriever` is independent of embeddings at the interface level specifically to allow this later |
-| Re-ranking | 📋 | |
+| Retrievers | ✅ | `Retriever` (dense), `BM25Retriever` (keyword, zero deps), `HybridRetriever` (dense + BM25 fused via Reciprocal Rank Fusion); each exposed as a `CapabilityProvider` via `.as_tool()` — `agent.requires("knowledge_base")`, not a new `Agent` constructor parameter |
+| Hybrid search | ✅ | `HybridRetriever` — see [ADR-0010](docs/adr/0010-hybrid-bm25-retrieval-and-reranking.md) |
+| Re-ranking | ✅ | `BaseReranker` + `LLMReranker` (listwise, reuses `AI`/`response_model=` — no new ML dependency) |
 | Context compression | 📋 | |
 
 ## Prompt templates & conversation management

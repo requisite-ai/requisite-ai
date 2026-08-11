@@ -48,3 +48,4 @@ need one — `CONTRIBUTING.md` already covers those.
 | [0007](0007-multi-agent-orchestration-strategies.md) | Multi-agent orchestration strategies: reflection, planner, supervisor | Accepted |
 | [0008](0008-rate-limiting.md) | Proactive rate limiting for provider calls | Accepted |
 | [0009](0009-streaming-tool-calls.md) | Streaming + tool calls together | Accepted |
+| [0010](0010-hybrid-bm25-retrieval-and-reranking.md) | Hybrid/BM25 retrieval and re-ranking | Accepted |

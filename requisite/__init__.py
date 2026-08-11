@@ -137,11 +137,13 @@ from requisite.prompts.template import ChatPromptTemplate, PromptTemplate
 from requisite.providers.factory import ProviderRegistry, default_registry
 from requisite.rag.base import (
     BaseEmbeddingProvider,
+    BaseReranker,
     BaseRetriever,
     BaseVectorStore,
     Chunk,
     ScoredChunk,
 )
+from requisite.rag.bm25 import BM25Retriever
 from requisite.rag.chunking import chunk_text
 from requisite.rag.factory import (
     EmbeddingRegistry,
@@ -149,6 +151,8 @@ from requisite.rag.factory import (
     default_embedding_registry,
     default_vector_store_registry,
 )
+from requisite.rag.hybrid_retriever import HybridRetriever
+from requisite.rag.reranker import LLMReranker
 from requisite.rag.retriever import Retriever
 from requisite.skills.base import BaseSkill
 from requisite.skills.registry import SkillRegistry
@@ -167,12 +171,15 @@ __all__ = [
     "AgentException",
     "AgentRegistry",
     "AgentResult",
+    "BM25Retriever",
     "BaseConversationPolicy",
     "BaseEmbeddingProvider",
     # MCP
     "BaseMCPClient",
     # Memory + conversation management
     "BaseMemory",
+    # RAG
+    "BaseReranker",
     "BaseRetriever",
     # Skills
     "BaseSkill",
@@ -187,7 +194,9 @@ __all__ = [
     "Chunk",
     "ConfigurationException",
     "EmbeddingRegistry",
+    "HybridRetriever",
     "InProcessMemory",
+    "LLMReranker",
     "MCPClient",
     "MCPClientRegistry",
     "MCPException",
@@ -235,4 +244,4 @@ __all__ = [
     "tool",
 ]
 
-__version__ = "0.8.0"
+__version__ = "0.9.0"

@@ -6,13 +6,20 @@ interface (per ADR-0001's note on this), mirrored here:
 
 - :class:`BaseEmbeddingProvider` -- text -> vector
 - :class:`BaseVectorStore` -- store/search vectors
-- :class:`BaseRetriever` -- the thing an application actually calls;
-  the shipped :class:`~requisite.rag.retriever.Retriever` composes an
-  embedding provider and a vector store, but the interface itself makes
-  no assumption about how retrieval works (a future hybrid/BM25
-  retriever doesn't need an embedding provider at all).
+- :class:`BaseRetriever` -- the thing an application actually calls; the
+  shipped :class:`~requisite.rag.retriever.Retriever` composes an
+  embedding provider and a vector store (dense), but the interface makes
+  no assumption about how retrieval works --
+  :class:`~requisite.rag.bm25.BM25Retriever` (keyword-only, no embedding
+  provider) and :class:`~requisite.rag.hybrid_retriever.HybridRetriever`
+  (dense + BM25, fused) are the anticipated case this independence was
+  designed to allow.
+- :class:`BaseReranker` -- an optional, standalone post-processing step
+  over an already-retrieved candidate list; see
+  :class:`~requisite.rag.reranker.LLMReranker`.
 
-See ``docs/adr/0005-rag-integration.md`` for the full design rationale.
+See ``docs/adr/0005-rag-integration.md`` and ``docs/adr/0010-hybrid-bm25-retrieval-and-reranking.md``
+for the full design rationale.
 """
 
 from __future__ import annotations
@@ -143,3 +150,35 @@ class BaseRetriever(ABC):
     async def aretrieve(self, query: str, *, top_k: int = 5) -> list[ScoredChunk]:
         """Async counterpart to :meth:`retrieve`. Default: thread-wrapped."""
         return await asyncio.to_thread(self.retrieve, query, top_k=top_k)
+
+
+class BaseReranker(ABC):
+    """Abstract interface for re-scoring an already-retrieved candidate list.
+
+    Deliberately not wired into any retriever's constructor -- re-ranking
+    is a standalone, composable post-processing step applied to whatever
+    a retriever already returned:
+
+    >>> reranker = SomeReranker()  # doctest: +SKIP
+    >>> candidates = retriever.retrieve(query, top_k=20)  # doctest: +SKIP
+    >>> best = reranker.rerank(query, candidates, top_k=5)  # doctest: +SKIP
+
+    This works identically regardless of which :class:`BaseRetriever`
+    produced ``candidates``.
+    """
+
+    @abstractmethod
+    def rerank(
+        self, query: str, results: Sequence[ScoredChunk], *, top_k: Optional[int] = None
+    ) -> list[ScoredChunk]:
+        """Re-score and re-order ``results`` for relevance to ``query``.
+
+        ``top_k`` truncates the output; ``None`` (default) returns every
+        input result, just re-ordered.
+        """
+
+    async def arerank(
+        self, query: str, results: Sequence[ScoredChunk], *, top_k: Optional[int] = None
+    ) -> list[ScoredChunk]:
+        """Async counterpart to :meth:`rerank`. Default: thread-wrapped."""
+        return await asyncio.to_thread(self.rerank, query, results, top_k=top_k)

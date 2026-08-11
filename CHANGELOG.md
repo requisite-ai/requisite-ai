@@ -7,6 +7,45 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.9.0] - 2026-08-11
+
+### Added
+
+- Hybrid/BM25 retrieval and re-ranking -- see
+  [ADR-0010](docs/adr/0010-hybrid-bm25-retrieval-and-reranking.md) for
+  the full design.
+- `BM25Retriever` (`requisite.rag.bm25`): standalone keyword retrieval,
+  zero extra dependency (pure-Python Okapi BM25, no `rank-bm25`/numpy).
+  Same public shape as `Retriever` (`add_texts`/`aadd_texts`/`retrieve`/
+  `aretrieve`/`as_tool`).
+- `HybridRetriever` (`requisite.rag.hybrid_retriever`): composes an
+  embedding provider + vector store (dense) with an internal BM25 index
+  (sparse), fusing results via Reciprocal Rank Fusion -- chosen over a
+  normalized weighted-score blend since dense/BM25 scores aren't on
+  comparable scales. `add_texts` chunks once and shares the same chunk
+  ids across both sides, which fusion-by-id depends on.
+- `BaseReranker` (`requisite.rag.base`) + `LLMReranker`
+  (`requisite.rag.reranker`): listwise re-ranking via one
+  `AI.chat_response`/`.achat_response(response_model=...)` call --
+  reuses the framework's own already-integrated providers instead of a
+  new cross-encoder ML dependency. Re-ranking is a standalone
+  composable step, not wired into any retriever's constructor:
+  `reranker.rerank(query, retriever.retrieve(query, top_k=20), top_k=5)`.
+- `BM25Retriever`, `HybridRetriever`, `BaseReranker`, `LLMReranker` all
+  exported from `requisite.rag`/`requisite` top-level, alongside
+  `Retriever` -- none require an optional dependency.
+
+No existing public API shape changed -- `Retriever` itself is
+unmodified; the new classes are new implementations of the existing
+`BaseRetriever`/new `BaseReranker` interfaces.
+
+Verified against real Gemini in addition to the mocked test suite: a
+`HybridRetriever` correctly surfaced both a keyword-only query (via
+BM25) and a semantic-paraphrase query with no shared keywords (via
+dense embeddings) from the same small corpus; `LLMReranker` correctly
+re-scored and re-sorted a shuffled candidate list for a biology query,
+putting the actually-relevant chunk first.
+
 ## [0.8.0] - 2026-08-11
 
 ### Added
