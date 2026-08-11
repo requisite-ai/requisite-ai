@@ -7,6 +7,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.7.1] - 2026-08-11
+
+### Fixed
+
+- `RedisMemory`'s zero-config default URL was `redis://localhost:6379/0`.
+  On Windows, resolving `"localhost"` tries the IPv6 loopback (`::1`)
+  first and stalls for ~2s before falling back to IPv4 -- measured
+  directly against a local Redis-compatible server (a fresh connection's
+  first command: ~2.1s via `"localhost"` vs. ~0.02s via `"127.0.0.1"`).
+  Changed the default (and the `REDIS_URL` fallback) to
+  `redis://127.0.0.1:6379/0`, which skips DNS/address-family resolution
+  entirely -- strictly faster everywhere, never slower. Found while
+  smoke-testing `RedisMemory` against a real local server (Memurai) for
+  the first time; the mocked unit test suite never exercised real DNS
+  resolution, so this wasn't caught by tests -- it needed an actual
+  network round-trip to surface.
+
 ## [0.7.0] - 2026-08-10
 
 ### Added

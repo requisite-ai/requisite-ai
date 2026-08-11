@@ -20,7 +20,14 @@ from requisite.core.exceptions import ConfigurationException, MemoryException
 from requisite.core.interfaces import Message
 from requisite.memory.base import BaseMemory
 
-_DEFAULT_URL = "redis://localhost:6379/0"
+# Deliberately 127.0.0.1, not "localhost": on Windows, resolving
+# "localhost" tries the IPv6 loopback (::1) first and stalls for ~2s
+# before falling back to IPv4 -- confirmed by direct measurement against
+# a local Redis-compatible server. That's a real, silent tax on every
+# fresh connection for the zero-config default this backend is supposed
+# to have. 127.0.0.1 skips DNS/AF resolution entirely, so it's strictly
+# faster everywhere and never slower.
+_DEFAULT_URL = "redis://127.0.0.1:6379/0"
 
 
 class RedisMemory(BaseMemory):
@@ -29,11 +36,13 @@ class RedisMemory(BaseMemory):
     Parameters
     ----------
     url:
-        Redis connection URL, e.g. ``"redis://localhost:6379/0"``. If not
+        Redis connection URL, e.g. ``"redis://127.0.0.1:6379/0"``. If not
         provided, falls back to the ``REDIS_URL`` environment variable,
-        then ``"redis://localhost:6379/0"``. Note this fallback is
+        then ``"redis://127.0.0.1:6379/0"``. Note this fallback is
         implemented by ``RedisMemory`` itself -- unlike the Pinecone/OpenAI
-        SDKs, ``redis-py`` does not read this env var on its own.
+        SDKs, ``redis-py`` does not read this env var on its own. Uses
+        ``127.0.0.1`` rather than ``localhost`` deliberately -- see the
+        module-level comment on ``_DEFAULT_URL``.
     key_prefix:
         Prefix applied to every Redis key this backend touches, so
         sessions don't collide with unrelated keys in a shared Redis
@@ -45,7 +54,7 @@ class RedisMemory(BaseMemory):
 
     Examples
     --------
-    >>> memory = RedisMemory(url="redis://localhost:6379/0")  # doctest: +SKIP
+    >>> memory = RedisMemory(url="redis://127.0.0.1:6379/0")  # doctest: +SKIP
     >>> memory.append("session-1", Message.user("hello"))  # doctest: +SKIP
     >>> memory.load("session-1")  # doctest: +SKIP
     [Message(role=<Role.USER: 'user'>, content='hello', ...)]
