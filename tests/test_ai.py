@@ -16,7 +16,7 @@ import pytest
 from requisite.ai import AI
 from requisite.config.settings import Settings
 from requisite.core.exceptions import ConfigurationException
-from requisite.core.interfaces import ChatResponse, Message, Role, StreamChunk, Usage
+from requisite.core.interfaces import ChatResponse, Message, Role, StreamChunk, ToolCall, Usage
 from requisite.providers.base import BaseProvider
 from requisite.providers.factory import ProviderRegistry
 
@@ -29,6 +29,7 @@ class FakeProvider(BaseProvider):
         self.last_messages: list[Message] = []
         self.last_temperature: Optional[float] = None
         self.last_tools: Optional[list[Any]] = None
+        self.next_stream_tool_calls: Optional[list[ToolCall]] = None
 
     @property
     def name(self) -> str:
@@ -53,17 +54,22 @@ class FakeProvider(BaseProvider):
         return self.chat(messages, model=model, temperature=temperature, tools=tools, **kwargs)
 
     def stream(
-        self, messages: Sequence[Message], *, model=None, temperature=None, **kwargs
+        self, messages: Sequence[Message], *, model=None, temperature=None, tools=None, **kwargs
     ) -> Iterator[StreamChunk]:
         self.last_messages = list(messages)
+        self.last_tools = list(tools) if tools is not None else None
         for token in ["fa", "ke", " stream"]:
             yield StreamChunk(delta=token)
-        yield StreamChunk(delta="", is_final=True)
+        tool_calls = self.next_stream_tool_calls or []
+        self.next_stream_tool_calls = None
+        yield StreamChunk(delta="", is_final=True, tool_calls=tool_calls)
 
     async def astream(
-        self, messages: Sequence[Message], *, model=None, temperature=None, **kwargs
+        self, messages: Sequence[Message], *, model=None, temperature=None, tools=None, **kwargs
     ) -> AsyncIterator[StreamChunk]:
-        for chunk in self.stream(messages, model=model, temperature=temperature, **kwargs):
+        for chunk in self.stream(
+            messages, model=model, temperature=temperature, tools=tools, **kwargs
+        ):
             yield chunk
 
 
@@ -155,6 +161,54 @@ async def test_astream_yields_text_chunks(
     ai = AI(provider="fake", settings=settings, registry=registry_with_fake)
     chunks = [c async for c in ai.astream("hello")]
     assert chunks == ["fa", "ke", " stream"]
+
+
+def test_stream_accepts_tools_but_still_yields_only_text(
+    registry_with_fake: ProviderRegistry, settings: Settings
+) -> None:
+    from requisite.tools import tool
+
+    @tool
+    def get_weather(city: str) -> str:
+        """Get the weather for a city."""
+        return f"sunny in {city}"
+
+    ai = AI(provider="fake", settings=settings, registry=registry_with_fake)
+    provider: FakeProvider = ai.provider  # type: ignore[assignment]
+    provider.next_stream_tool_calls = [ToolCall(id="call_1", name="get_weather", arguments={})]
+
+    assert list(ai.stream("weather?", tools=[get_weather])) == ["fa", "ke", " stream"]
+    assert provider.last_tools is not None
+    assert provider.last_tools[0].name == "get_weather"
+
+
+def test_stream_response_yields_full_chunks_with_tool_calls(
+    registry_with_fake: ProviderRegistry, settings: Settings
+) -> None:
+    ai = AI(provider="fake", settings=settings, registry=registry_with_fake)
+    provider: FakeProvider = ai.provider  # type: ignore[assignment]
+    provider.next_stream_tool_calls = [ToolCall(id="call_1", name="get_weather", arguments={})]
+
+    chunks = list(ai.stream_response("weather?"))
+    assert [c.delta for c in chunks] == ["fa", "ke", " stream", ""]
+    assert chunks[-1].is_final
+    assert chunks[-1].has_tool_calls
+    assert chunks[-1].tool_calls[0].name == "get_weather"
+    # Intermediate chunks never carry tool calls -- only the final one.
+    assert all(not c.has_tool_calls for c in chunks[:-1])
+
+
+@pytest.mark.asyncio
+async def test_astream_response_yields_full_chunks_with_tool_calls(
+    registry_with_fake: ProviderRegistry, settings: Settings
+) -> None:
+    ai = AI(provider="fake", settings=settings, registry=registry_with_fake)
+    provider: FakeProvider = ai.provider  # type: ignore[assignment]
+    provider.next_stream_tool_calls = [ToolCall(id="call_1", name="get_weather", arguments={})]
+
+    chunks = [c async for c in ai.astream_response("weather?")]
+    assert chunks[-1].has_tool_calls
+    assert chunks[-1].tool_calls[0].name == "get_weather"
 
 
 @pytest.mark.asyncio

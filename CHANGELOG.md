@@ -7,6 +7,40 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.8.0] - 2026-08-11
+
+### Added
+
+- Streaming + tool calls together, across all 8 providers -- see
+  [ADR-0009](docs/adr/0009-streaming-tool-calls.md) for the full design.
+  `StreamChunk` (`requisite/core/interfaces.py`) gains `tool_calls:
+  list[ToolCall]` and a `has_tool_calls` property; every provider
+  accumulates any incremental/fragmented tool-call data internally and
+  only attaches fully-assembled `ToolCall`s once complete, typically on
+  the final chunk -- the same contract regardless of whether the
+  underlying SDK streams arguments incrementally (OpenAI-family,
+  Anthropic) or only ever delivers a tool call whole (Gemini, Ollama).
+- `AI.stream_response`/`.astream_response`: new methods mirroring
+  `chat_response`/`achat_response`, yielding the full `StreamChunk`
+  sequence (including `tool_calls`) instead of bare text.
+  `AI.stream`/`.astream` gain a `tools=` parameter too, matching
+  `AI.chat`'s existing precedent of accepting tools but only returning
+  text -- use `stream_response`/`astream_response` for the structured
+  view.
+- `BaseProvider.stream`/`.astream` gain `tools=` in the abstract
+  signature, matching `chat`/`achat`.
+- `OllamaProvider.stream`/`.astream` accept `tools=` for the first time
+  -- previously the only provider whose streaming methods didn't even
+  have the parameter.
+- `AnthropicProvider.stream`/`.astream` switched from the SDK's
+  `text_stream` convenience helper to raw event iteration
+  (`content_block_start`/`content_block_delta`/`content_block_stop`),
+  since only the raw event stream carries tool-call data.
+
+No existing public API shape changed for callers who don't pass
+`tools=` to a streaming call -- `AI.stream`/`.astream` still yield bare
+text by default.
+
 ## [0.7.1] - 2026-08-11
 
 ### Fixed

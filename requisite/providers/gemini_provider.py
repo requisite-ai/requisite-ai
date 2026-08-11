@@ -26,6 +26,34 @@ from requisite.tools.base import Tool
 logger = logging.getLogger("requisite.providers.gemini")
 
 
+def _extract_tool_calls_from_parts(parts: Sequence[Any], start_index: int) -> list[ToolCall]:
+    """Build :class:`ToolCall`s for any ``function_call`` parts, mirroring
+    :meth:`GeminiProvider._to_chat_response`'s per-part parsing.
+
+    ``start_index`` lets streaming callers keep a running counter across
+    chunks (each chunk's own ``parts`` list restarts at 0) so synthesized
+    ids stay unique across the whole stream -- the Gemini Developer API
+    (non-Vertex) never streams function-call arguments incrementally, so
+    each part here is already complete.
+    """
+    tool_calls: list[ToolCall] = []
+    for offset, part in enumerate(parts):
+        function_call = getattr(part, "function_call", None)
+        if function_call is None:
+            continue
+        args = dict(getattr(function_call, "args", None) or {})
+        call_name = getattr(function_call, "name", "call")
+        tool_calls.append(
+            ToolCall(
+                id=f"{call_name}-{start_index + offset}",
+                name=call_name,
+                arguments=args,
+                provider_data=getattr(part, "thought_signature", None),
+            )
+        )
+    return tool_calls
+
+
 class GeminiProvider(BaseProvider):
     """Provider implementation backed by Google's Gemini API via ``google-genai``.
 
@@ -283,6 +311,7 @@ class GeminiProvider(BaseProvider):
             response_model=response_model,
             kwargs=kwargs,
         )
+        tool_calls: list[ToolCall] = []
         try:
             stream = client.models.generate_content_stream(
                 model=model or self._model,
@@ -291,8 +320,12 @@ class GeminiProvider(BaseProvider):
             )
             for chunk in stream:
                 text = chunk.text or ""
+                candidates = getattr(chunk, "candidates", None)
+                if candidates and getattr(candidates[0], "content", None) is not None:
+                    parts = getattr(candidates[0].content, "parts", None) or []
+                    tool_calls.extend(_extract_tool_calls_from_parts(parts, len(tool_calls)))
                 yield StreamChunk(delta=text, is_final=False, raw=chunk)
-            yield StreamChunk(delta="", is_final=True)
+            yield StreamChunk(delta="", is_final=True, tool_calls=tool_calls)
         except Exception as exc:  # noqa: BLE001
             raise ProviderException(
                 f"Gemini streaming failed: {exc}",
@@ -319,6 +352,7 @@ class GeminiProvider(BaseProvider):
             response_model=response_model,
             kwargs=kwargs,
         )
+        tool_calls: list[ToolCall] = []
         try:
             stream = await client.aio.models.generate_content_stream(
                 model=model or self._model,
@@ -327,8 +361,12 @@ class GeminiProvider(BaseProvider):
             )
             async for chunk in stream:
                 text = chunk.text or ""
+                candidates = getattr(chunk, "candidates", None)
+                if candidates and getattr(candidates[0], "content", None) is not None:
+                    parts = getattr(candidates[0].content, "parts", None) or []
+                    tool_calls.extend(_extract_tool_calls_from_parts(parts, len(tool_calls)))
                 yield StreamChunk(delta=text, is_final=False, raw=chunk)
-            yield StreamChunk(delta="", is_final=True)
+            yield StreamChunk(delta="", is_final=True, tool_calls=tool_calls)
         except Exception as exc:  # noqa: BLE001
             raise ProviderException(
                 f"Gemini async streaming failed: {exc}",

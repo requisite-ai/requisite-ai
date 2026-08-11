@@ -190,6 +190,14 @@ class StreamChunk(BaseModel):
         Whether this chunk marks the end of the stream.
     raw:
         The unprocessed, provider-native chunk object.
+    tool_calls:
+        Complete tool calls, if any became known as of this chunk. Never
+        partial: providers accumulate any incremental/fragmented
+        tool-call data internally (SDKs differ wildly here -- some stream
+        argument JSON in fragments, others only ever deliver a tool call
+        whole) and only attach fully-assembled :class:`ToolCall` objects
+        here once ready, typically on the final chunk. A non-empty list
+        means those tool calls are complete and safe to execute.
     """
 
     model_config = ConfigDict(arbitrary_types_allowed=True)
@@ -197,6 +205,12 @@ class StreamChunk(BaseModel):
     delta: str
     is_final: bool = False
     raw: Any = None
+    tool_calls: list[ToolCall] = Field(default_factory=list)
+
+    @property
+    def has_tool_calls(self) -> bool:
+        """Whether this chunk carries one or more complete tool calls."""
+        return len(self.tool_calls) > 0
 
     def __str__(self) -> str:  # pragma: no cover - trivial
         return self.delta

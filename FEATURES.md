@@ -101,6 +101,7 @@ Status legend: ✅ Done · 🚧 Partial · 📋 Not started · N/A Deliberately 
 | `@tool` decorator on plain functions | ✅ | |
 | `agent.use_tool(x)` — or its equivalent | ✅ | Via `tools=[...]` at `Agent` construction, or `ToolRegistry.register` |
 | No provider-specific code required from the developer | ✅ | JSON Schema auto-derived; each provider translates internally |
+| Streaming + tool calls together | ✅ | `AI.stream_response`/`.astream_response` (`StreamChunk.tool_calls`), `AI.stream`/`.astream` accept `tools=` too — see [ADR-0009](docs/adr/0009-streaming-tool-calls.md) |
 
 ## Skills
 

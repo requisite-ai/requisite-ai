@@ -25,6 +25,44 @@ from requisite.tools.base import Tool
 logger = logging.getLogger("requisite.providers.openai")
 
 
+def _accumulate_tool_call_deltas(
+    accumulator: dict[int, dict[str, Any]], delta_tool_calls: Any
+) -> None:
+    """Fold one streaming chunk's ``delta.tool_calls`` fragments into ``accumulator``.
+
+    OpenAI streams each tool call's ``id``/``function.name`` once (typically
+    on the first fragment for that ``index``) and ``function.arguments`` as
+    JSON-string fragments to concatenate across chunks sharing the same
+    ``index`` -- see :class:`~requisite.core.interfaces.StreamChunk`'s
+    docstring for why this accumulation happens internally rather than
+    being surfaced to callers.
+    """
+    for call in delta_tool_calls:
+        entry = accumulator.setdefault(call.index, {"id": None, "name": None, "arguments": ""})
+        if call.id:
+            entry["id"] = call.id
+        if call.function is not None:
+            if call.function.name:
+                entry["name"] = call.function.name
+            if call.function.arguments:
+                entry["arguments"] += call.function.arguments
+
+
+def _finalize_tool_calls(accumulator: dict[int, dict[str, Any]]) -> list[ToolCall]:
+    """Build the final :class:`ToolCall` list once a stream's deltas are complete."""
+    tool_calls: list[ToolCall] = []
+    for index in sorted(accumulator):
+        entry = accumulator[index]
+        try:
+            arguments = json.loads(entry["arguments"] or "{}")
+        except json.JSONDecodeError:
+            arguments = {}
+        tool_calls.append(
+            ToolCall(id=entry["id"] or "", name=entry["name"] or "", arguments=arguments)
+        )
+    return tool_calls
+
+
 def _to_openai_messages(messages: Sequence[Message]) -> list[dict[str, Any]]:
     """Convert framework :class:`Message` objects to the OpenAI wire format.
 
@@ -227,9 +265,13 @@ class OpenAIProvider(BaseProvider):
         *,
         model: Optional[str] = None,
         temperature: Optional[float] = None,
+        tools: Optional[Sequence[Tool]] = None,
         **kwargs: Any,
     ) -> Iterator[StreamChunk]:
         client = self._get_client()
+        if tools:
+            kwargs["tools"] = [t.to_openai_schema() for t in tools]
+        tool_call_deltas: dict[int, dict[str, Any]] = {}
         try:
             stream = client.chat.completions.create(
                 model=model or self._model,
@@ -240,10 +282,17 @@ class OpenAIProvider(BaseProvider):
             )
             for event in stream:
                 delta = ""
+                finish_reason = None
                 if event.choices:
                     delta = event.choices[0].delta.content or ""
-                is_final = bool(event.choices) and event.choices[0].finish_reason is not None
-                yield StreamChunk(delta=delta, is_final=is_final, raw=event)
+                    finish_reason = event.choices[0].finish_reason
+                    if event.choices[0].delta.tool_calls:
+                        _accumulate_tool_call_deltas(
+                            tool_call_deltas, event.choices[0].delta.tool_calls
+                        )
+                is_final = bool(event.choices) and finish_reason is not None
+                tool_calls = _finalize_tool_calls(tool_call_deltas) if is_final else []
+                yield StreamChunk(delta=delta, is_final=is_final, raw=event, tool_calls=tool_calls)
         except Exception as exc:  # noqa: BLE001
             raise ProviderException(
                 f"OpenAI streaming failed: {exc}",
@@ -257,9 +306,13 @@ class OpenAIProvider(BaseProvider):
         *,
         model: Optional[str] = None,
         temperature: Optional[float] = None,
+        tools: Optional[Sequence[Tool]] = None,
         **kwargs: Any,
     ) -> AsyncIterator[StreamChunk]:
         client = self._get_async_client()
+        if tools:
+            kwargs["tools"] = [t.to_openai_schema() for t in tools]
+        tool_call_deltas: dict[int, dict[str, Any]] = {}
         try:
             stream = await client.chat.completions.create(
                 model=model or self._model,
@@ -270,10 +323,17 @@ class OpenAIProvider(BaseProvider):
             )
             async for event in stream:
                 delta = ""
+                finish_reason = None
                 if event.choices:
                     delta = event.choices[0].delta.content or ""
-                is_final = bool(event.choices) and event.choices[0].finish_reason is not None
-                yield StreamChunk(delta=delta, is_final=is_final, raw=event)
+                    finish_reason = event.choices[0].finish_reason
+                    if event.choices[0].delta.tool_calls:
+                        _accumulate_tool_call_deltas(
+                            tool_call_deltas, event.choices[0].delta.tool_calls
+                        )
+                is_final = bool(event.choices) and finish_reason is not None
+                tool_calls = _finalize_tool_calls(tool_call_deltas) if is_final else []
+                yield StreamChunk(delta=delta, is_final=is_final, raw=event, tool_calls=tool_calls)
         except Exception as exc:  # noqa: BLE001
             raise ProviderException(
                 f"OpenAI async streaming failed: {exc}",

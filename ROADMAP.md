@@ -51,7 +51,7 @@ construction (each lives in its own module, imported lazily).
 | Tool calling wired into OpenAI + Gemini (incl. multi-turn round-trip) | ✅ |
 | `response_model=` structured output (OpenAI `.parse()`, Gemini `response_schema`) | ✅ |
 | `BaseSkill` / `SkillRegistry` | ✅ |
-| Streaming + tool calls together (partial tool-call deltas) | 📋 |
+| Streaming + tool calls together (partial tool-call deltas) | ✅ — see [ADR-0009](docs/adr/0009-streaming-tool-calls.md); `StreamChunk.tool_calls` reports complete tool calls once known, never partial JSON |
 | Parallel tool calls in a single turn (multiple calls, one round-trip) | ✅ — `Agent.arun()` runs a turn's tool calls concurrently via `asyncio.gather`; `Agent.run()` (sync) executes them sequentially, which is inherent to sync execution rather than a gap |
 
 ## Capabilities (`agent.requires(...)`)

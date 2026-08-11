@@ -69,6 +69,28 @@ def _to_ollama_tools(tools: Sequence[Tool]) -> list[dict[str, Any]]:
     ]
 
 
+def _extract_ollama_tool_calls(chunk: Any, start_index: int) -> list[ToolCall]:
+    """Build :class:`ToolCall`s for a streamed chunk's ``message.tool_calls``,
+    mirroring :meth:`OllamaProvider._to_chat_response`'s parsing.
+
+    ``start_index`` lets streaming callers keep a running counter across
+    chunks so synthesized ids stay unique -- Ollama has no incremental
+    tool-call streaming (``Function.arguments`` is always a fully-parsed
+    mapping, never a partial string), so whichever chunk carries
+    ``message.tool_calls`` already has them complete.
+    """
+    tool_calls: list[ToolCall] = []
+    for offset, call in enumerate(chunk.message.tool_calls or []):
+        tool_calls.append(
+            ToolCall(
+                id=f"{call.function.name}-{start_index + offset}",
+                name=call.function.name,
+                arguments=dict(call.function.arguments),
+            )
+        )
+    return tool_calls
+
+
 class OllamaProvider(BaseProvider):
     """Provider implementation backed by a local (or remote) Ollama server.
 
@@ -213,17 +235,26 @@ class OllamaProvider(BaseProvider):
         *,
         model: Optional[str] = None,
         temperature: Optional[float] = None,
+        tools: Optional[Sequence[Tool]] = None,
         **kwargs: Any,
     ) -> Iterator[StreamChunk]:
         client = self._get_client()
+        tool_calls: list[ToolCall] = []
         try:
             for chunk in client.chat(
                 model=model or self._model,
                 messages=_to_ollama_messages(messages),
+                tools=_to_ollama_tools(tools) if tools else None,
                 stream=True,
                 options=self._options(temperature, kwargs),
             ):
-                yield StreamChunk(delta=chunk.message.content or "", is_final=chunk.done, raw=chunk)
+                tool_calls.extend(_extract_ollama_tool_calls(chunk, len(tool_calls)))
+                yield StreamChunk(
+                    delta=chunk.message.content or "",
+                    is_final=chunk.done,
+                    raw=chunk,
+                    tool_calls=tool_calls if chunk.done else [],
+                )
         except Exception as exc:  # noqa: BLE001
             raise ProviderException(
                 f"Ollama streaming failed: {exc}",
@@ -237,17 +268,26 @@ class OllamaProvider(BaseProvider):
         *,
         model: Optional[str] = None,
         temperature: Optional[float] = None,
+        tools: Optional[Sequence[Tool]] = None,
         **kwargs: Any,
     ) -> AsyncIterator[StreamChunk]:
         client = self._get_async_client()
+        tool_calls: list[ToolCall] = []
         try:
             async for chunk in await client.chat(
                 model=model or self._model,
                 messages=_to_ollama_messages(messages),
+                tools=_to_ollama_tools(tools) if tools else None,
                 stream=True,
                 options=self._options(temperature, kwargs),
             ):
-                yield StreamChunk(delta=chunk.message.content or "", is_final=chunk.done, raw=chunk)
+                tool_calls.extend(_extract_ollama_tool_calls(chunk, len(tool_calls)))
+                yield StreamChunk(
+                    delta=chunk.message.content or "",
+                    is_final=chunk.done,
+                    raw=chunk,
+                    tool_calls=tool_calls if chunk.done else [],
+                )
         except Exception as exc:  # noqa: BLE001
             raise ProviderException(
                 f"Ollama async streaming failed: {exc}",

@@ -33,7 +33,7 @@ from pydantic import BaseModel
 
 from requisite.config.settings import Settings
 from requisite.core.exceptions import ConfigurationException
-from requisite.core.interfaces import ChatResponse, Message
+from requisite.core.interfaces import ChatResponse, Message, StreamChunk
 from requisite.core.rate_limiter import RateLimiter
 from requisite.providers.base import BaseProvider
 from requisite.providers.factory import ProviderRegistry, default_registry
@@ -322,9 +322,19 @@ class AI:
         system_prompt: Optional[str] = None,
         model: Optional[str] = None,
         temperature: Optional[float] = None,
+        tools: Optional[Sequence[ToolLike]] = None,
         **kwargs: Any,
     ) -> Iterator[str]:
         """Stream the response as plain text chunks.
+
+        Parameters
+        ----------
+        tools:
+            Tools the model may call, same as :meth:`chat`. When the
+            model requests one, it is *not* executed or reported here --
+            this method only ever yields text deltas. Use
+            :meth:`stream_response` if you need the tool call(s)
+            alongside the streamed text.
 
         Yields
         ------
@@ -335,10 +345,11 @@ class AI:
         effective_temperature = (
             temperature if temperature is not None else self._settings.temperature
         )
+        resolved_tools = [resolve_tool_like(t) for t in tools] if tools else None
         if self._rate_limiter is not None:
             self._rate_limiter.acquire()
         for chunk in self._provider.stream(
-            messages, model=model, temperature=effective_temperature, **kwargs
+            messages, model=model, temperature=effective_temperature, tools=resolved_tools, **kwargs
         ):
             if chunk.delta:
                 yield chunk.delta
@@ -350,6 +361,7 @@ class AI:
         system_prompt: Optional[str] = None,
         model: Optional[str] = None,
         temperature: Optional[float] = None,
+        tools: Optional[Sequence[ToolLike]] = None,
         **kwargs: Any,
     ) -> AsyncIterator[str]:
         """Async counterpart to :meth:`stream`."""
@@ -357,13 +369,67 @@ class AI:
         effective_temperature = (
             temperature if temperature is not None else self._settings.temperature
         )
+        resolved_tools = [resolve_tool_like(t) for t in tools] if tools else None
         if self._rate_limiter is not None:
             await self._rate_limiter.aacquire()
         async for chunk in self._provider.astream(
-            messages, model=model, temperature=effective_temperature, **kwargs
+            messages, model=model, temperature=effective_temperature, tools=resolved_tools, **kwargs
         ):
             if chunk.delta:
                 yield chunk.delta
+
+    def stream_response(
+        self,
+        prompt: Union[str, Sequence[Message]],
+        *,
+        system_prompt: Optional[str] = None,
+        model: Optional[str] = None,
+        temperature: Optional[float] = None,
+        tools: Optional[Sequence[ToolLike]] = None,
+        **kwargs: Any,
+    ) -> Iterator[StreamChunk]:
+        """Stream the full, normalized :class:`StreamChunk` sequence.
+
+        Unlike :meth:`stream`, each chunk is returned in full -- including
+        ``tool_calls`` once the model completes one or more, typically on
+        the final chunk (``is_final=True``). See
+        :class:`~requisite.core.interfaces.StreamChunk`'s docstring for
+        the exact completion contract; check ``chunk.has_tool_calls``
+        rather than assuming any particular chunk carries them.
+        """
+        messages = self._build_messages(prompt, system_prompt)
+        effective_temperature = (
+            temperature if temperature is not None else self._settings.temperature
+        )
+        resolved_tools = [resolve_tool_like(t) for t in tools] if tools else None
+        if self._rate_limiter is not None:
+            self._rate_limiter.acquire()
+        yield from self._provider.stream(
+            messages, model=model, temperature=effective_temperature, tools=resolved_tools, **kwargs
+        )
+
+    async def astream_response(
+        self,
+        prompt: Union[str, Sequence[Message]],
+        *,
+        system_prompt: Optional[str] = None,
+        model: Optional[str] = None,
+        temperature: Optional[float] = None,
+        tools: Optional[Sequence[ToolLike]] = None,
+        **kwargs: Any,
+    ) -> AsyncIterator[StreamChunk]:
+        """Async counterpart to :meth:`stream_response`."""
+        messages = self._build_messages(prompt, system_prompt)
+        effective_temperature = (
+            temperature if temperature is not None else self._settings.temperature
+        )
+        resolved_tools = [resolve_tool_like(t) for t in tools] if tools else None
+        if self._rate_limiter is not None:
+            await self._rate_limiter.aacquire()
+        async for chunk in self._provider.astream(
+            messages, model=model, temperature=effective_temperature, tools=resolved_tools, **kwargs
+        ):
+            yield chunk
 
     def __repr__(self) -> str:  # pragma: no cover - trivial
         return f"AI(provider={self._provider.name!r}, model={self._provider.model!r})"

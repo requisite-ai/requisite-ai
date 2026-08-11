@@ -145,9 +145,27 @@ class BaseProvider(ABC):
         *,
         model: Optional[str] = None,
         temperature: Optional[float] = None,
+        tools: Optional[Sequence["Tool"]] = None,
         **kwargs: Any,
     ) -> Iterator[StreamChunk]:
         """Synchronously stream a chat completion, chunk by chunk.
+
+        Parameters
+        ----------
+        messages:
+            Ordered conversation history, oldest first.
+        model:
+            Overrides the provider's default model for this call.
+        temperature:
+            Overrides the default sampling temperature for this call.
+        tools:
+            Tools the model may call. Implementations accumulate any
+            incremental/fragmented tool-call data internally (SDKs differ
+            here) and only attach fully-assembled tool calls to a
+            :class:`StreamChunk` once complete -- see
+            :class:`StreamChunk`'s docstring for the exact contract.
+        **kwargs:
+            Provider-specific passthrough options (e.g. ``top_p``).
 
         Yields
         ------
@@ -162,6 +180,7 @@ class BaseProvider(ABC):
         *,
         model: Optional[str] = None,
         temperature: Optional[float] = None,
+        tools: Optional[Sequence["Tool"]] = None,
         **kwargs: Any,
     ) -> AsyncIterator[StreamChunk]:
         """Asynchronous counterpart to :meth:`stream`. Same parameters and behavior."""

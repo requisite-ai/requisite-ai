@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import sys
 import types
+from collections.abc import Iterator
 from typing import Any, ClassVar, Optional
 
 import pytest
@@ -201,6 +202,129 @@ def test_openai_provider_parses_tool_calls(fake_openai_module: types.ModuleType)
     assert response.tool_calls[0].arguments == {"city": "Paris"}
 
 
+class _FakeStreamDeltaFunction:
+    def __init__(self, *, name: Optional[str] = None, arguments: Optional[str] = None) -> None:
+        self.name = name
+        self.arguments = arguments
+
+
+class _FakeStreamDeltaToolCall:
+    def __init__(
+        self,
+        index: int,
+        *,
+        id: Optional[str] = None,  # noqa: A002
+        function: Optional[_FakeStreamDeltaFunction] = None,
+    ) -> None:
+        self.index = index
+        self.id = id
+        self.function = function
+
+
+class _FakeStreamDelta:
+    def __init__(
+        self,
+        *,
+        content: Optional[str] = None,
+        tool_calls: Optional[list[_FakeStreamDeltaToolCall]] = None,
+    ) -> None:
+        self.content = content
+        self.tool_calls = tool_calls
+
+
+class _FakeStreamChoice:
+    def __init__(self, *, delta: _FakeStreamDelta, finish_reason: Optional[str] = None) -> None:
+        self.delta = delta
+        self.finish_reason = finish_reason
+
+
+class _FakeStreamEvent:
+    def __init__(self, choices: list[_FakeStreamChoice]) -> None:
+        self.choices = choices
+
+
+def test_openai_provider_stream_assembles_tool_call_deltas(
+    fake_openai_module: types.ModuleType,
+) -> None:
+    # Simulates a real OpenAI streaming turn: id/name arrive once, then
+    # `arguments` is fragmented across several chunks and must be
+    # concatenated by `index` before parsing -- see
+    # `_accumulate_tool_call_deltas` in openai_provider.py.
+    events = [
+        _FakeStreamEvent([_FakeStreamChoice(delta=_FakeStreamDelta(content="Sure, "))]),
+        _FakeStreamEvent(
+            [
+                _FakeStreamChoice(
+                    delta=_FakeStreamDelta(
+                        tool_calls=[
+                            _FakeStreamDeltaToolCall(
+                                0,
+                                id="call_1",
+                                function=_FakeStreamDeltaFunction(name="get_weather", arguments=""),
+                            )
+                        ]
+                    )
+                )
+            ]
+        ),
+        _FakeStreamEvent(
+            [
+                _FakeStreamChoice(
+                    delta=_FakeStreamDelta(
+                        tool_calls=[
+                            _FakeStreamDeltaToolCall(
+                                0, function=_FakeStreamDeltaFunction(arguments='{"city": ')
+                            )
+                        ]
+                    )
+                )
+            ]
+        ),
+        _FakeStreamEvent(
+            [
+                _FakeStreamChoice(
+                    delta=_FakeStreamDelta(
+                        tool_calls=[
+                            _FakeStreamDeltaToolCall(
+                                0, function=_FakeStreamDeltaFunction(arguments='"Paris"}')
+                            )
+                        ]
+                    )
+                )
+            ]
+        ),
+        _FakeStreamEvent([_FakeStreamChoice(delta=_FakeStreamDelta(), finish_reason="tool_calls")]),
+    ]
+
+    fake_openai_module.OpenAI = lambda **kwargs: types.SimpleNamespace(  # type: ignore[attr-defined]
+        chat=types.SimpleNamespace(
+            completions=types.SimpleNamespace(create=lambda **kw: iter(events))
+        )
+    )
+
+    from requisite.providers.openai_provider import OpenAIProvider
+    from requisite.tools.base import Tool
+
+    def get_weather(city: str) -> str:
+        return f"sunny in {city}"
+
+    provider = OpenAIProvider(api_key="sk-test", model="gpt-4o-mini")
+    chunks = list(
+        provider.stream(
+            [Message.user("weather in Paris?")], tools=[Tool.from_function(get_weather)]
+        )
+    )
+
+    assert "".join(c.delta for c in chunks) == "Sure, "
+    assert chunks[-1].is_final
+    assert chunks[-1].has_tool_calls
+    assert chunks[-1].tool_calls == [
+        ToolCall(id="call_1", name="get_weather", arguments={"city": "Paris"})
+    ]
+    # No earlier chunk jumps the gun before the deltas are fully assembled.
+    assert all(not c.has_tool_calls for c in chunks[:-1])
+
+
 # ---------------------------------------------------------------------------
 # Gemini provider tests (SDK faked via sys.modules)
 # ---------------------------------------------------------------------------
@@ -254,6 +378,16 @@ class _FakeGenerateContentConfig:
         self.kwargs = kwargs
 
 
+class _FakeFunctionDeclaration:
+    def __init__(self, **kwargs: Any) -> None:
+        self.kwargs = kwargs
+
+
+class _FakeGeminiTool:
+    def __init__(self, **kwargs: Any) -> None:
+        self.kwargs = kwargs
+
+
 class _FakeGeminiResponse:
     def __init__(self, parts: list[_FakePart], *, finish_reason: str = "STOP") -> None:
         self.usage_metadata = types.SimpleNamespace(
@@ -263,6 +397,13 @@ class _FakeGeminiResponse:
             _FakeCandidate(_FakeContent("model", parts), finish_reason=finish_reason)
         ]
 
+    @property
+    def text(self) -> str:
+        """Mirrors the real SDK's convenience property, used by ``stream()``."""
+        if not self.candidates or self.candidates[0].content is None:
+            return ""
+        return "".join(p.text or "" for p in self.candidates[0].content.parts if p.text)
+
 
 class _FakeGeminiModels:
     """Real ``.models.generate_content``, plus a test hook.
@@ -271,10 +412,12 @@ class _FakeGeminiModels:
     ``thought_signature``) set ``next_response`` via ``monkeypatch`` before
     calling into the provider; it's consumed once and cleared. Absent that,
     ``generate_content`` echoes the last message's text, matching the
-    original fixture's behavior.
+    original fixture's behavior. ``next_stream_chunks`` is the streaming
+    equivalent, for ``generate_content_stream``.
     """
 
     next_response: ClassVar[Optional[_FakeGeminiResponse]] = None
+    next_stream_chunks: ClassVar[Optional[list[_FakeGeminiResponse]]] = None
 
     def generate_content(
         self, *, model: str, contents: list[Any], config: Any
@@ -285,6 +428,16 @@ class _FakeGeminiModels:
             return response
         last_text = contents[-1].parts[0].text if contents else ""
         return _FakeGeminiResponse([_FakePart.from_text(f"echo: {last_text}")])
+
+    def generate_content_stream(
+        self, *, model: str, contents: list[Any], config: Any
+    ) -> Iterator[_FakeGeminiResponse]:
+        if _FakeGeminiModels.next_stream_chunks is not None:
+            chunks = _FakeGeminiModels.next_stream_chunks
+            _FakeGeminiModels.next_stream_chunks = None
+            return iter(chunks)
+        last_text = contents[-1].parts[0].text if contents else ""
+        return iter([_FakeGeminiResponse([_FakePart.from_text(f"echo: {last_text}")])])
 
 
 class _FakeGeminiClient:
@@ -299,6 +452,8 @@ def fake_genai_module(monkeypatch: pytest.MonkeyPatch) -> types.ModuleType:
     fake_types_module.Content = _FakeContent  # type: ignore[attr-defined]
     fake_types_module.Part = _FakePart  # type: ignore[attr-defined]
     fake_types_module.GenerateContentConfig = _FakeGenerateContentConfig  # type: ignore[attr-defined]
+    fake_types_module.FunctionDeclaration = _FakeFunctionDeclaration  # type: ignore[attr-defined]
+    fake_types_module.Tool = _FakeGeminiTool  # type: ignore[attr-defined]
 
     fake_genai_module = types.ModuleType("google.genai")
     fake_genai_module.Client = _FakeGeminiClient  # type: ignore[attr-defined]
@@ -392,6 +547,39 @@ def test_gemini_provider_leaves_thought_signature_unset_without_provider_data(
     assert reconstructed_part.thought_signature is None
 
 
+def test_gemini_provider_stream_reports_function_call_on_final_chunk(
+    fake_genai_module: types.ModuleType,
+) -> None:
+    from requisite.providers.gemini_provider import GeminiProvider
+    from requisite.tools.base import Tool
+
+    def get_weather(city: str) -> str:
+        return f"sunny in {city}"
+
+    # The Gemini Developer API never streams function-call arguments
+    # incrementally -- a chunk that carries one has it whole already.
+    _FakeGeminiModels.next_stream_chunks = [
+        _FakeGeminiResponse([_FakePart.from_text("Sure, ")]),
+        _FakeGeminiResponse(
+            [_FakePart.from_function_call("get_weather", {"city": "Paris"})],
+            finish_reason="STOP",
+        ),
+    ]
+
+    provider = GeminiProvider(api_key="g-test", model="gemini-2.5-flash")
+    chunks = list(
+        provider.stream(
+            [Message.user("weather in Paris?")], tools=[Tool.from_function(get_weather)]
+        )
+    )
+
+    assert "".join(c.delta for c in chunks) == "Sure, "
+    assert chunks[-1].is_final
+    assert chunks[-1].has_tool_calls
+    assert chunks[-1].tool_calls[0].name == "get_weather"
+    assert chunks[-1].tool_calls[0].arguments == {"city": "Paris"}
+
+
 # ---------------------------------------------------------------------------
 # Anthropic provider tests
 # ---------------------------------------------------------------------------
@@ -418,6 +606,59 @@ class _FakeAnthropicMessage:
         self.model = model
         self.stop_reason = "end_turn"
         self.usage = types.SimpleNamespace(input_tokens=5, output_tokens=7)
+
+
+class _FakeAnthropicStreamEvent:
+    def __init__(
+        self,
+        event_type: str,
+        *,
+        index: Optional[int] = None,
+        content_block: Any = None,
+        delta: Any = None,
+    ) -> None:
+        self.type = event_type
+        self.index = index
+        self.content_block = content_block
+        self.delta = delta
+
+
+class _FakeAnthropicTextDelta:
+    def __init__(self, text: str) -> None:
+        self.type = "text_delta"
+        self.text = text
+
+
+class _FakeAnthropicInputJSONDelta:
+    def __init__(self, partial_json: str) -> None:
+        self.type = "input_json_delta"
+        self.partial_json = partial_json
+
+
+class _FakeAnthropicStream:
+    """Mimics ``client.messages.stream(...)``'s context-manager-of-raw-events shape."""
+
+    def __init__(self, events: list[_FakeAnthropicStreamEvent]) -> None:
+        self._events = events
+
+    def __enter__(self) -> "_FakeAnthropicStream":
+        return self
+
+    def __exit__(self, *exc_info: Any) -> None:
+        return None
+
+    def __iter__(self) -> Any:
+        return iter(self._events)
+
+    async def __aenter__(self) -> "_FakeAnthropicStream":
+        return self
+
+    async def __aexit__(self, *exc_info: Any) -> None:
+        return None
+
+    async def __aiter__(self) -> Any:
+        for event in self._events:
+            yield event
 
 
 class _FakeAnthropicClient:
@@ -476,6 +717,64 @@ def test_anthropic_provider_parses_tool_calls(monkeypatch: pytest.MonkeyPatch) -
     assert response.has_tool_calls
     assert response.tool_calls[0].name == "get_weather"
     assert response.tool_calls[0].arguments == {"city": "Paris"}
+
+
+def test_anthropic_provider_stream_assembles_tool_call_deltas(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import anthropic
+
+    # A real Anthropic streaming turn: content_block_start opens a text
+    # block, then a tool_use block (empty input); input_json_delta
+    # fragments must be concatenated per block index before parsing --
+    # see `_finalize_streamed_tool_calls` in anthropic_provider.py.
+    events = [
+        _FakeAnthropicStreamEvent(
+            "content_block_start", index=0, content_block=_FakeAnthropicTextBlock("")
+        ),
+        _FakeAnthropicStreamEvent(
+            "content_block_delta", index=0, delta=_FakeAnthropicTextDelta("Sure, ")
+        ),
+        _FakeAnthropicStreamEvent("content_block_stop", index=0),
+        _FakeAnthropicStreamEvent(
+            "content_block_start",
+            index=1,
+            content_block=_FakeAnthropicToolUseBlock("call_1", "get_weather", {}),
+        ),
+        _FakeAnthropicStreamEvent(
+            "content_block_delta", index=1, delta=_FakeAnthropicInputJSONDelta('{"city": ')
+        ),
+        _FakeAnthropicStreamEvent(
+            "content_block_delta", index=1, delta=_FakeAnthropicInputJSONDelta('"Paris"}')
+        ),
+        _FakeAnthropicStreamEvent("content_block_stop", index=1),
+    ]
+
+    class _StreamingClient(_FakeAnthropicClient):
+        def _stream(self, **kwargs: Any) -> Any:
+            return _FakeAnthropicStream(events)
+
+    monkeypatch.setattr(anthropic, "Anthropic", _StreamingClient)
+    from requisite.providers.anthropic_provider import AnthropicProvider
+    from requisite.tools.base import Tool
+
+    def get_weather(city: str) -> str:
+        return f"sunny in {city}"
+
+    provider = AnthropicProvider(api_key="sk-ant-test")
+    chunks = list(
+        provider.stream(
+            [Message.user("weather in Paris?")], tools=[Tool.from_function(get_weather)]
+        )
+    )
+
+    assert "".join(c.delta for c in chunks) == "Sure, "
+    assert chunks[-1].is_final
+    assert chunks[-1].has_tool_calls
+    assert chunks[-1].tool_calls == [
+        ToolCall(id="call_1", name="get_weather", arguments={"city": "Paris"})
+    ]
+    assert all(not c.has_tool_calls for c in chunks[:-1])
 
 
 def test_anthropic_provider_structured_output(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -758,6 +1057,49 @@ def test_ollama_provider_stream(fake_ollama_module: types.ModuleType) -> None:
     chunks = list(provider.stream([Message.user("hi")]))
     assert [c.delta for c in chunks] == ["echo: ", "hi"]
     assert chunks[-1].is_final
+
+
+def test_ollama_provider_stream_reports_tool_calls_on_final_chunk(
+    fake_ollama_module: types.ModuleType,
+) -> None:
+    # Ollama has no incremental tool-call streaming -- whichever chunk
+    # carries `message.tool_calls` already has them complete.
+    class _ToolCallStreamClient(_FakeOllamaClient):
+        def chat(self, *, model, messages, stream=False, tools=None, **kwargs):  # noqa: ANN001
+            if stream:
+                return iter(
+                    [
+                        _FakeOllamaChatResponse("Sure, ", done=False),
+                        _FakeOllamaChatResponse(
+                            "",
+                            tool_calls=[_FakeOllamaToolCall("get_weather", {"city": "Paris"})],
+                            done=True,
+                        ),
+                    ]
+                )
+            return _FakeOllamaChatResponse("echo")
+
+    fake_ollama_module.Client = _ToolCallStreamClient  # type: ignore[attr-defined]
+
+    from requisite.providers.ollama_provider import OllamaProvider
+    from requisite.tools.base import Tool
+
+    def get_weather(city: str) -> str:
+        return f"sunny in {city}"
+
+    provider = OllamaProvider(model="llama3.2")
+    chunks = list(
+        provider.stream(
+            [Message.user("weather in Paris?")], tools=[Tool.from_function(get_weather)]
+        )
+    )
+
+    assert "".join(c.delta for c in chunks) == "Sure, "
+    assert chunks[-1].is_final
+    assert chunks[-1].has_tool_calls
+    assert chunks[-1].tool_calls[0].name == "get_weather"
+    assert chunks[-1].tool_calls[0].arguments == {"city": "Paris"}
+    assert all(not c.has_tool_calls for c in chunks[:-1])
 
 
 def test_ollama_provider_missing_sdk_raises_configuration_exception(

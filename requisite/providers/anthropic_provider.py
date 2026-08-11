@@ -21,6 +21,7 @@ Install with: ``pip install anthropic``
 
 from __future__ import annotations
 
+import json
 import logging
 from collections.abc import AsyncIterator, Iterator, Sequence
 from typing import Any, Optional
@@ -33,6 +34,27 @@ from requisite.providers.base import BaseProvider
 from requisite.tools.base import Tool
 
 logger = logging.getLogger("requisite.providers.anthropic")
+
+
+def _finalize_streamed_tool_calls(blocks: dict[int, dict[str, Any]]) -> list[ToolCall]:
+    """Build final :class:`ToolCall`s from accumulated ``content_block`` state.
+
+    Anthropic streams a tool call as ``content_block_start`` (carrying its
+    ``id``/``name``, empty input) followed by one or more
+    ``content_block_delta`` events of type ``input_json_delta`` whose
+    ``partial_json`` fragments must be concatenated per block ``index``
+    before parsing -- see :class:`~requisite.core.interfaces.StreamChunk`'s
+    docstring for why that accumulation happens here, not in the caller.
+    """
+    tool_calls: list[ToolCall] = []
+    for index in sorted(blocks):
+        entry = blocks[index]
+        try:
+            arguments = json.loads(entry["json_buf"] or "{}")
+        except json.JSONDecodeError:
+            arguments = {}
+        tool_calls.append(ToolCall(id=entry["id"], name=entry["name"], arguments=arguments))
+    return tool_calls
 
 
 class AnthropicProvider(BaseProvider):
@@ -282,6 +304,7 @@ class AnthropicProvider(BaseProvider):
         if tools:
             kwargs["tools"] = [t.to_anthropic_schema() for t in tools]
 
+        tool_call_blocks: dict[int, dict[str, Any]] = {}
         try:
             with client.messages.stream(
                 model=resolved_model,
@@ -291,9 +314,28 @@ class AnthropicProvider(BaseProvider):
                 temperature=temperature,
                 **kwargs,
             ) as stream:
-                for text in stream.text_stream:
-                    yield StreamChunk(delta=text, is_final=False)
-                yield StreamChunk(delta="", is_final=True)
+                for event in stream:
+                    event_type = getattr(event, "type", None)
+                    if event_type == "content_block_start":
+                        block = event.content_block
+                        if getattr(block, "type", None) == "tool_use":
+                            tool_call_blocks[event.index] = {
+                                "id": block.id,
+                                "name": block.name,
+                                "json_buf": "",
+                            }
+                    elif event_type == "content_block_delta":
+                        delta = event.delta
+                        delta_type = getattr(delta, "type", None)
+                        if delta_type == "text_delta":
+                            yield StreamChunk(delta=delta.text, is_final=False)
+                        elif delta_type == "input_json_delta" and event.index in tool_call_blocks:
+                            tool_call_blocks[event.index]["json_buf"] += delta.partial_json
+                yield StreamChunk(
+                    delta="",
+                    is_final=True,
+                    tool_calls=_finalize_streamed_tool_calls(tool_call_blocks),
+                )
         except Exception as exc:  # noqa: BLE001
             raise ProviderException(
                 f"Anthropic streaming failed: {exc}",
@@ -318,6 +360,7 @@ class AnthropicProvider(BaseProvider):
         if tools:
             kwargs["tools"] = [t.to_anthropic_schema() for t in tools]
 
+        tool_call_blocks: dict[int, dict[str, Any]] = {}
         try:
             async with client.messages.stream(
                 model=resolved_model,
@@ -327,9 +370,28 @@ class AnthropicProvider(BaseProvider):
                 temperature=temperature,
                 **kwargs,
             ) as stream:
-                async for text in stream.text_stream:
-                    yield StreamChunk(delta=text, is_final=False)
-                yield StreamChunk(delta="", is_final=True)
+                async for event in stream:
+                    event_type = getattr(event, "type", None)
+                    if event_type == "content_block_start":
+                        block = event.content_block
+                        if getattr(block, "type", None) == "tool_use":
+                            tool_call_blocks[event.index] = {
+                                "id": block.id,
+                                "name": block.name,
+                                "json_buf": "",
+                            }
+                    elif event_type == "content_block_delta":
+                        delta = event.delta
+                        delta_type = getattr(delta, "type", None)
+                        if delta_type == "text_delta":
+                            yield StreamChunk(delta=delta.text, is_final=False)
+                        elif delta_type == "input_json_delta" and event.index in tool_call_blocks:
+                            tool_call_blocks[event.index]["json_buf"] += delta.partial_json
+                yield StreamChunk(
+                    delta="",
+                    is_final=True,
+                    tool_calls=_finalize_streamed_tool_calls(tool_call_blocks),
+                )
         except Exception as exc:  # noqa: BLE001
             raise ProviderException(
                 f"Anthropic async streaming failed: {exc}",
