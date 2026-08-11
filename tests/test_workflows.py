@@ -174,6 +174,7 @@ class ScriptedReflectionProvider(BaseProvider):
         super().__init__(api_key="fake-key", model=model)
         self._responses = responses
         self._call_count = 0
+        self.last_messages: list[Message] = []
 
     @property
     def name(self) -> str:
@@ -189,6 +190,7 @@ class ScriptedReflectionProvider(BaseProvider):
         response_model=None,
         **kwargs,
     ) -> ChatResponse:
+        self.last_messages = list(messages)
         content = self._responses[self._call_count]
         self._call_count += 1
         return ChatResponse(content=content, model=self._model, provider=self.name)
@@ -531,6 +533,133 @@ async def test_workflow_arun_supervisor() -> None:
     result = await workflow.arun("task")
 
     assert result.content == "done"
+
+
+# ---------------------------------------------------------------------------
+# Critic strategy
+# ---------------------------------------------------------------------------
+
+
+def test_workflow_critic_revises_output() -> None:
+    generator = make_agent_with_provider(
+        "Generator", ScriptedReflectionProvider(responses=["draft v1", "draft v2, better tone"])
+    )
+    critic = make_agent_with_provider(
+        "Critic", ScriptedReflectionProvider(responses=["fix the tone"])
+    )
+    workflow = Workflow().critic()
+    workflow.add(generator).add(critic)
+
+    result = workflow.run("Write a haiku", max_rounds=2)
+
+    assert result.content == "draft v2, better tone"
+    assert result.strategy == "critic"
+    assert result.orchestrator == "native"
+    assert [s.agent_name for s in result.steps] == ["Generator", "Critic", "Generator"]
+
+
+def test_workflow_critic_stops_early_on_no_changes_needed() -> None:
+    generator = make_agent_with_provider(
+        "Generator", ScriptedReflectionProvider(responses=["draft v1"])
+    )
+    critic = make_agent_with_provider(
+        "Critic", ScriptedReflectionProvider(responses=["NO_CHANGES_NEEDED"])
+    )
+    workflow = Workflow().critic()
+    workflow.add(generator).add(critic)
+
+    result = workflow.run("Write a haiku", max_rounds=5)
+
+    assert result.content == "draft v1"
+    assert len(result.steps) == 2
+
+
+def test_workflow_critic_requires_exactly_two_agents() -> None:
+    workflow = Workflow().critic()
+    workflow.add(make_agent("A", "a"))
+    with pytest.raises(ConfigurationException, match="critic"):
+        workflow.run("task")
+
+    workflow2 = Workflow().critic()
+    workflow2.add(make_agent("A", "a")).add(make_agent("B", "b")).add(make_agent("C", "c"))
+    with pytest.raises(ConfigurationException, match="critic"):
+        workflow2.run("task")
+
+
+@pytest.mark.asyncio
+async def test_workflow_arun_critic() -> None:
+    generator = make_agent_with_provider(
+        "Generator", ScriptedReflectionProvider(responses=["draft"])
+    )
+    critic = make_agent_with_provider(
+        "Critic", ScriptedReflectionProvider(responses=["NO_CHANGES_NEEDED"])
+    )
+    workflow = Workflow().critic()
+    workflow.add(generator).add(critic)
+
+    result = await workflow.arun("task", max_rounds=5)
+
+    assert result.content == "draft"
+
+
+# ---------------------------------------------------------------------------
+# Consensus strategy
+# ---------------------------------------------------------------------------
+
+
+def test_workflow_consensus_synthesizes_participant_answers() -> None:
+    synthesizer_provider = ScriptedReflectionProvider(responses=["synthesized answer"])
+    synthesizer = make_agent_with_provider("Synthesizer", synthesizer_provider)
+    a = make_agent("A", "alpha")
+    b = make_agent("B", "beta")
+
+    workflow = Workflow().consensus()
+    workflow.add(synthesizer).add(a).add(b)
+    result = workflow.run("What is RAG?")
+
+    assert result.strategy == "consensus"
+    assert result.orchestrator == "native"
+    assert result.content == "synthesized answer"
+    assert len(result.steps) == 3  # 2 participants + the synthesis
+    participant_names = {result.steps[0].agent_name, result.steps[1].agent_name}
+    assert participant_names == {"A", "B"}
+    assert result.steps[2].agent_name == "Synthesizer"
+
+    # The synthesizer actually saw both participants' independent answers.
+    synthesis_prompt = synthesizer_provider.last_messages[-1].content
+    assert "alpha:What is RAG?" in synthesis_prompt
+    assert "beta:What is RAG?" in synthesis_prompt
+
+
+def test_workflow_consensus_requires_at_least_two_agents() -> None:
+    workflow = Workflow().consensus()
+    workflow.add(make_agent("Solo", "solo"))
+    with pytest.raises(ConfigurationException, match="consensus"):
+        workflow.run("task")
+
+
+def test_workflow_consensus_duplicate_participant_names_raises() -> None:
+    workflow = Workflow().consensus()
+    workflow.add(make_agent("Synth", "synth"))
+    workflow.add(make_agent("Dup", "a")).add(make_agent("Dup", "b"))
+    with pytest.raises(ConfigurationException, match="unique worker names"):
+        workflow.run("task")
+
+
+@pytest.mark.asyncio
+async def test_workflow_arun_consensus() -> None:
+    synthesizer = make_agent_with_provider(
+        "Synthesizer", ScriptedReflectionProvider(responses=["final"])
+    )
+    a = make_agent("A", "alpha")
+    b = make_agent("B", "beta")
+    workflow = Workflow().consensus()
+    workflow.add(synthesizer).add(a).add(b)
+
+    result = await workflow.arun("What is RAG?")
+
+    assert result.content == "final"
+    assert len(result.steps) == 3
 
 
 def test_default_orchestrator_registry_has_native_and_langgraph() -> None:

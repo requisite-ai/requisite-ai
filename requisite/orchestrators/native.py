@@ -1,13 +1,16 @@
 """
-Native orchestrator: sequential, parallel, reflection, planner, and
-supervisor execution -- no external orchestration framework required.
+Native orchestrator: sequential, parallel, reflection, planner,
+supervisor, critic, and consensus execution -- no external orchestration
+framework required.
 
 This is the default backend for :class:`~requisite.workflows.workflow.Workflow`.
-Further strategies (debate, critic, consensus, hierarchical, map-reduce,
-tree-of-thoughts, general graph execution) are natural extensions of this
-class -- add a ``_run_<strategy>`` / ``_arun_<strategy>`` pair and a
-branch in :meth:`NativeOrchestrator.run` / :meth:`NativeOrchestrator.arun`;
-nothing else needs to change.
+Further strategies (debate, map-reduce, hierarchical, tree-of-thoughts,
+general graph execution) are natural extensions of this class -- add a
+``_run_<strategy>`` / ``_arun_<strategy>`` pair and a branch in
+:meth:`NativeOrchestrator.run` / :meth:`NativeOrchestrator.arun`; nothing
+else needs to change. See ``docs/adr/0011-critic-and-consensus-strategies.md``
+for which of those fit this flat coordinator/worker shape directly and
+which don't.
 """
 
 from __future__ import annotations
@@ -107,6 +110,34 @@ def _reflection_revise_prompt(task: str, draft: str, critique: str) -> str:
     )
 
 
+def _critic_prompt(task: str, draft: str) -> str:
+    return (
+        f"Task: {task}\n\n"
+        f"Proposed answer:\n{draft}\n\n"
+        "Critique the answer above for accuracy, completeness, and clarity. "
+        "If it is already excellent and needs no changes, respond with exactly: "
+        "NO_CHANGES_NEEDED. Otherwise, list the specific issues to fix."
+    )
+
+
+def _consensus_prompt(task: str, results: Sequence["AgentResult"]) -> str:
+    lines = [
+        "Several independent responses to the same task are shown below. "
+        "Synthesize them into a single, well-reasoned final answer -- resolve "
+        "any disagreements by weighing the strongest reasoning, not just "
+        "picking one response.",
+        "",
+        f"Task: {task}",
+        "",
+        "Independent responses:",
+    ]
+    for result in results:
+        lines.append(f"- {result.agent_name}: {result.content}")
+    lines.append("")
+    lines.append("Provide the final, synthesized answer only.")
+    return "\n".join(lines)
+
+
 class NativeOrchestrator(BaseOrchestrator):
     """Runs agents sequentially or in parallel using plain Python -- no
     external orchestration framework required.
@@ -134,9 +165,31 @@ class NativeOrchestrator(BaseOrchestrator):
         (``steps[1:]``, addressed by name), delegating one subtask at a
         time and deciding when the task is complete, for up to
         ``max_rounds`` rounds.
+
+    Critic strategy
+        Two agents: a generator (``steps[0]``) produces a draft, a
+        separate critic (``steps[1]``) critiques it, and the generator
+        revises -- for up to ``max_rounds`` rounds, stopping early if the
+        critic decides no changes are needed. Same shape as reflection,
+        generalized to two distinct agents instead of one agent
+        critiquing itself.
+
+    Consensus strategy
+        The first agent (``steps[0]``) is a synthesizer; the remaining
+        agents (``steps[1:]``) independently answer the same input
+        concurrently, then the synthesizer combines their answers into
+        one final response.
     """
 
-    _STRATEGIES = ("sequential", "parallel", "reflection", "planner", "supervisor")
+    _STRATEGIES = (
+        "sequential",
+        "parallel",
+        "reflection",
+        "planner",
+        "supervisor",
+        "critic",
+        "consensus",
+    )
 
     @property
     def name(self) -> str:
@@ -165,6 +218,10 @@ class NativeOrchestrator(BaseOrchestrator):
             return self._run_planner(steps, input, **kwargs)
         if strategy == "supervisor":
             return self._run_supervisor(steps, input, **kwargs)
+        if strategy == "critic":
+            return self._run_critic(steps, input, **kwargs)
+        if strategy == "consensus":
+            return self._run_consensus(steps, input, **kwargs)
         raise ConfigurationException(
             f"Unknown execution strategy '{strategy}' for the native orchestrator. "
             f"Supported: {', '.join(self._STRATEGIES)}.",
@@ -193,6 +250,10 @@ class NativeOrchestrator(BaseOrchestrator):
             return await self._arun_planner(steps, input, **kwargs)
         if strategy == "supervisor":
             return await self._arun_supervisor(steps, input, **kwargs)
+        if strategy == "critic":
+            return await self._arun_critic(steps, input, **kwargs)
+        if strategy == "consensus":
+            return await self._arun_consensus(steps, input, **kwargs)
         raise ConfigurationException(
             f"Unknown execution strategy '{strategy}' for the native orchestrator. "
             f"Supported: {', '.join(self._STRATEGIES)}.",
@@ -515,3 +576,122 @@ class NativeOrchestrator(BaseOrchestrator):
                 f"worker '{decision.worker}'. Available workers: {sorted(workers)}.",
             )
         return workers[decision.worker]
+
+    def _run_critic(
+        self,
+        steps: Sequence["Agent"],
+        input: str,  # noqa: A002
+        *,
+        max_rounds: int = 3,
+        **kwargs: Any,
+    ) -> WorkflowResult:
+        if len(steps) != 2:
+            raise ConfigurationException(
+                f"The 'critic' strategy requires exactly two agents: a generator "
+                f"(steps[0]) and a critic (steps[1]). Got {len(steps)}.",
+            )
+        generator, critic = steps[0], steps[1]
+        results: list["AgentResult"] = []
+
+        draft = generator.run(input, **kwargs)
+        results.append(draft)
+
+        for _ in range(max_rounds - 1):
+            critique = critic.run(_critic_prompt(input, draft.content), **kwargs)
+            results.append(critique)
+            if critique.content.strip() == "NO_CHANGES_NEEDED":
+                break
+            revised = generator.run(
+                _reflection_revise_prompt(input, draft.content, critique.content), **kwargs
+            )
+            results.append(revised)
+            draft = revised
+
+        return WorkflowResult(
+            content=draft.content, steps=results, orchestrator=self.name, strategy="critic"
+        )
+
+    async def _arun_critic(
+        self,
+        steps: Sequence["Agent"],
+        input: str,  # noqa: A002
+        *,
+        max_rounds: int = 3,
+        **kwargs: Any,
+    ) -> WorkflowResult:
+        if len(steps) != 2:
+            raise ConfigurationException(
+                f"The 'critic' strategy requires exactly two agents: a generator "
+                f"(steps[0]) and a critic (steps[1]). Got {len(steps)}.",
+            )
+        generator, critic = steps[0], steps[1]
+        results: list["AgentResult"] = []
+
+        draft = await generator.arun(input, **kwargs)
+        results.append(draft)
+
+        for _ in range(max_rounds - 1):
+            critique = await critic.arun(_critic_prompt(input, draft.content), **kwargs)
+            results.append(critique)
+            if critique.content.strip() == "NO_CHANGES_NEEDED":
+                break
+            revised = await generator.arun(
+                _reflection_revise_prompt(input, draft.content, critique.content), **kwargs
+            )
+            results.append(revised)
+            draft = revised
+
+        return WorkflowResult(
+            content=draft.content, steps=results, orchestrator=self.name, strategy="critic"
+        )
+
+    def _run_consensus(
+        self,
+        steps: Sequence["Agent"],
+        input: str,  # noqa: A002
+        **kwargs: Any,
+    ) -> WorkflowResult:
+        synthesizer, participants = self._split_coordinator_and_workers(
+            steps, role="consensus synthesizer"
+        )
+
+        with ThreadPoolExecutor(max_workers=max(len(participants), 1)) as executor:
+            futures = [
+                executor.submit(participant.run, input, **kwargs)
+                for participant in participants.values()
+            ]
+            results = [future.result() for future in futures]
+
+        synthesis = synthesizer.run(_consensus_prompt(input, results), **kwargs)
+
+        return WorkflowResult(
+            content=synthesis.content,
+            steps=[*results, synthesis],
+            orchestrator=self.name,
+            strategy="consensus",
+        )
+
+    async def _arun_consensus(
+        self,
+        steps: Sequence["Agent"],
+        input: str,  # noqa: A002
+        **kwargs: Any,
+    ) -> WorkflowResult:
+        synthesizer, participants = self._split_coordinator_and_workers(
+            steps, role="consensus synthesizer"
+        )
+
+        results = list(
+            await asyncio.gather(
+                *(participant.arun(input, **kwargs) for participant in participants.values())
+            )
+        )
+
+        synthesis = await synthesizer.arun(_consensus_prompt(input, results), **kwargs)
+
+        return WorkflowResult(
+            content=synthesis.content,
+            steps=[*results, synthesis],
+            orchestrator=self.name,
+            strategy="consensus",
+        )

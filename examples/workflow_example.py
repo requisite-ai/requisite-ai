@@ -107,6 +107,39 @@ def main() -> None:
     print(supervisor_result.content)
     print(f"(delegated to: {[s.agent_name for s in supervisor_result.steps]})")
 
+    # Critic: a separate agent reviews the writer's draft, distinct from
+    # reflection's single agent critiquing itself.
+    critic_agent = Agent(
+        name="Critic",
+        provider="gemini",
+        system_prompt=(
+            "You critique short taglines for clarity and punch. If a tagline is "
+            "already excellent, respond with exactly NO_CHANGES_NEEDED."
+        ),
+        rate_limiter=shared_rate_limit,
+    )
+    critic_workflow = Workflow().critic()
+    critic_workflow.add(writer).add(critic_agent)
+    critic_result = critic_workflow.run(
+        "Write a one-sentence tagline for an open-source AI framework.", max_rounds=3
+    )
+    print("\n--- critic (native) ---")
+    print(critic_result.content)
+    print(f"(rounds of generator/critic exchange: {len(critic_result.steps)})")
+
+    # Consensus: several agents answer independently, then the first
+    # agent synthesizes their answers into one.
+    consensus_writer_a = Agent(name="WriterA", provider="gemini", rate_limiter=shared_rate_limit)
+    consensus_writer_b = Agent(name="WriterB", provider="gemini", rate_limiter=shared_rate_limit)
+    consensus_workflow = Workflow().consensus()
+    consensus_workflow.add(writer).add(consensus_writer_a).add(consensus_writer_b)
+    consensus_result = consensus_workflow.run(
+        "In one sentence, what is the single biggest benefit of retrieval-augmented generation?"
+    )
+    print("\n--- consensus (native) ---")
+    print(consensus_result.content)
+    print(f"(synthesized from: {[s.agent_name for s in consensus_result.steps[:-1]]})")
+
 
 if __name__ == "__main__":
     main()

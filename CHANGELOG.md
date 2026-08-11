@@ -7,6 +7,32 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.10.0] - 2026-08-11
+
+### Added
+
+- Two new native-orchestrator multi-agent strategies -- see
+  [ADR-0011](docs/adr/0011-critic-and-consensus-strategies.md) for the
+  full design, including why these two and not the other four still-📋
+  strategies (debate, hierarchical, map-reduce, tree-of-thoughts).
+- `Workflow.critic()`: two agents -- a generator (`steps[0]`) and a
+  separate critic (`steps[1]`) -- iterate on a draft together, up to
+  `max_rounds` (default 3), stopping early on the same
+  `NO_CHANGES_NEEDED` sentinel `reflection` uses. Same shape as
+  `reflection`, generalized to two distinct agents instead of one agent
+  critiquing itself.
+- `Workflow.consensus()`: the first agent added becomes a synthesizer;
+  every agent added after it independently answers the same input
+  concurrently (same `ThreadPoolExecutor`/`asyncio.gather` pattern as
+  `parallel`), then the synthesizer combines their answers into one
+  final response. Reuses the coordinator/worker split already shared by
+  `planner`/`supervisor` -- requires at least 2 agents, unique names.
+
+No existing public API shape changed -- both are new `strategy` values
+on the existing `NativeOrchestrator`/`Workflow`, following the exact
+`_run_<strategy>`/`_arun_<strategy>` extension pattern ADR-0007
+established.
+
 ## [0.9.0] - 2026-08-11
 
 ### Added

@@ -38,7 +38,7 @@ Status legend: ✅ Done · 🚧 Partial · 📋 Not started · N/A Deliberately 
 | Agent creation | ✅ | `Agent(...)` |
 | Agent execution | ✅ | `Agent.run` / `Agent.arun` (tool-calling loop) |
 | Agent registry | ✅ | `AgentRegistry` |
-| Multi-agent orchestration | 🚧 | `Workflow` ships sequential, parallel, reflection, planner, and supervisor (native orchestrator only — ADR-0007); see the Multi-Agent System table below for the rest |
+| Multi-agent orchestration | 🚧 | `Workflow` ships sequential, parallel, reflection, planner, supervisor (ADR-0007), critic, and consensus (ADR-0011) — native orchestrator only; see the Multi-Agent System table below for the rest |
 | Agentic execution | 🚧 | `Agent`'s own tool-calling loop is agentic (model decides which tool); the supervisor/planner strategies add model-decided agent delegation (ADR-0007); full autonomous planning across agents/skills/MCP beyond that is 📋 — see Agentic Mode below |
 | MCP client integration | ✅ | `MCPClient` (stdio + Streamable HTTP) — ADR-0004 |
 | MCP server integration | 📋 | |
@@ -135,8 +135,8 @@ Status legend: ✅ Done · 🚧 Partial · 📋 Not started · N/A Deliberately 
 | Planner | ✅ | `native` orchestrator only — coordinator (`steps[0]`) decomposes the task into a plan executed by named workers (`steps[1:]`); ADR-0007 |
 | Reflection | ✅ | `native` orchestrator only — single agent critiques and revises its own output, up to `max_rounds`; ADR-0007 |
 | Debate | 📋 | |
-| Critic | 📋 | |
-| Consensus | 📋 | |
+| Critic | ✅ | `native` orchestrator only — generator (`steps[0]`) and a separate critic (`steps[1]`) iterate on a draft, up to `max_rounds`; ADR-0011 |
+| Consensus | ✅ | `native` orchestrator only — synthesizer (`steps[0]`) combines the independent, concurrently-run answers of `steps[1:]`; ADR-0011 |
 | Hierarchical | 📋 | |
 | Map-reduce | 📋 | |
 | Tree of thoughts | 📋 | |

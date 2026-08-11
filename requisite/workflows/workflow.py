@@ -38,7 +38,15 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger("requisite.workflows")
 
-_KNOWN_STRATEGIES = {"sequential", "parallel", "reflection", "planner", "supervisor"}
+_KNOWN_STRATEGIES = {
+    "sequential",
+    "parallel",
+    "reflection",
+    "planner",
+    "supervisor",
+    "critic",
+    "consensus",
+}
 
 
 class Workflow:
@@ -59,14 +67,18 @@ class Workflow:
         - ``"supervisor"``: the first agent delegates subtasks to the
           remaining agents one at a time until the task is done (see
           :meth:`supervisor`).
+        - ``"critic"``: two agents -- a generator and a separate critic
+          -- iterate on a draft together (see :meth:`critic`).
+        - ``"consensus"``: the first agent synthesizes the independent
+          answers of the remaining agents into one (see :meth:`consensus`).
 
         Further multi-agent strategies remain on the roadmap (debate,
-        critic, consensus, hierarchical, map-reduce, tree-of-thoughts,
-        general graph execution) -- each becomes a new ``strategy`` value
-        handled by the underlying orchestrator, with no change to this
-        class's public API. ``"reflection"``, ``"planner"``, and
-        ``"supervisor"`` are currently only implemented on the
-        ``"native"`` orchestrator backend.
+        map-reduce, hierarchical, tree-of-thoughts, general graph
+        execution) -- each becomes a new ``strategy`` value handled by
+        the underlying orchestrator, with no change to this class's
+        public API. ``"reflection"``, ``"planner"``, ``"supervisor"``,
+        ``"critic"``, and ``"consensus"`` are currently only implemented
+        on the ``"native"`` orchestrator backend.
     orchestrator:
         Execution backend: ``"native"`` (default, pure Python, no extra
         dependency) or ``"langgraph"``. Change via :meth:`use_langgraph` /
@@ -147,6 +159,30 @@ class Workflow:
         gets before giving up (default 6).
         """
         self._strategy = "supervisor"
+        return self
+
+    def critic(self) -> "Workflow":
+        """Switch to the critic strategy. Returns ``self`` for chaining.
+
+        Requires exactly two agents: the first added is the generator,
+        the second is the critic that reviews the generator's drafts.
+        Same shape as :meth:`reflection`, generalized to two distinct
+        agents instead of one agent critiquing itself. Pass
+        ``max_rounds=`` to :meth:`run`/:meth:`arun` to control how many
+        rounds it gets (default 3); it may also stop earlier on its own.
+        """
+        self._strategy = "critic"
+        return self
+
+    def consensus(self) -> "Workflow":
+        """Switch to the consensus strategy. Returns ``self`` for chaining.
+
+        The first agent added becomes the synthesizer; every agent added
+        after it independently answers the same input, then the
+        synthesizer combines their answers into one final response.
+        Requires at least 2 agents.
+        """
+        self._strategy = "consensus"
         return self
 
     def use_native(self) -> "Workflow":
