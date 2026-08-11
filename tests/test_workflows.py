@@ -308,6 +308,89 @@ def test_workflow_use_langgraph_rejects_parallel_strategy() -> None:
         workflow.run("hello")
 
 
+def test_workflow_use_langgraph_supervisor_routes_to_both_workers_then_finishes() -> None:
+    """Proof of real conditional routing, not a disguised chain: the
+    supervisor delegates to two *different* workers across rounds --
+    only possible if add_conditional_edges is genuinely re-evaluated
+    each time the graph returns to the supervisor node, not a fixed
+    edge wired once at build time."""
+    pytest.importorskip("langgraph")
+
+    decisions = [
+        _SupervisorDecision(action="delegate", worker="Researcher", task="Find facts about RAG"),
+        _SupervisorDecision(action="delegate", worker="Writer", task="Draft a summary"),
+        _SupervisorDecision(
+            action="finish", final_answer="RAG combines retrieval with generation."
+        ),
+    ]
+    supervisor_agent = make_agent_with_provider(
+        "Supervisor", ScriptedSupervisorProvider(decisions=decisions)
+    )
+    researcher = make_agent("Researcher", "research")
+    writer = make_agent("Writer", "write")
+
+    workflow = Workflow().supervisor()
+    workflow.add(supervisor_agent).add(researcher).add(writer)
+    workflow.use_langgraph()
+    result = workflow.run("Explain RAG")
+
+    assert result.strategy == "supervisor"
+    assert result.orchestrator == "langgraph"
+    assert result.content == "RAG combines retrieval with generation."
+    assert [step.agent_name for step in result.steps] == ["Researcher", "Writer"]
+
+
+def test_workflow_use_langgraph_supervisor_exceeds_max_rounds_raises() -> None:
+    pytest.importorskip("langgraph")
+
+    decisions = [
+        _SupervisorDecision(action="delegate", worker="Researcher", task="Find facts")
+        for _ in range(3)
+    ]
+    supervisor_agent = make_agent_with_provider(
+        "Supervisor", ScriptedSupervisorProvider(decisions=decisions)
+    )
+    researcher = make_agent("Researcher", "research")
+
+    workflow = Workflow().supervisor()
+    workflow.add(supervisor_agent).add(researcher)
+    workflow.use_langgraph()
+    with pytest.raises(AgentException, match="max_rounds"):
+        workflow.run("Explain RAG", max_rounds=3)
+
+
+def test_workflow_use_langgraph_supervisor_unknown_worker_raises() -> None:
+    pytest.importorskip("langgraph")
+
+    decisions = [_SupervisorDecision(action="delegate", worker="Nonexistent", task="do X")]
+    supervisor_agent = make_agent_with_provider(
+        "Supervisor", ScriptedSupervisorProvider(decisions=decisions)
+    )
+    workflow = Workflow().supervisor()
+    workflow.add(supervisor_agent).add(make_agent("Researcher", "research"))
+    workflow.use_langgraph()
+    with pytest.raises(ConfigurationException, match="unknown"):
+        workflow.run("task")
+
+
+@pytest.mark.asyncio
+async def test_workflow_use_langgraph_arun_supervisor() -> None:
+    pytest.importorskip("langgraph")
+
+    decisions = [_SupervisorDecision(action="finish", final_answer="done")]
+    supervisor_agent = make_agent_with_provider(
+        "Supervisor", ScriptedSupervisorProvider(decisions=decisions)
+    )
+    workflow = Workflow().supervisor()
+    workflow.add(supervisor_agent).add(make_agent("Worker", "w"))
+    workflow.use_langgraph()
+    result = await workflow.arun("task")
+
+    assert result.content == "done"
+    assert result.orchestrator == "langgraph"
+    assert result.strategy == "supervisor"
+
+
 def test_workflow_use_crewai_raises_roadmap_error() -> None:
     workflow = Workflow()
     workflow.add(make_agent("A", "a"))

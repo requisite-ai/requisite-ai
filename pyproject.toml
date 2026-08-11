@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "requisite-ai"
-version = "0.14.0"
+version = "0.15.0"
 description = "A provider-agnostic, plugin-based framework for building AI applications and agents. Declare what you need -- providers, tools, capabilities -- not which SDK provides it."
 readme = "README.md"
 requires-python = ">=3.10"
@@ -31,7 +31,12 @@ azure_openai = ["openai>=1.35"]  # Azure OpenAI v1 GA API also uses the plain op
 openrouter = ["openai>=1.35"]    # OpenRouter is OpenAI-wire-compatible; no separate SDK needed
 together = ["openai>=1.35"]      # Together AI is OpenAI-wire-compatible; no separate SDK needed
 ollama = ["ollama>=0.6"]         # native client -- Ollama's own OpenAI-compat endpoint is experimental
-langgraph = ["langgraph>=0.2"]
+# langgraph>=0.2 predated the 1.0 API stabilization and gave no real
+# guarantee about add_conditional_edges'/Send's current shape. Bumped
+# to >=1.0 to honestly reflect what's actually verified (1.2.9,
+# installed and exercised directly for the supervisor conditional graph).
+# See CHANGELOG.md and docs/adr/0016-langgraph-branching.md.
+langgraph = ["langgraph>=1.0"]
 # mcp 2.0.0 is a breaking rewrite (restructured package layout, renamed
 # CallToolResult.isError/structuredContent -> is_error/structured_content,
 # removed streamablehttp_client in favor of streamable_http_client) --
@@ -47,7 +52,7 @@ all = [
     "google-genai>=1.0",
     "anthropic>=0.116",
     "ollama>=0.6",
-    "langgraph>=0.2",
+    "langgraph>=1.0",
     "mcp>=1.28,<2.0",
     "pinecone>=9.0",
     "weaviate-client>=4.0",

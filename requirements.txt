@@ -13,7 +13,7 @@ pinecone>=9.0        # Pinecone vector store (current package name; "pinecone-cl
 weaviate-client>=4.0 # Weaviate vector store (v4 client API)
 
 # Orchestration backends (optional)
-langgraph>=0.2      # only needed if you use workflow.use_langgraph()
+langgraph>=1.0      # only needed if you use workflow.use_langgraph()
 
 # Dev / testing
 pytest>=8.0

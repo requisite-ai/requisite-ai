@@ -365,14 +365,18 @@ class NativeOrchestrator(BaseOrchestrator):
             f"Supported: {', '.join(self._STRATEGIES)}.",
         )
 
+    @staticmethod
     def _split_coordinator_and_workers(
-        self, steps: Sequence["Agent"], *, role: str
+        steps: Sequence["Agent"], *, role: str
     ) -> tuple["Agent", dict[str, "Agent"]]:
         """Split ``steps`` into a coordinating agent + name-addressed workers.
 
         Shared by the ``planner`` and ``supervisor`` strategies: ``steps[0]``
         is the coordinator, ``steps[1:]`` are workers it addresses by
-        ``agent.name``.
+        ``agent.name``. A ``staticmethod`` (it never touches ``self``)
+        specifically so :class:`~requisite.orchestrators.langgraph_orchestrator.LangGraphOrchestrator`
+        can reuse it too, via ``NativeOrchestrator._split_coordinator_and_workers(...)`` --
+        see ``docs/adr/0016-langgraph-branching.md``.
         """
         if len(steps) < 2:
             raise ConfigurationException(

@@ -247,7 +247,13 @@ The first agent added is the coordinator; every agent added after it is a
 worker. `.planner()` works the same way, but the first agent decomposes
 the task into an ordered plan up front instead of delegating round by
 round. `.reflection()` takes a single agent that critiques and revises
-its own output over several rounds:
+its own output over several rounds.
+
+`supervisor` also runs on the `langgraph` backend (`workflow.use_langgraph()`)
+as a real conditional graph — `add_conditional_edges` routing to
+whichever worker the coordinator delegates to, looping back for another
+round — not a disguised Python loop. Same `.add()`/`.run()` call site
+either way; see [ADR-0016](docs/adr/0016-langgraph-branching.md).
 
 ```python
 workflow = Workflow().reflection()
@@ -715,7 +721,7 @@ Pinecone / Weaviate vector stores, dense retrieval), memory + conversation polic
 (`Agent(memory=..., conversation_policy=...)`), prompt templates,
 structured logging, agents + registry, multi-agent workflows (sequential,
 parallel, reflection, planner, supervisor on the native backend;
-sequential on langgraph).
+sequential and supervisor on langgraph).
 
 See [`ROADMAP.md`](ROADMAP.md) for the full, per-layer status table
 (providers, orchestration strategies, MCP, memory, RAG, ...) and what's

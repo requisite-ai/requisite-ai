@@ -131,7 +131,7 @@ Status legend: ✅ Done · 🚧 Partial · 📋 Not started · N/A Deliberately 
 |---|---|---|
 | Sequential | ✅ | `NativeOrchestrator`, `LangGraphOrchestrator` |
 | Parallel | ✅ | `NativeOrchestrator` only so far |
-| Supervisor | ✅ | `native` orchestrator only — coordinator (`steps[0]`) delegates to named workers (`steps[1:]`) via structured decisions, up to `max_rounds`; ADR-0007 |
+| Supervisor | ✅ | `native` and `langgraph` orchestrators — coordinator (`steps[0]`) delegates to named workers (`steps[1:]`) via structured decisions, up to `max_rounds`; ADR-0007, ADR-0016 (langgraph: a real conditional graph, not a Python loop) |
 | Planner | ✅ | `native` orchestrator only — coordinator (`steps[0]`) decomposes the task into a plan executed by named workers (`steps[1:]`); ADR-0007 |
 | Reflection | ✅ | `native` orchestrator only — single agent critiques and revises its own output, up to `max_rounds`; ADR-0007 |
 | Debate | ✅ | `native` orchestrator only — moderator (`steps[0]`) judges debaters (`steps[1:]`) after `max_rounds` of each seeing the others' prior-round arguments; ADR-0012 |
@@ -140,14 +140,14 @@ Status legend: ✅ Done · 🚧 Partial · 📋 Not started · N/A Deliberately 
 | Hierarchical | ✅ | `native` orchestrator only — same shape as Supervisor, except a delegate may be an `Agent` or a named `Workflow` (nested "team"); ADR-0013 |
 | Map-reduce | ✅ | `native` orchestrator only — reducer (`steps[0]`) combines mapper (`steps[1:]`) results for `map_items=`, assigned round-robin; ADR-0012 |
 | Tree of thoughts | 📋 | |
-| Graph execution (arbitrary DAGs) | 🚧 | `LangGraphOrchestrator` currently builds only a linear graph; general DAGs are 📋 |
+| Graph execution (arbitrary DAGs) | 🚧 | `LangGraphOrchestrator` builds two specific graph shapes today (linear for sequential, conditional+cycle for supervisor — ADR-0016); general arbitrary DAGs are still 📋 |
 
 ## Orchestration
 
 | Backend | Status | Notes |
 |---|---|---|
 | Native (no external framework) | ✅ | `NativeOrchestrator` |
-| LangGraph | ✅ | `LangGraphOrchestrator` (sequential only so far) |
+| LangGraph | ✅ | `LangGraphOrchestrator` — sequential (linear chain) and supervisor (real conditional graph, ADR-0016) so far |
 | LangChain | 📋 | Not currently planned as a distinct backend — evaluate if a real need emerges |
 | CrewAI | 📋 | Registered today as a clear "not yet implemented" placeholder (`workflow.use_crewai()`) |
 | AutoGen | 📋 | Same placeholder treatment |

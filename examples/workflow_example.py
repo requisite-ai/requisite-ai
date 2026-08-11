@@ -107,6 +107,21 @@ def main() -> None:
     print(supervisor_result.content)
     print(f"(delegated to: {[s.agent_name for s in supervisor_result.steps]})")
 
+    # Same supervisor strategy, run on the langgraph backend instead: a
+    # real conditional graph (add_conditional_edges + a loop-back cycle)
+    # rather than a Python loop -- see docs/adr/0016-langgraph-branching.md.
+    # Requires: pip install langgraph
+    try:
+        supervisor_workflow.use_langgraph()
+        supervisor_langgraph_result = supervisor_workflow.run(
+            "Research what LangGraph is and write a short summary."
+        )
+        print("\n--- supervisor (langgraph) ---")
+        print(supervisor_langgraph_result.content)
+        print(f"(delegated to: {[s.agent_name for s in supervisor_langgraph_result.steps]})")
+    except Exception as exc:  # noqa: BLE001
+        print(f"\nlanggraph backend not available: {exc}")
+
     # Critic: a separate agent reviews the writer's draft, distinct from
     # reflection's single agent critiquing itself.
     critic_agent = Agent(

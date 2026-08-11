@@ -84,10 +84,13 @@ class Workflow:
         (tree-of-thoughts, general graph execution) -- each becomes a
         new ``strategy`` value handled by the underlying orchestrator,
         with no change to this class's public API. ``"reflection"``,
-        ``"planner"``, ``"supervisor"``, ``"critic"``, ``"consensus"``,
-        ``"debate"``, ``"map_reduce"``, and ``"hierarchical"`` are
-        currently only implemented on the ``"native"`` orchestrator
-        backend.
+        ``"planner"``, ``"critic"``, ``"consensus"``, ``"debate"``,
+        ``"map_reduce"``, and ``"hierarchical"`` are currently only
+        implemented on the ``"native"`` orchestrator backend.
+        ``"supervisor"`` is implemented on both ``"native"`` and
+        ``"langgraph"`` -- on langgraph it's a real conditional graph
+        (``add_conditional_edges`` plus a loop-back cycle), not a
+        disguised Python loop; see ``docs/adr/0016-langgraph-branching.md``.
     orchestrator:
         Execution backend: ``"native"`` (default, pure Python, no extra
         dependency) or ``"langgraph"``. Change via :meth:`use_langgraph` /
@@ -180,7 +183,10 @@ class Workflow:
         after it is a worker the supervisor can delegate to, by name.
         Requires at least 2 agents. Pass ``max_rounds=`` to
         :meth:`run`/:meth:`arun` to bound how many delegation rounds it
-        gets before giving up (default 6).
+        gets before giving up (default 6). Works on both
+        :meth:`use_native` (the default) and :meth:`use_langgraph` --
+        the langgraph backend builds a real conditional graph rather
+        than a Python loop, see ``docs/adr/0016-langgraph-branching.md``.
         """
         self._strategy = "supervisor"
         return self

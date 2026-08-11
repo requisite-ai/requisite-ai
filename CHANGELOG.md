@@ -7,6 +7,39 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.15.0] - 2026-08-11
+
+### Added
+
+- LangGraph backend branching/conditional graphs -- see
+  [ADR-0016](docs/adr/0016-langgraph-branching.md) for the full design,
+  including why `supervisor` specifically (the one existing strategy
+  whose shape is genuinely conditional routing, not a disguised loop)
+  and how it reuses `NativeOrchestrator`'s decision logic instead of
+  duplicating it.
+- `Workflow().supervisor().use_langgraph()` now works -- previously
+  `LangGraphOrchestrator` raised `ConfigurationException` for any
+  non-`"sequential"` strategy. Built on a real `add_conditional_edges`
+  graph with a loop-back cycle, verified to genuinely re-route (not a
+  fixed chain) by a test that delegates to two different workers across
+  rounds and asserts both ran, in order.
+- `examples/workflow_example.py` extended with a
+  `.supervisor().use_langgraph()` demonstration alongside the existing
+  native one.
+
+### Changed
+
+- `NativeOrchestrator._split_coordinator_and_workers` is now a
+  `@staticmethod` (it never used `self`) so `LangGraphOrchestrator` can
+  reuse it directly. Every existing internal call site is unaffected.
+- `langgraph` dependency floor: `>=0.2` -> `>=1.0` (both the `langgraph`
+  extra and the `all` extra, plus `requirements.txt`). The old floor
+  predated langgraph's 1.0 API stabilization and gave no real guarantee
+  about the `add_conditional_edges` API this feature depends on; the new
+  floor honestly reflects what's actually verified (`1.2.9`, installed
+  and exercised directly). A floor bump, not a cap -- backward-compatible
+  for anyone already on a modern `langgraph`.
+
 ## [0.14.0] - 2026-08-11
 
 ### Added
