@@ -176,7 +176,7 @@ original interface design).
 
 | Item | Status |
 |---|---|
-| `requisite` CLI (scaffold a project, list registered providers/capabilities/agents, run a quick chat) | 📋 |
+| `requisite` CLI (scaffold a project, list registered providers/capabilities/agents, run a quick chat) | ✅ — see [ADR-0014](docs/adr/0014-cli.md); `requisite init`/`providers`/`capabilities`/`agents`/`chat`, installed as a console script (`requisite`) and via `python -m requisite` |
 
 ## Explicit non-goals (for now)
 

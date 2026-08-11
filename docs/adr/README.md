@@ -52,3 +52,4 @@ need one — `CONTRIBUTING.md` already covers those.
 | [0011](0011-critic-and-consensus-strategies.md) | Critic and consensus multi-agent strategies | Accepted |
 | [0012](0012-debate-and-map-reduce-strategies.md) | Debate and map-reduce multi-agent strategies | Accepted |
 | [0013](0013-hierarchical-strategy.md) | Hierarchical multi-agent strategy | Accepted |
+| [0014](0014-cli.md) | `requisite` CLI: scaffolding, registry introspection, and quick chat | Accepted |

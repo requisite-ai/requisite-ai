@@ -249,6 +249,17 @@ and hybrid/BM25 retrieval + re-ranking (ADR-0010) are all shipped.
 | Prompt templates | ✅ | `PromptTemplateRegistry.register(...)` |
 | Discovery mechanism (entry points) | 📋 | Deliberately deferred — explicit import + register for v1; see ADR-0001's Plugin Discovery section for the trigger to add it |
 
+## CLI
+
+| Item | Status | Notes |
+|---|---|---|
+| `requisite` CLI | ✅ | `requisite init/providers/capabilities/agents/chat` — see [ADR-0014](docs/adr/0014-cli.md) |
+| Scaffold a new project | ✅ | `requisite init NAME [--provider]` |
+| List registered providers | ✅ | `requisite providers` — also reports SDK-installed / API-key-configured status |
+| List registered capabilities | ✅ | `requisite capabilities` |
+| List registered agents | ✅ | `requisite agents` — reads the scaffolded project's `agents.py` `agent_registry` convention, since (unlike providers/capabilities) there's no framework-wide default `AgentRegistry` to introspect |
+| Quick chat | ✅ | `requisite chat [PROMPT]` — one-shot or interactive REPL; `--agent NAME` routes through a scaffolded project's agent |
+
 ## Coding standards
 
 | Requirement | Status | Notes |
@@ -290,7 +301,7 @@ and hybrid/BM25 retrieval + re-ranking (ADR-0010) are all shipped.
 
 | Requirement | Status | Notes |
 |---|---|---|
-| Python `logging`, no `print()` | ✅ | |
+| Python `logging`, no `print()` | ✅ | Framework code only — `requisite/cli/` deliberately prints its user-facing command output directly rather than logging it; see [ADR-0014](docs/adr/0014-cli.md) |
 | Configurable log levels | ✅ | Standard `logging` configuration applies; per-subsystem loggers namespaced `requisite.<subpackage>` |
 | Structured logging | ✅ | `requisite.telemetry.JSONFormatter` + `configure_logging()` — opt-in, never automatic (ADR-0003) |
 

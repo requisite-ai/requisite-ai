@@ -7,6 +7,33 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.13.0] - 2026-08-11
+
+### Added
+
+- `requisite` CLI -- see [ADR-0014](docs/adr/0014-cli.md) for the full
+  design, including why "list registered agents" needed a project
+  convention rather than a new global registry, and why the CLI's
+  `print()`-based output is a deliberate, scoped exception to the
+  framework's "never `print()`" rule.
+- `requisite init NAME [--provider] [--force]`: scaffolds a runnable
+  project (`.env.example`, `.gitignore`, `requirements.txt`, `agents.py`
+  with an `agent_registry` convention, `main.py`, `README.md`).
+- `requisite providers`: lists every registered provider, whether its SDK
+  is installed, and whether an API key is configured for it.
+- `requisite capabilities`: lists every registered capability and its
+  competing providers (priority + current availability).
+- `requisite agents [--module]`: lists agents registered in the current
+  project's `agents.py` (or a `--module` override).
+- `requisite chat [PROMPT] [--provider] [--model] [--agent] [--module]`:
+  one-shot or interactive chat; `--agent NAME` routes through a
+  scaffolded project's `Agent` (so its tools/capabilities work), rather
+  than a bare `AI` call.
+- Installed as the `requisite` console script
+  (`[project.scripts]` in `pyproject.toml`) and runnable via
+  `python -m requisite`. No new dependency -- built on stdlib `argparse`,
+  per `DEVELOPMENT.md`'s dependency policy.
+
 ## [0.12.0] - 2026-08-11
 
 ### Added

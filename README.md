@@ -85,6 +85,36 @@ never call `os.environ.get` yourself. `.env.example` also reserves
 placeholders for planned integrations (GitHub, Hugging Face, AWS, Azure
 general-purpose credentials, Pinecone, Weaviate) — see `ROADMAP.md`.
 
+## CLI
+
+Get from `pip install` to a running agent without writing any Python:
+
+```bash
+requisite init my-app --provider gemini
+cd my-app
+pip install -r requirements.txt
+cp .env.example .env   # then fill in your Gemini API key
+python main.py
+```
+
+`requisite init` scaffolds a runnable project, including an `agents.py`
+with an example `Agent` registered on a module-level `agent_registry` —
+the convention the rest of the CLI looks for:
+
+```bash
+requisite providers        # every registered provider -- SDK installed? API key set?
+requisite capabilities     # every registered capability and its competing providers
+requisite agents           # agents registered in this project's agents.py
+requisite chat             # interactive chat REPL (bare AI, or --agent NAME for a project agent)
+requisite chat "explain LangGraph in one sentence"   # one-shot
+```
+
+Also runnable as `python -m requisite`. See
+[ADR-0014](docs/adr/0014-cli.md) for why "list registered agents" needed
+a project convention rather than a new global registry, and why the CLI
+prints directly to stdout instead of going through `logging` like the
+rest of the framework.
+
 ## Usage
 
 ### Chat
@@ -593,6 +623,8 @@ requisite/
 │                   # reflection, planner, supervisor) and langgraph backends
 │                   # + OrchestratorRegistry
 ├── workflows/      # Workflow -- the small, ergonomic multi-agent facade
+├── cli/            # requisite init/providers/capabilities/agents/chat --
+│                   # see the CLI section above and ADR-0014
 └── ai.py           # The `AI` facade -- the class most users touch directly
 ```
 
