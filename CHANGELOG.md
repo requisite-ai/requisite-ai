@@ -7,6 +7,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.15.1] - 2026-08-11
+
+### Fixed
+
+- `tests/test_rate_limiter.py::test_rate_limiter_shared_across_threads_never_exceeds_limit_in_any_window`
+  flaked on GitHub Actions' py3.11 job (`assert 3 <= 2`) on an unrelated,
+  already-pushed commit. Root cause: the test measures wall-clock
+  timestamps recorded *after* `RateLimiter.acquire()` returns (plus a
+  separate `threading.Lock()` + list-append), not the limiter's own
+  internal claim times, against a window shrunk to 0.3s for test speed --
+  tight enough that ordinary CI thread-scheduling jitter (GIL contention,
+  a loaded/noisy runner) could make a correctly-spaced call look bunched
+  from the outside even though `RateLimiter.acquire()` itself claimed
+  slots correctly (verified by reading `requisite/core/rate_limiter.py`
+  directly -- no logic change needed there). Widened the test's window to
+  1.0s, giving enough headroom to absorb that jitter while staying fast
+  (~2.5s locally, run 5x with no failures). Same shape as the ruff
+  0.16.0 and `mcp` 2.0.0 incidents in spirit: a real CI failure traced to
+  its actual root cause before touching anything, not silenced.
+
 ## [0.15.0] - 2026-08-11
 
 ### Added

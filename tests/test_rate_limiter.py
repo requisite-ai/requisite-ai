@@ -86,8 +86,18 @@ def test_rate_limiter_shared_across_threads_never_exceeds_limit_in_any_window(
 ) -> None:
     """The invariant that matters: no more than `requests_per_minute` calls
     ever land within any trailing window, even under concurrent callers.
+
+    Window is 1.0s, not a smaller fraction -- this test measures wall-clock
+    timestamps recorded *after* `acquire()` returns (plus a separate lock +
+    list-append), not the limiter's own internal claim times, so it's
+    inherently sensitive to real OS thread-scheduling jitter (GIL
+    contention, a loaded/noisy CI runner). A too-tight window turns
+    ordinary scheduling delay into a false failure even when `acquire()`
+    itself claimed slots correctly; 1.0s gives enough headroom to absorb
+    that jitter while still keeping the test fast (worst case ~3s for 6
+    threads at a limit of 2).
     """
-    monkeypatch.setattr(rate_limiter_module, "_WINDOW_SECONDS", 0.3)
+    monkeypatch.setattr(rate_limiter_module, "_WINDOW_SECONDS", 1.0)
     limiter = RateLimiter(requests_per_minute=2)
     call_times: list[float] = []
     lock = threading.Lock()
@@ -106,5 +116,5 @@ def test_rate_limiter_shared_across_threads_never_exceeds_limit_in_any_window(
     assert len(call_times) == 6
     call_times.sort()
     for call_time in call_times:
-        calls_in_window = sum(1 for other in call_times if call_time - 0.3 < other <= call_time)
+        calls_in_window = sum(1 for other in call_times if call_time - 1.0 < other <= call_time)
         assert calls_in_window <= 2
