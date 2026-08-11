@@ -7,6 +7,33 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.14.0] - 2026-08-11
+
+### Added
+
+- MCP server integration -- see [ADR-0015](docs/adr/0015-mcp-server-integration.md)
+  for the full design, including why it's built on the low-level
+  `mcp.server.lowlevel.Server` rather than `FastMCP` (Requisite's own
+  `Tool` already carries a JSON Schema; `FastMCP`'s tool layer has no
+  supported way to accept one, and always re-derives it via pydantic),
+  and a real bug (`405 Method Not Allowed` on every Streamable HTTP
+  request) found only by testing a real round trip, not by reading the
+  SDK source.
+- `MCPServer(name=, tools=, agents=)`: exposes Requisite tools/agents as
+  an MCP server. `.add_tool(...)`/`.add_agent(...)` for incremental
+  registration; `.run_stdio()`/`.run_http(host=, port=)` (plus
+  `arun_stdio`/`arun_http` async counterparts) to serve. One class, no
+  transport subclasses -- mirrors `MCPClient`'s existing
+  `stdio`/`http` shape.
+- `Agent.as_tool() -> Tool`: exposes an agent as a single tool taking a
+  `prompt` argument and returning its final answer, mirroring
+  `BaseSkill.as_tool()`. Reusable beyond MCP (agent-as-tool composition).
+- `examples/mcp_server_example.py`: a runnable server (two tools, one
+  agent) -- also the subprocess target used to verify `MCPServer`
+  end-to-end against Requisite's own `MCPClient`, real stdio subprocess
+  and real Streamable HTTP port, including a real Gemini call executing
+  inside the server process.
+
 ## [0.13.0] - 2026-08-11
 
 ### Added

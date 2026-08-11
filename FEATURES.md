@@ -41,7 +41,7 @@ Status legend: ✅ Done · 🚧 Partial · 📋 Not started · N/A Deliberately 
 | Multi-agent orchestration | 🚧 | `Workflow` ships sequential, parallel, reflection, planner, supervisor (ADR-0007), critic, consensus (ADR-0011), debate, map-reduce (ADR-0012), and hierarchical (ADR-0013) — native orchestrator only; see the Multi-Agent System table below for the rest |
 | Agentic execution | 🚧 | `Agent`'s own tool-calling loop is agentic (model decides which tool); the supervisor/planner strategies add model-decided agent delegation (ADR-0007); full autonomous planning across agents/skills/MCP beyond that is 📋 — see Agentic Mode below |
 | MCP client integration | ✅ | `MCPClient` (stdio + Streamable HTTP) — ADR-0004 |
-| MCP server integration | 📋 | |
+| MCP server integration | ✅ | `MCPServer` (stdio + Streamable HTTP) — ADR-0015 |
 | Memory | ✅ | `BaseMemory`, `InProcessMemory`/`SQLiteMemory`/`RedisMemory`, wired into `Agent(memory=..., session_id=...)` |
 | Retrieval | ✅ | `Retriever.retrieve()` / `.aretrieve()` |
 | RAG | 🚧 | Core interfaces, vector stores, hybrid/BM25 retrieval, and re-ranking shipped (ADR-0005, ADR-0010); context compression still 📋 — see RAG table below |
@@ -169,7 +169,7 @@ Status legend: ✅ Done · 🚧 Partial · 📋 Not started · N/A Deliberately 
 |---|---|---|
 | `BaseMCPClient` interface | ✅ | ADR-0001 (spec) / ADR-0004 (implementation) |
 | MCP client integration | ✅ | `MCPClient` — both stdio and Streamable HTTP transports, verified against real MCP servers |
-| MCP server integration | 📋 | Reverse direction (exposing Requisite as an MCP server) — not started |
+| MCP server integration | ✅ | `MCPServer` — reverse direction (exposing Requisite tools/agents as an MCP server), stdio + Streamable HTTP, verified against Requisite's own `MCPClient` — ADR-0015 |
 | Tool discovery | ✅ | `BaseMCPClient.discover_tools()` / `.adiscover_tools()` |
 | Remote tools | ✅ | Streamable HTTP transport |
 | Local tools | ✅ | stdio transport |

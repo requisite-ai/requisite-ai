@@ -102,7 +102,7 @@ Each new strategy is a `_run_<strategy>` / `_arun_<strategy>` pair on
 | Migrate to `mcp` 2.x's API | 📋 | Currently capped at `mcp>=1.28,<2.0` — 2.0.0 is a breaking rewrite (restructured package layout, renamed `CallToolResult` fields, removed `streamablehttp_client`). Deliberately deferred as its own change rather than rushed under CI-failure pressure — see `CHANGELOG.md`'s 0.4.1 entry and `DEVELOPMENT.md`'s dependency policy |
 | Bridge into `CapabilityRegistry` (`agent.requires("github")` -> MCP server) | ✅ | `BaseMCPClient.register_as_capability(...)` |
 | MCP resource / prompt discovery (beyond tools) | 📋 | Out of scope for the initial client — ADR-0004 |
-| MCP server integration (expose Requisite tools/agents as an MCP server) | 📋 | |
+| MCP server integration (expose Requisite tools/agents as an MCP server) | ✅ | `MCPServer` (stdio + Streamable HTTP), `Agent.as_tool()` -- see [ADR-0015](docs/adr/0015-mcp-server-integration.md) |
 | First-party MCP servers as default capability providers (GitHub, databases) | 📋 | `GITHUB_TOKEN` already reserved in `.env.example` |
 
 Shipped shape: an MCP-backed tool is just another `CapabilityProvider`

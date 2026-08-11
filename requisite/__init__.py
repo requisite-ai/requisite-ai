@@ -55,6 +55,11 @@ Connecting to an MCP server -- its tools become capabilities like any other:
 >>> github.register_as_capability(default_capability_registry, capability="github")  # doctest: +SKIP
 >>> assistant.requires("github")  # doctest: +SKIP
 
+Exposing Requisite's own tools/agents as an MCP server -- the reverse direction:
+>>> from requisite.mcp import MCPServer
+>>> server = MCPServer(name="my-tools", agents=[assistant])  # doctest: +SKIP
+>>> server.run_stdio()  # doctest: +SKIP
+
 Retrieval-augmented generation -- a retriever is a capability too:
 >>> from requisite.rag import Retriever
 >>> from requisite.rag.embeddings import OpenAIEmbeddingProvider
@@ -124,6 +129,7 @@ from requisite.mcp import default_mcp_registry
 from requisite.mcp.base import BaseMCPClient
 from requisite.mcp.client import MCPClient
 from requisite.mcp.registry import MCPClientRegistry
+from requisite.mcp.server import MCPServer
 from requisite.memory import default_registry as default_memory_registry
 from requisite.memory.base import BaseMemory
 from requisite.memory.factory import MemoryRegistry
@@ -200,6 +206,7 @@ __all__ = [
     "MCPClient",
     "MCPClientRegistry",
     "MCPException",
+    "MCPServer",
     "MemoryException",
     "MemoryRegistry",
     # Messages / responses
@@ -244,4 +251,4 @@ __all__ = [
     "tool",
 ]
 
-__version__ = "0.13.0"
+__version__ = "0.14.0"

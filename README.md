@@ -42,7 +42,7 @@ pip install "requisite-ai[anthropic]"     # Anthropic (Claude) only
 pip install "requisite-ai[gemini]"        # Gemini only
 pip install "requisite-ai[groq]"          # Groq only (uses the openai package -- wire-compatible)
 pip install "requisite-ai[azure_openai]"  # Azure OpenAI only (uses the openai package)
-pip install "requisite-ai[mcp]"           # MCP client integration
+pip install "requisite-ai[mcp]"           # MCP client + server integration
 pip install "requisite-ai[rag]"           # RAG (embedding providers; in-memory vector store needs nothing extra)
 pip install "requisite-ai[langgraph]"     # native + langgraph orchestration
 ```
@@ -385,6 +385,35 @@ than holding a persistent session — see
 optional persistent-session mode if reconnect latency becomes a problem
 for your use case.
 
+### Expose Requisite as an MCP server
+
+The reverse direction: turn Requisite tools and agents *into* an MCP
+server, so any MCP client (Claude Desktop, Claude Code, or Requisite's
+own `MCPClient`) can use them:
+
+```python
+from requisite import Agent, MCPServer
+from requisite.tools import tool
+
+@tool
+def get_weather(city: str) -> str:
+    """Get the current weather for a city."""
+    return f"Sunny, 22C in {city}"
+
+researcher = Agent(name="researcher", provider="openai")
+
+server = MCPServer(name="my-tools", tools=[get_weather], agents=[researcher])
+server.run_stdio()  # or: server.run_http(host="127.0.0.1", port=8000)
+```
+
+An agent exposed this way (`agents=[...]`, or `server.add_agent(...)`)
+becomes a single MCP tool taking a `prompt` argument and returning its
+final answer — `Agent.as_tool()` under the hood, reusable outside MCP
+too. Both transports were verified end to end against Requisite's own
+`MCPClient` (real subprocess, real HTTP port, including a real
+provider call executing inside the server process) — see
+[ADR-0015](docs/adr/0015-mcp-server-integration.md).
+
 ### RAG (Retrieval-Augmented Generation)
 
 A retriever is a capability too — `agent.requires("knowledge_base")`
@@ -612,6 +641,7 @@ requisite/
 │                   # "weather") to whichever implementation is available
 ├── mcp/            # BaseMCPClient + MCPClient (stdio + Streamable HTTP)
 │                   # + MCPClientRegistry -- bridges MCP tools into capabilities
+│                   # + MCPServer -- reverse direction, expose Requisite as a server
 ├── rag/            # BaseEmbeddingProvider, BaseVectorStore, BaseRetriever
 │                   # + Retriever (dense) + InMemory/Pinecone/Weaviate vector stores
 ├── memory/         # BaseMemory + InProcessMemory + MemoryRegistry, plus
@@ -679,8 +709,8 @@ tested against fully in-memory fake providers.
 
 Implemented: 8 providers (OpenAI, Anthropic, Gemini, Groq, Azure OpenAI,
 OpenRouter, Together AI, Ollama), structured outputs, tool calling,
-skills, capability resolution (`agent.requires(...)`), MCP client
-integration (stdio + Streamable HTTP), RAG (embeddings, in-memory /
+skills, capability resolution (`agent.requires(...)`), MCP client and
+server integration (stdio + Streamable HTTP, both directions), RAG (embeddings, in-memory /
 Pinecone / Weaviate vector stores, dense retrieval), memory + conversation policies
 (`Agent(memory=..., conversation_policy=...)`), prompt templates,
 structured logging, agents + registry, multi-agent workflows (sequential,

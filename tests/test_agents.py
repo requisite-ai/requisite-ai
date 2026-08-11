@@ -331,3 +331,70 @@ def test_agent_registry_missing_raises() -> None:
 
     with pytest.raises(AE):
         agent_registry.get("nope")
+
+
+# ---------------------------------------------------------------------------
+# as_tool -- exposing an agent as a single Tool (mirrors BaseSkill.as_tool)
+# ---------------------------------------------------------------------------
+
+
+class FixedAnswerProvider(BaseProvider):
+    """A fake provider that always returns one fixed final answer, no tool calls."""
+
+    def __init__(self, **kwargs: Any) -> None:
+        super().__init__(api_key="fake-key", model=kwargs.get("model", "fake-model"))
+
+    @property
+    def name(self) -> str:
+        return "fixed"
+
+    def chat(self, messages, *, model=None, temperature=None, tools=None, **kwargs) -> ChatResponse:
+        last = messages[-1].content if messages else ""
+        return ChatResponse(
+            content=f"answer to: {last}",
+            model=self._model,
+            provider=self.name,
+            usage=Usage(total_tokens=1),
+        )
+
+    async def achat(
+        self, messages, *, model=None, temperature=None, tools=None, **kwargs
+    ) -> ChatResponse:
+        return self.chat(messages, model=model, temperature=temperature, tools=tools, **kwargs)
+
+    def stream(self, *args, **kwargs):  # pragma: no cover
+        raise NotImplementedError
+
+    async def astream(self, *args, **kwargs):  # pragma: no cover
+        raise NotImplementedError
+        yield  # pragma: no cover
+
+
+def test_agent_as_tool_shape() -> None:
+    registry = ProviderRegistry()
+    registry.register("fixed", FixedAnswerProvider)
+    agent = Agent(name="assistant", provider="fixed", registry=registry)
+
+    tool = agent.as_tool()
+    assert tool.name == "assistant"
+    assert tool.parameters_schema["required"] == ["prompt"]
+    assert "prompt" in tool.parameters_schema["properties"]
+
+
+def test_agent_as_tool_execute_runs_the_agent() -> None:
+    registry = ProviderRegistry()
+    registry.register("fixed", FixedAnswerProvider)
+    agent = Agent(name="assistant", provider="fixed", registry=registry)
+
+    tool = agent.as_tool()
+    assert tool.execute(prompt="hello") == "answer to: hello"
+
+
+@pytest.mark.asyncio
+async def test_agent_as_tool_aexecute_runs_the_agent() -> None:
+    registry = ProviderRegistry()
+    registry.register("fixed", FixedAnswerProvider)
+    agent = Agent(name="assistant", provider="fixed", registry=registry)
+
+    tool = agent.as_tool()
+    assert await tool.aexecute(prompt="hi") == "answer to: hi"

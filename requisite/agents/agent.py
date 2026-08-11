@@ -254,6 +254,32 @@ class Agent:
         """The retention policy applied to message history before each run, if any."""
         return self._conversation_policy
 
+    def as_tool(self) -> Tool:
+        """Expose this agent as a single :class:`~requisite.tools.base.Tool`
+        taking a ``prompt`` argument and returning its final answer.
+
+        Mirrors :meth:`~requisite.skills.base.BaseSkill.as_tool` -- lets one
+        agent delegate a subtask to another (or expose an agent over MCP via
+        :class:`~requisite.mcp.server.MCPServer`) without the caller needing
+        to know it's talking to a full tool-calling agent rather than a
+        plain function.
+        """
+
+        async def _run(prompt: str) -> str:
+            result = await self.arun(prompt)
+            return result.content
+
+        return Tool(
+            name=self.name,
+            description=f"Run the '{self.name}' agent with a prompt and return its final answer.",
+            parameters_schema={
+                "type": "object",
+                "properties": {"prompt": {"type": "string"}},
+                "required": ["prompt"],
+            },
+            func=_run,
+        )
+
     def requires(self, *capabilities: str) -> "Agent":
         """Declare capabilities this agent needs, resolved to whichever
         implementation is currently available.

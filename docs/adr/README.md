@@ -53,3 +53,4 @@ need one — `CONTRIBUTING.md` already covers those.
 | [0012](0012-debate-and-map-reduce-strategies.md) | Debate and map-reduce multi-agent strategies | Accepted |
 | [0013](0013-hierarchical-strategy.md) | Hierarchical multi-agent strategy | Accepted |
 | [0014](0014-cli.md) | `requisite` CLI: scaffolding, registry introspection, and quick chat | Accepted |
+| [0015](0015-mcp-server-integration.md) | MCP server integration: exposing Requisite as an MCP server | Accepted |

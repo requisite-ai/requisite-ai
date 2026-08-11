@@ -4,8 +4,16 @@ The ``mcp`` SDK's session/transport objects are faked so these tests
 never spawn a real subprocess or make a real network call -- consistent
 with the framework's no-network-in-tests rule. (A real end-to-end check
 against actual ``mcp`` stdio and Streamable HTTP servers was done
-manually during development -- see ADR-0004 -- but that's not something
-a fast, deterministic CI suite should depend on.)
+manually during development -- see ADR-0004 (client) and ADR-0015
+(server) -- but that's not something a fast, deterministic CI suite
+should depend on.)
+
+``MCPServer`` tests take a different, simpler approach than the client
+tests below: rather than faking the SDK, they call
+``MCPServer._handle_list_tools``/``_handle_call_tool`` directly -- these
+are plain async methods, registered onto the real ``mcp.server.lowlevel.Server``
+via its decorators in ``_build_server``, but never dependent on it
+themselves. No SDK object needs faking at all.
 """
 
 from __future__ import annotations
@@ -15,10 +23,16 @@ from typing import Any
 
 import pytest
 
+from requisite.agents.agent import Agent
 from requisite.capabilities.registry import CapabilityRegistry
-from requisite.core.exceptions import ConfigurationException, MCPException
+from requisite.core.exceptions import ConfigurationException, MCPException, ToolException
+from requisite.core.interfaces import ChatResponse, Usage
 from requisite.mcp.client import MCPClient
 from requisite.mcp.registry import MCPClientRegistry
+from requisite.mcp.server import MCPServer
+from requisite.providers.base import BaseProvider
+from requisite.providers.factory import ProviderRegistry
+from requisite.tools.decorator import tool
 
 
 class _FakeMCPTool:
@@ -264,3 +278,155 @@ def test_mcp_client_registry_unregister_is_idempotent() -> None:
     registry.unregister("fs")
     registry.unregister("fs")  # no error
     assert "fs" not in registry
+
+
+# ---------------------------------------------------------------------------
+# MCPServer -- the reverse direction (exposing Requisite as an MCP server)
+# ---------------------------------------------------------------------------
+
+
+class _FixedAnswerProvider(BaseProvider):
+    """A fake provider that always returns one fixed final answer, no tool calls."""
+
+    def __init__(self, **kwargs: Any) -> None:
+        super().__init__(api_key="fake-key", model=kwargs.get("model", "fake-model"))
+
+    @property
+    def name(self) -> str:
+        return "fixed"
+
+    def chat(self, messages, *, model=None, temperature=None, tools=None, **kwargs) -> ChatResponse:
+        last = messages[-1].content if messages else ""
+        return ChatResponse(
+            content=f"agent answer: {last}",
+            model=self._model,
+            provider=self.name,
+            usage=Usage(total_tokens=1),
+        )
+
+    async def achat(
+        self, messages, *, model=None, temperature=None, tools=None, **kwargs
+    ) -> ChatResponse:
+        return self.chat(messages, model=model, temperature=temperature, tools=tools, **kwargs)
+
+    def stream(self, *args, **kwargs):  # pragma: no cover
+        raise NotImplementedError
+
+    async def astream(self, *args, **kwargs):  # pragma: no cover
+        raise NotImplementedError
+        yield  # pragma: no cover
+
+
+@tool
+def add(a: int, b: int) -> int:
+    """Add two numbers."""
+    return a + b
+
+
+@tool
+def boom() -> str:
+    """Always fails."""
+    raise ValueError("kaboom")
+
+
+def _fixed_answer_agent(name: str = "assistant") -> Agent:
+    registry = ProviderRegistry()
+    registry.register("fixed", _FixedAnswerProvider)
+    return Agent(name=name, provider="fixed", registry=registry)
+
+
+def test_mcp_server_construction_registers_tools_and_agents() -> None:
+    server = MCPServer(name="demo", tools=[add], agents=[_fixed_answer_agent()])
+    assert server.name == "demo"
+    assert {t.name for t in server._tool_registry.all()} == {"add", "assistant"}
+
+
+@pytest.mark.asyncio
+async def test_handle_list_tools_returns_mcp_tools() -> None:
+    server = MCPServer(name="demo", tools=[add])
+
+    mcp_tools = await server._handle_list_tools()
+    assert len(mcp_tools) == 1
+    assert mcp_tools[0].name == "add"
+    assert mcp_tools[0].description == "Add two numbers."
+    assert mcp_tools[0].inputSchema["required"] == ["a", "b"]
+
+
+@pytest.mark.asyncio
+async def test_handle_call_tool_wraps_non_dict_result() -> None:
+    server = MCPServer(name="demo", tools=[add])
+
+    result = await server._handle_call_tool("add", {"a": 2, "b": 3})
+    assert result == {"result": 5}
+
+
+@pytest.mark.asyncio
+async def test_handle_call_tool_passes_dict_result_through() -> None:
+    @tool
+    def get_status() -> dict:
+        """Return a structured status."""
+        return {"ok": True, "count": 3}
+
+    server = MCPServer(name="demo", tools=[get_status])
+
+    result = await server._handle_call_tool("get_status", {})
+    assert result == {"ok": True, "count": 3}
+
+
+@pytest.mark.asyncio
+async def test_handle_call_tool_unknown_tool_raises() -> None:
+    server = MCPServer(name="demo", tools=[add])
+
+    with pytest.raises(ToolException):
+        await server._handle_call_tool("does_not_exist", {})
+
+
+@pytest.mark.asyncio
+async def test_handle_call_tool_propagates_tool_failure() -> None:
+    """The SDK's own call_tool() decorator wrapper turns any exception raised
+    here into an isError=True result -- MCPServer doesn't catch it itself
+    (see the docstring on _handle_call_tool)."""
+    server = MCPServer(name="demo", tools=[boom])
+
+    with pytest.raises(ToolException):
+        await server._handle_call_tool("boom", {})
+
+
+@pytest.mark.asyncio
+async def test_handle_call_tool_agent_round_trip() -> None:
+    agent = _fixed_answer_agent(name="assistant")
+    server = MCPServer(name="demo", agents=[agent])
+
+    result = await server._handle_call_tool("assistant", {"prompt": "hello"})
+    assert result == {"result": "agent answer: hello"}
+
+
+def test_add_tool_and_add_agent_return_registered_tool() -> None:
+    server = MCPServer(name="demo")
+
+    registered = server.add_tool(add)
+    assert registered.name == "add"
+
+    registered_agent_tool = server.add_agent(_fixed_answer_agent())
+    assert registered_agent_tool.name == "assistant"
+    assert {t.name for t in server._tool_registry.all()} == {"add", "assistant"}
+
+
+def test_mcp_server_missing_sdk_raises_configuration_exception(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import sys
+
+    # Earlier tests in this module already import mcp.server.lowlevel for
+    # real, caching it in sys.modules -- setting sys.modules["mcp"] = None
+    # alone wouldn't stop `from mcp.server.lowlevel import Server` from
+    # resolving straight from that cache, so also drop every already-cached
+    # mcp submodule to genuinely simulate the package being uninstalled.
+    for module_name in list(sys.modules):
+        if module_name == "mcp" or module_name.startswith("mcp."):
+            monkeypatch.delitem(sys.modules, module_name)
+    monkeypatch.setitem(sys.modules, "mcp", None)
+
+    server = MCPServer(name="demo", tools=[add])
+    with pytest.raises(ConfigurationException):
+        server._build_server()

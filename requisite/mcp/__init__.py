@@ -1,8 +1,8 @@
 """
-MCP (Model Context Protocol) client integration.
+MCP (Model Context Protocol) integration -- both directions.
 
-Connect to an MCP server (local via stdio, or remote via Streamable HTTP)
-and expose its tools to Requisite in two ways:
+**Client**: connect to an MCP server (local via stdio, or remote via
+Streamable HTTP) and expose its tools to Requisite in two ways:
 
 - Directly, via :meth:`~requisite.mcp.base.BaseMCPClient.discover_tools`,
   returning plain :class:`~requisite.tools.base.Tool` objects usable
@@ -15,11 +15,16 @@ and expose its tools to Requisite in two ways:
 ``default_registry`` is empty by default -- unlike provider/orchestrator
 registries, there's no universal default MCP server; register the ones
 your application actually uses.
+
+**Server**: expose Requisite's own tools/agents *as* an MCP server via
+:class:`~requisite.mcp.server.MCPServer` -- the reverse direction. See
+ADR-0015.
 """
 
 from requisite.mcp.base import BaseMCPClient
 from requisite.mcp.client import MCPClient
 from requisite.mcp.registry import MCPClientRegistry
 from requisite.mcp.registry import default_registry as default_mcp_registry
+from requisite.mcp.server import MCPServer
 
-__all__ = ["BaseMCPClient", "MCPClient", "MCPClientRegistry", "default_mcp_registry"]
+__all__ = ["BaseMCPClient", "MCPClient", "MCPClientRegistry", "MCPServer", "default_mcp_registry"]
