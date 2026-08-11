@@ -50,3 +50,4 @@ need one — `CONTRIBUTING.md` already covers those.
 | [0009](0009-streaming-tool-calls.md) | Streaming + tool calls together | Accepted |
 | [0010](0010-hybrid-bm25-retrieval-and-reranking.md) | Hybrid/BM25 retrieval and re-ranking | Accepted |
 | [0011](0011-critic-and-consensus-strategies.md) | Critic and consensus multi-agent strategies | Accepted |
+| [0012](0012-debate-and-map-reduce-strategies.md) | Debate and map-reduce multi-agent strategies | Accepted |

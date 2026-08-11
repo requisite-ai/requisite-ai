@@ -662,6 +662,122 @@ async def test_workflow_arun_consensus() -> None:
     assert len(result.steps) == 3
 
 
+# ---------------------------------------------------------------------------
+# Debate strategy
+# ---------------------------------------------------------------------------
+
+
+def test_workflow_debate_runs_rounds_and_delivers_verdict() -> None:
+    moderator_provider = ScriptedReflectionProvider(responses=["final verdict"])
+    moderator = make_agent_with_provider("Moderator", moderator_provider)
+    debater_a = make_agent_with_provider(
+        "A", ScriptedReflectionProvider(responses=["A round 1", "A round 2"])
+    )
+    debater_b = make_agent_with_provider(
+        "B", ScriptedReflectionProvider(responses=["B round 1", "B round 2"])
+    )
+    workflow = Workflow().debate()
+    workflow.add(moderator).add(debater_a).add(debater_b)
+
+    result = workflow.run("Is X better than Y?", max_rounds=2)
+
+    assert result.content == "final verdict"
+    assert result.strategy == "debate"
+    assert result.orchestrator == "native"
+    # 2 rounds * 2 debaters + 1 verdict
+    assert len(result.steps) == 5
+    assert result.steps[-1].agent_name == "Moderator"
+    assert {s.agent_name for s in result.steps[:-1]} == {"A", "B"}
+
+    # The moderator's verdict prompt saw the full debate transcript.
+    verdict_prompt = moderator_provider.last_messages[-1].content
+    assert "A round 1" in verdict_prompt
+    assert "A round 2" in verdict_prompt
+    assert "B round 1" in verdict_prompt
+    assert "B round 2" in verdict_prompt
+
+
+def test_workflow_debate_requires_at_least_two_agents() -> None:
+    workflow = Workflow().debate()
+    workflow.add(make_agent("Solo", "solo"))
+    with pytest.raises(ConfigurationException, match="debate"):
+        workflow.run("task")
+
+
+@pytest.mark.asyncio
+async def test_workflow_arun_debate() -> None:
+    moderator = make_agent_with_provider(
+        "Moderator", ScriptedReflectionProvider(responses=["verdict"])
+    )
+    debater = make_agent_with_provider("A", ScriptedReflectionProvider(responses=["round 1"]))
+    workflow = Workflow().debate()
+    workflow.add(moderator).add(debater)
+
+    result = await workflow.arun("task", max_rounds=1)
+
+    assert result.content == "verdict"
+    assert len(result.steps) == 2
+
+
+# ---------------------------------------------------------------------------
+# Map-reduce strategy
+# ---------------------------------------------------------------------------
+
+
+def test_workflow_map_reduce_distributes_items_round_robin() -> None:
+    reducer = make_agent_with_provider(
+        "Reducer", ScriptedReflectionProvider(responses=["combined result"])
+    )
+    mapper_a = make_agent("MapperA", "a")
+    mapper_b = make_agent("MapperB", "b")
+    workflow = Workflow().map_reduce()
+    workflow.add(reducer).add(mapper_a).add(mapper_b)
+
+    result = workflow.run("Summarize these items", map_items=["item1", "item2", "item3"])
+
+    assert result.content == "combined result"
+    assert result.strategy == "map_reduce"
+    assert result.orchestrator == "native"
+    assert len(result.steps) == 4  # 3 mapped items + 1 reduce
+    assert result.steps[-1].agent_name == "Reducer"
+    # Round-robin over 2 mappers: item1->MapperA, item2->MapperB, item3->MapperA
+    assert [s.agent_name for s in result.steps[:-1]] == ["MapperA", "MapperB", "MapperA"]
+
+
+def test_workflow_map_reduce_missing_map_items_raises() -> None:
+    workflow = Workflow().map_reduce()
+    workflow.add(make_agent("Reducer", "r")).add(make_agent("Mapper", "m"))
+    with pytest.raises(ConfigurationException, match="map_items"):
+        workflow.run("task")
+
+
+def test_workflow_map_reduce_empty_map_items_raises() -> None:
+    workflow = Workflow().map_reduce()
+    workflow.add(make_agent("Reducer", "r")).add(make_agent("Mapper", "m"))
+    with pytest.raises(ConfigurationException, match="map_items"):
+        workflow.run("task", map_items=[])
+
+
+def test_workflow_map_reduce_requires_at_least_two_agents() -> None:
+    workflow = Workflow().map_reduce()
+    workflow.add(make_agent("Solo", "solo"))
+    with pytest.raises(ConfigurationException, match="map-reduce"):
+        workflow.run("task", map_items=["a"])
+
+
+@pytest.mark.asyncio
+async def test_workflow_arun_map_reduce() -> None:
+    reducer = make_agent_with_provider("Reducer", ScriptedReflectionProvider(responses=["final"]))
+    mapper = make_agent("Mapper", "m")
+    workflow = Workflow().map_reduce()
+    workflow.add(reducer).add(mapper)
+
+    result = await workflow.arun("task", map_items=["x", "y"])
+
+    assert result.content == "final"
+    assert len(result.steps) == 3
+
+
 def test_default_orchestrator_registry_has_native_and_langgraph() -> None:
     assert "native" in default_orchestrator_registry.available()
     assert "langgraph" in default_orchestrator_registry.available()

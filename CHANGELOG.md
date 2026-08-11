@@ -7,6 +7,32 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.11.0] - 2026-08-11
+
+### Added
+
+- Two more native-orchestrator multi-agent strategies -- see
+  [ADR-0012](docs/adr/0012-debate-and-map-reduce-strategies.md) for the
+  full design. Second of two planned passes over the strategies
+  ADR-0007/ADR-0011 deferred; hierarchical and tree-of-thoughts remain
+  📋, still not a fit for the existing flat `steps` model.
+- `Workflow.debate()`: the first agent added becomes a moderator; every
+  agent added after it debates the input over `max_rounds` (default 3),
+  each round seeing every debater's arguments from the *previous* round
+  only (which is what makes each round safely concurrent), after which
+  the moderator delivers a final verdict.
+- `Workflow.map_reduce()`: the first agent added becomes a reducer;
+  every agent added after it is a mapper. Pass `map_items=[...]` to
+  `run()`/`arun()` -- assigned to mappers round-robin (so the item count
+  doesn't need to match the mapper count) and run concurrently -- then
+  the reducer combines every item's result into one final answer.
+  `input` is unchanged in meaning and type across every strategy; no
+  existing `Workflow`/`NativeOrchestrator` signature changed.
+
+No existing public API shape changed -- both are new `strategy` values
+following the exact `_run_<strategy>`/`_arun_<strategy>` extension
+pattern every prior strategy already used.
+
 ## [0.10.0] - 2026-08-11
 
 ### Added

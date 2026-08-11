@@ -1,16 +1,16 @@
 """
 Native orchestrator: sequential, parallel, reflection, planner,
-supervisor, critic, and consensus execution -- no external orchestration
-framework required.
+supervisor, critic, consensus, debate, and map-reduce execution -- no
+external orchestration framework required.
 
 This is the default backend for :class:`~requisite.workflows.workflow.Workflow`.
-Further strategies (debate, map-reduce, hierarchical, tree-of-thoughts,
-general graph execution) are natural extensions of this class -- add a
+Further strategies (hierarchical, tree-of-thoughts, general graph
+execution) are natural extensions of this class -- add a
 ``_run_<strategy>`` / ``_arun_<strategy>`` pair and a branch in
 :meth:`NativeOrchestrator.run` / :meth:`NativeOrchestrator.arun`; nothing
 else needs to change. See ``docs/adr/0011-critic-and-consensus-strategies.md``
-for which of those fit this flat coordinator/worker shape directly and
-which don't.
+and ``docs/adr/0012-debate-and-map-reduce-strategies.md`` for which of
+those fit this flat coordinator/worker shape directly and which don't.
 """
 
 from __future__ import annotations
@@ -120,6 +120,75 @@ def _critic_prompt(task: str, draft: str) -> str:
     )
 
 
+def _debate_prompt(
+    task: str,
+    debater_names: Sequence[str],
+    transcript: dict[str, list[str]],
+    *,
+    agent_name: str,
+    round_num: int,
+) -> str:
+    lines = [
+        f"You are '{agent_name}', one of several agents debating the task below. "
+        "Consider the other participants' arguments and respond -- agree, disagree, "
+        "or refine your own position, giving your reasoning.",
+        "",
+        f"Task: {task}",
+    ]
+    if round_num == 0:
+        lines.append("")
+        lines.append("This is the first round. State your initial position.")
+    else:
+        lines.append("")
+        lines.append("Arguments so far:")
+        for name in debater_names:
+            for i, argument in enumerate(transcript[name], start=1):
+                lines.append(f"- {name} (round {i}): {argument}")
+        lines.append("")
+        lines.append("Respond with your updated position for this round.")
+    return "\n".join(lines)
+
+
+def _debate_verdict_prompt(
+    task: str, debater_names: Sequence[str], transcript: dict[str, list[str]]
+) -> str:
+    lines = [
+        "The following agents debated the task below over several rounds. Review "
+        "the full debate and provide a final, well-reasoned answer -- resolve "
+        "disagreements by weighing the strongest arguments, not just picking a side.",
+        "",
+        f"Task: {task}",
+        "",
+        "Debate transcript:",
+    ]
+    for name in debater_names:
+        for i, argument in enumerate(transcript[name], start=1):
+            lines.append(f"- {name} (round {i}): {argument}")
+    lines.append("")
+    lines.append("Provide the final answer only.")
+    return "\n".join(lines)
+
+
+def _map_prompt(task: str, item: str) -> str:
+    return (
+        f"Overall task: {task}\n\n"
+        f"Process the following individual item as part of that task:\n{item}\n\n"
+        "Respond with your result for this item only."
+    )
+
+
+def _reduce_prompt(task: str, items: Sequence[str], results: Sequence["AgentResult"]) -> str:
+    lines = [f"Overall task: {task}", "", "Individual results from processing each item:"]
+    for item, result in zip(items, results, strict=True):
+        lines.append(f"- Input: {item}")
+        lines.append(f"  Result: {result.content}")
+    lines.append("")
+    lines.append(
+        "Combine these individual results into a single final answer for the overall task."
+    )
+    return "\n".join(lines)
+
+
 def _consensus_prompt(task: str, results: Sequence["AgentResult"]) -> str:
     lines = [
         "Several independent responses to the same task are shown below. "
@@ -179,6 +248,19 @@ class NativeOrchestrator(BaseOrchestrator):
         agents (``steps[1:]``) independently answer the same input
         concurrently, then the synthesizer combines their answers into
         one final response.
+
+    Debate strategy
+        The first agent (``steps[0]``) is a moderator; the remaining
+        agents (``steps[1:]``) debate the input over ``max_rounds``
+        rounds, each round seeing every debater's arguments from the
+        *previous* round, after which the moderator delivers a final
+        verdict.
+
+    Map-reduce strategy
+        The first agent (``steps[0]``) is a reducer; the remaining
+        agents (``steps[1:]``) each process one item from ``map_items``
+        (assigned round-robin, run concurrently), after which the
+        reducer combines every item's result into one final answer.
     """
 
     _STRATEGIES = (
@@ -189,6 +271,8 @@ class NativeOrchestrator(BaseOrchestrator):
         "supervisor",
         "critic",
         "consensus",
+        "debate",
+        "map_reduce",
     )
 
     @property
@@ -222,6 +306,10 @@ class NativeOrchestrator(BaseOrchestrator):
             return self._run_critic(steps, input, **kwargs)
         if strategy == "consensus":
             return self._run_consensus(steps, input, **kwargs)
+        if strategy == "debate":
+            return self._run_debate(steps, input, **kwargs)
+        if strategy == "map_reduce":
+            return self._run_map_reduce(steps, input, **kwargs)
         raise ConfigurationException(
             f"Unknown execution strategy '{strategy}' for the native orchestrator. "
             f"Supported: {', '.join(self._STRATEGIES)}.",
@@ -254,6 +342,10 @@ class NativeOrchestrator(BaseOrchestrator):
             return await self._arun_critic(steps, input, **kwargs)
         if strategy == "consensus":
             return await self._arun_consensus(steps, input, **kwargs)
+        if strategy == "debate":
+            return await self._arun_debate(steps, input, **kwargs)
+        if strategy == "map_reduce":
+            return await self._arun_map_reduce(steps, input, **kwargs)
         raise ConfigurationException(
             f"Unknown execution strategy '{strategy}' for the native orchestrator. "
             f"Supported: {', '.join(self._STRATEGIES)}.",
@@ -694,4 +786,154 @@ class NativeOrchestrator(BaseOrchestrator):
             steps=[*results, synthesis],
             orchestrator=self.name,
             strategy="consensus",
+        )
+
+    def _run_debate(
+        self,
+        steps: Sequence["Agent"],
+        input: str,  # noqa: A002
+        *,
+        max_rounds: int = 3,
+        **kwargs: Any,
+    ) -> WorkflowResult:
+        moderator, debaters = self._split_coordinator_and_workers(steps, role="debate moderator")
+        debater_names = list(debaters)
+
+        transcript: dict[str, list[str]] = {name: [] for name in debater_names}
+        results: list["AgentResult"] = []
+
+        for round_num in range(max_rounds):
+            with ThreadPoolExecutor(max_workers=max(len(debaters), 1)) as executor:
+                futures = {
+                    name: executor.submit(
+                        debater.run,
+                        _debate_prompt(
+                            input, debater_names, transcript, agent_name=name, round_num=round_num
+                        ),
+                        **kwargs,
+                    )
+                    for name, debater in debaters.items()
+                }
+                round_results = {name: future.result() for name, future in futures.items()}
+            for name in debater_names:
+                result = round_results[name]
+                transcript[name].append(result.content)
+                results.append(result)
+
+        verdict = moderator.run(_debate_verdict_prompt(input, debater_names, transcript), **kwargs)
+
+        return WorkflowResult(
+            content=verdict.content,
+            steps=[*results, verdict],
+            orchestrator=self.name,
+            strategy="debate",
+        )
+
+    async def _arun_debate(
+        self,
+        steps: Sequence["Agent"],
+        input: str,  # noqa: A002
+        *,
+        max_rounds: int = 3,
+        **kwargs: Any,
+    ) -> WorkflowResult:
+        moderator, debaters = self._split_coordinator_and_workers(steps, role="debate moderator")
+        debater_names = list(debaters)
+
+        transcript: dict[str, list[str]] = {name: [] for name in debater_names}
+        results: list["AgentResult"] = []
+
+        for round_num in range(max_rounds):
+            round_results_list = await asyncio.gather(
+                *(
+                    debaters[name].arun(
+                        _debate_prompt(
+                            input, debater_names, transcript, agent_name=name, round_num=round_num
+                        ),
+                        **kwargs,
+                    )
+                    for name in debater_names
+                )
+            )
+            for name, result in zip(debater_names, round_results_list, strict=True):
+                transcript[name].append(result.content)
+                results.append(result)
+
+        verdict = await moderator.arun(
+            _debate_verdict_prompt(input, debater_names, transcript), **kwargs
+        )
+
+        return WorkflowResult(
+            content=verdict.content,
+            steps=[*results, verdict],
+            orchestrator=self.name,
+            strategy="debate",
+        )
+
+    def _run_map_reduce(
+        self,
+        steps: Sequence["Agent"],
+        input: str,  # noqa: A002
+        *,
+        map_items: Optional[Sequence[str]] = None,
+        **kwargs: Any,
+    ) -> WorkflowResult:
+        if not map_items:
+            raise ConfigurationException(
+                "The 'map_reduce' strategy requires map_items=[...] -- the list of "
+                "individual items to process, passed to workflow.run()/arun().",
+            )
+        reducer, mappers = self._split_coordinator_and_workers(steps, role="map-reduce reducer")
+        mapper_list = list(mappers.values())
+
+        with ThreadPoolExecutor(max_workers=max(len(map_items), 1)) as executor:
+            futures = [
+                executor.submit(
+                    mapper_list[i % len(mapper_list)].run, _map_prompt(input, item), **kwargs
+                )
+                for i, item in enumerate(map_items)
+            ]
+            map_results = [future.result() for future in futures]
+
+        reduced = reducer.run(_reduce_prompt(input, map_items, map_results), **kwargs)
+
+        return WorkflowResult(
+            content=reduced.content,
+            steps=[*map_results, reduced],
+            orchestrator=self.name,
+            strategy="map_reduce",
+        )
+
+    async def _arun_map_reduce(
+        self,
+        steps: Sequence["Agent"],
+        input: str,  # noqa: A002
+        *,
+        map_items: Optional[Sequence[str]] = None,
+        **kwargs: Any,
+    ) -> WorkflowResult:
+        if not map_items:
+            raise ConfigurationException(
+                "The 'map_reduce' strategy requires map_items=[...] -- the list of "
+                "individual items to process, passed to workflow.run()/arun().",
+            )
+        reducer, mappers = self._split_coordinator_and_workers(steps, role="map-reduce reducer")
+        mapper_list = list(mappers.values())
+
+        map_results = list(
+            await asyncio.gather(
+                *(
+                    mapper_list[i % len(mapper_list)].arun(_map_prompt(input, item), **kwargs)
+                    for i, item in enumerate(map_items)
+                )
+            )
+        )
+
+        reduced = await reducer.arun(_reduce_prompt(input, map_items, map_results), **kwargs)
+
+        return WorkflowResult(
+            content=reduced.content,
+            steps=[*map_results, reduced],
+            orchestrator=self.name,
+            strategy="map_reduce",
         )

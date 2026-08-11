@@ -140,6 +140,60 @@ def main() -> None:
     print(consensus_result.content)
     print(f"(synthesized from: {[s.agent_name for s in consensus_result.steps[:-1]]})")
 
+    # Debate: a moderator judges two agents debating a real trade-off,
+    # each round seeing the other's arguments from the previous round.
+    debater_for = Agent(
+        name="ForMonolith",
+        provider="gemini",
+        system_prompt="You argue FOR building a new backend as a monolith. Be concise.",
+        rate_limiter=shared_rate_limit,
+    )
+    debater_against = Agent(
+        name="ForMicroservices",
+        provider="gemini",
+        system_prompt="You argue FOR building a new backend as microservices. Be concise.",
+        rate_limiter=shared_rate_limit,
+    )
+    moderator = Agent(
+        name="Moderator",
+        provider="gemini",
+        system_prompt="You judge technical debates and deliver a balanced final verdict.",
+        rate_limiter=shared_rate_limit,
+    )
+    debate_workflow = Workflow().debate()
+    debate_workflow.add(moderator).add(debater_for).add(debater_against)
+    debate_result = debate_workflow.run(
+        "Should a small team building a new product start with a monolith or microservices?",
+        max_rounds=2,
+    )
+    print("\n--- debate (native) ---")
+    print(debate_result.content)
+    print(f"(debate steps + verdict: {len(debate_result.steps)})")
+
+    # Map-reduce: each mapper summarizes one item independently
+    # (round-robin across mappers), then the reducer combines them.
+    mapper_a = Agent(name="MapperA", provider="gemini", rate_limiter=shared_rate_limit)
+    mapper_b = Agent(name="MapperB", provider="gemini", rate_limiter=shared_rate_limit)
+    reducer = Agent(
+        name="Reducer",
+        provider="gemini",
+        system_prompt="You combine several short summaries into one coherent overview.",
+        rate_limiter=shared_rate_limit,
+    )
+    map_reduce_workflow = Workflow().map_reduce()
+    map_reduce_workflow.add(reducer).add(mapper_a).add(mapper_b)
+    map_reduce_result = map_reduce_workflow.run(
+        "Summarize the key idea of each note in one sentence each.",
+        map_items=[
+            "RAG grounds LLM answers in retrieved documents to reduce hallucination.",
+            "MCP standardizes how AI applications connect to external tools and data.",
+            "LangGraph models agent workflows as graphs instead of linear chains.",
+        ],
+    )
+    print("\n--- map_reduce (native) ---")
+    print(map_reduce_result.content)
+    print(f"(mapped by: {[s.agent_name for s in map_reduce_result.steps[:-1]]})")
+
 
 if __name__ == "__main__":
     main()

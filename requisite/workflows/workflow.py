@@ -46,6 +46,8 @@ _KNOWN_STRATEGIES = {
     "supervisor",
     "critic",
     "consensus",
+    "debate",
+    "map_reduce",
 }
 
 
@@ -71,14 +73,20 @@ class Workflow:
           -- iterate on a draft together (see :meth:`critic`).
         - ``"consensus"``: the first agent synthesizes the independent
           answers of the remaining agents into one (see :meth:`consensus`).
+        - ``"debate"``: the first agent moderates while the rest debate
+          the input over several rounds (see :meth:`debate`).
+        - ``"map_reduce"``: the first agent reduces the results the
+          remaining agents produce from ``map_items=`` (see
+          :meth:`map_reduce`).
 
-        Further multi-agent strategies remain on the roadmap (debate,
-        map-reduce, hierarchical, tree-of-thoughts, general graph
-        execution) -- each becomes a new ``strategy`` value handled by
-        the underlying orchestrator, with no change to this class's
-        public API. ``"reflection"``, ``"planner"``, ``"supervisor"``,
-        ``"critic"``, and ``"consensus"`` are currently only implemented
-        on the ``"native"`` orchestrator backend.
+        Further multi-agent strategies remain on the roadmap
+        (hierarchical, tree-of-thoughts, general graph execution) --
+        each becomes a new ``strategy`` value handled by the underlying
+        orchestrator, with no change to this class's public API.
+        ``"reflection"``, ``"planner"``, ``"supervisor"``, ``"critic"``,
+        ``"consensus"``, ``"debate"``, and ``"map_reduce"`` are
+        currently only implemented on the ``"native"`` orchestrator
+        backend.
     orchestrator:
         Execution backend: ``"native"`` (default, pure Python, no extra
         dependency) or ``"langgraph"``. Change via :meth:`use_langgraph` /
@@ -185,6 +193,36 @@ class Workflow:
         self._strategy = "consensus"
         return self
 
+    def debate(self) -> "Workflow":
+        """Switch to the debate strategy. Returns ``self`` for chaining.
+
+        The first agent added becomes the moderator (never debates,
+        only delivers the final verdict); every agent added after it is
+        a debater. Each round, every debater sees every debater's
+        arguments from the *previous* round and responds. Requires at
+        least 2 agents. Pass ``max_rounds=`` to :meth:`run`/:meth:`arun`
+        to control how many rounds of debate happen before the
+        moderator's verdict (default 3).
+        """
+        self._strategy = "debate"
+        return self
+
+    def map_reduce(self) -> "Workflow":
+        """Switch to the map-reduce strategy. Returns ``self`` for chaining.
+
+        The first agent added becomes the reducer; every agent added
+        after it is a mapper. Pass ``map_items=[...]`` to
+        :meth:`run`/:meth:`arun` -- the list of individual items to
+        process, assigned to mappers round-robin (so the item count
+        doesn't need to match the mapper count) and run concurrently.
+        The reducer then combines every item's result into one final
+        answer. ``input`` is still required -- it's the overall task/goal
+        that frames both the per-item mapping and the final reduction,
+        not one of the items itself. Requires at least 2 agents.
+        """
+        self._strategy = "map_reduce"
+        return self
+
     def use_native(self) -> "Workflow":
         """Use the built-in, dependency-free execution engine. Returns ``self`` for chaining."""
         self._orchestrator_name = "native"
@@ -215,9 +253,12 @@ class Workflow:
         ----------
         input:
             The initial task/prompt handed to the first agent (or to
-            every agent, under the ``"parallel"`` strategy).
+            every agent, under the ``"parallel"`` strategy). Still
+            required under ``"map_reduce"`` -- see :meth:`map_reduce`.
         **kwargs:
-            Passed through to each agent's ``run``/``arun`` call.
+            Passed through to each agent's ``run``/``arun`` call, except
+            strategy-specific keywords a strategy consumes itself
+            (``max_rounds=``, ``map_items=``).
 
         Returns
         -------

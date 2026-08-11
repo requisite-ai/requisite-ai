@@ -79,9 +79,9 @@ construction (each lives in its own module, imported lazily).
 | Supervisor strategy (a coordinating agent delegates to others) | ✅ — `native` orchestrator only; see [ADR-0007](docs/adr/0007-multi-agent-orchestration-strategies.md) |
 | Planner strategy | ✅ — `native` orchestrator only; see [ADR-0007](docs/adr/0007-multi-agent-orchestration-strategies.md) |
 | Reflection strategy (agent critiques and revises its own output) | ✅ — `native` orchestrator only; see [ADR-0007](docs/adr/0007-multi-agent-orchestration-strategies.md) |
-| Debate / critic / consensus strategies | 🚧 — critic + consensus shipped, `native` orchestrator only; see [ADR-0011](docs/adr/0011-critic-and-consensus-strategies.md); debate still 📋 |
+| Debate / critic / consensus strategies | ✅ — `native` orchestrator only; see [ADR-0011](docs/adr/0011-critic-and-consensus-strategies.md), [ADR-0012](docs/adr/0012-debate-and-map-reduce-strategies.md) |
 | Hierarchical strategy | 📋 |
-| Map-reduce strategy | 📋 |
+| Map-reduce strategy | ✅ — `native` orchestrator only; work items via `map_items=`, round-robin across mappers; see [ADR-0012](docs/adr/0012-debate-and-map-reduce-strategies.md) |
 | Tree-of-thoughts strategy | 📋 |
 | General graph execution (arbitrary DAGs, not just linear/parallel) | 📋 |
 | CrewAI orchestrator backend | 📋 — registered today as a clear "not yet implemented" placeholder |

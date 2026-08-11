@@ -38,7 +38,7 @@ Status legend: ✅ Done · 🚧 Partial · 📋 Not started · N/A Deliberately 
 | Agent creation | ✅ | `Agent(...)` |
 | Agent execution | ✅ | `Agent.run` / `Agent.arun` (tool-calling loop) |
 | Agent registry | ✅ | `AgentRegistry` |
-| Multi-agent orchestration | 🚧 | `Workflow` ships sequential, parallel, reflection, planner, supervisor (ADR-0007), critic, and consensus (ADR-0011) — native orchestrator only; see the Multi-Agent System table below for the rest |
+| Multi-agent orchestration | 🚧 | `Workflow` ships sequential, parallel, reflection, planner, supervisor (ADR-0007), critic, consensus (ADR-0011), debate, and map-reduce (ADR-0012) — native orchestrator only; see the Multi-Agent System table below for the rest |
 | Agentic execution | 🚧 | `Agent`'s own tool-calling loop is agentic (model decides which tool); the supervisor/planner strategies add model-decided agent delegation (ADR-0007); full autonomous planning across agents/skills/MCP beyond that is 📋 — see Agentic Mode below |
 | MCP client integration | ✅ | `MCPClient` (stdio + Streamable HTTP) — ADR-0004 |
 | MCP server integration | 📋 | |
@@ -134,11 +134,11 @@ Status legend: ✅ Done · 🚧 Partial · 📋 Not started · N/A Deliberately 
 | Supervisor | ✅ | `native` orchestrator only — coordinator (`steps[0]`) delegates to named workers (`steps[1:]`) via structured decisions, up to `max_rounds`; ADR-0007 |
 | Planner | ✅ | `native` orchestrator only — coordinator (`steps[0]`) decomposes the task into a plan executed by named workers (`steps[1:]`); ADR-0007 |
 | Reflection | ✅ | `native` orchestrator only — single agent critiques and revises its own output, up to `max_rounds`; ADR-0007 |
-| Debate | 📋 | |
+| Debate | ✅ | `native` orchestrator only — moderator (`steps[0]`) judges debaters (`steps[1:]`) after `max_rounds` of each seeing the others' prior-round arguments; ADR-0012 |
 | Critic | ✅ | `native` orchestrator only — generator (`steps[0]`) and a separate critic (`steps[1]`) iterate on a draft, up to `max_rounds`; ADR-0011 |
 | Consensus | ✅ | `native` orchestrator only — synthesizer (`steps[0]`) combines the independent, concurrently-run answers of `steps[1:]`; ADR-0011 |
 | Hierarchical | 📋 | |
-| Map-reduce | 📋 | |
+| Map-reduce | ✅ | `native` orchestrator only — reducer (`steps[0]`) combines mapper (`steps[1:]`) results for `map_items=`, assigned round-robin; ADR-0012 |
 | Tree of thoughts | 📋 | |
 | Graph execution (arbitrary DAGs) | 🚧 | `LangGraphOrchestrator` currently builds only a linear graph; general DAGs are 📋 |
 
