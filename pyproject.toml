@@ -42,7 +42,7 @@ langgraph = ["langgraph>=1.0"]
 # removed streamablehttp_client in favor of streamable_http_client) --
 # capped below it until requisite migrates to the 2.x API as its own
 # deliberate change. See CHANGELOG.md's 0.4.1 entry.
-mcp = ["mcp>=1.28,<2.0"]
+mcp = ["mcp>=1.28,<3.0"]
 pinecone = ["pinecone>=9.0"]        # current package name; the older "pinecone-client" is deprecated
 weaviate = ["weaviate-client>=4.0"]  # v4 client API; v3's weaviate.Client(...) is a different, older API
 rag = ["openai>=1.35", "google-genai>=1.0"]  # embedding providers; no vector-store SDK needed for the in-memory default
@@ -53,7 +53,7 @@ all = [
     "anthropic>=0.116",
     "ollama>=0.6",
     "langgraph>=1.0",
-    "mcp>=1.28,<2.0",
+    "mcp>=1.28,<3.0",
     "pinecone>=9.0",
     "weaviate-client>=4.0",
     "redis>=5.0",
