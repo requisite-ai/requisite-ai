@@ -7,6 +7,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.17.0] - 2026-08-17
+
+### Added
+
+- Tree-of-thoughts multi-agent strategy -- see
+  [ADR-0018](docs/adr/0018-tree-of-thoughts-strategy.md) for the full
+  design (the classic ToT-BFS/beam-search algorithm mapped onto this
+  codebase's conventions -- there was no prior design sketch anywhere
+  in the repo for this one, unlike every other strategy shipped this
+  stretch).
+- `Workflow.tree_of_thoughts()`: the first agent added becomes the
+  evaluator; the remaining agents generate candidate reasoning steps,
+  assigned round-robin. Each level, `breadth=` candidates (default 3)
+  are generated per surviving path, scored together in one structured
+  call, and pruned to the top `beam_width=` (default 1) before
+  continuing, for up to `max_depth=` levels (default 3) -- stopping
+  early if any candidate is scored as a complete final answer.
+- `examples/workflow_example.py` extended with a `.tree_of_thoughts()`
+  demonstration alongside the existing strategies.
+
 ## [0.16.0] - 2026-08-17
 
 ### Added

@@ -262,6 +262,27 @@ workflow.add(writer)
 result = workflow.run("Write a tagline for an AI framework.", max_rounds=3)
 ```
 
+`.tree_of_thoughts()` branches and prunes a search tree of candidate
+reasoning steps instead of following a single path — the first agent
+evaluates, the rest generate candidates:
+
+```python
+evaluator = Agent(name="Evaluator", provider="openai")
+thinker = Agent(name="Thinker", provider="openai")
+
+workflow = Workflow().tree_of_thoughts()
+workflow.add(evaluator).add(thinker)
+result = workflow.run(
+    "A train travels 60 miles in the first hour and 90 in the second. "
+    "What is its average speed?",
+    breadth=3, beam_width=2, max_depth=3,
+)
+```
+
+Each level, `breadth` candidates are generated and scored together, then
+pruned to the top `beam_width` before continuing — see
+[ADR-0018](docs/adr/0018-tree-of-thoughts-strategy.md).
+
 ### Rate limiting
 
 Free-tier and other quota-limited API keys often cap requests per
@@ -744,7 +765,8 @@ server integration (stdio + Streamable HTTP, both directions), RAG (embeddings, 
 Pinecone / Weaviate vector stores, dense retrieval), memory + conversation policies
 (`Agent(memory=..., conversation_policy=...)`), prompt templates,
 structured logging, agents + registry, multi-agent workflows (sequential,
-parallel, reflection, planner, supervisor on the native backend;
+parallel, reflection, planner, supervisor, critic, consensus, debate,
+map-reduce, hierarchical, tree-of-thoughts on the native backend;
 sequential and supervisor on langgraph), entry-point plugin discovery.
 
 See [`ROADMAP.md`](ROADMAP.md) for the full, per-layer status table

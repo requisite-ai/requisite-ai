@@ -82,7 +82,7 @@ construction (each lives in its own module, imported lazily).
 | Debate / critic / consensus strategies | ✅ — `native` orchestrator only; see [ADR-0011](docs/adr/0011-critic-and-consensus-strategies.md), [ADR-0012](docs/adr/0012-debate-and-map-reduce-strategies.md) |
 | Hierarchical strategy | ✅ — `native` orchestrator only; a delegate may be an `Agent` or a named `Workflow` (nested "team"), giving real recursive delegation; see [ADR-0013](docs/adr/0013-hierarchical-strategy.md) |
 | Map-reduce strategy | ✅ — `native` orchestrator only; work items via `map_items=`, round-robin across mappers; see [ADR-0012](docs/adr/0012-debate-and-map-reduce-strategies.md) |
-| Tree-of-thoughts strategy | 📋 |
+| Tree-of-thoughts strategy | ✅ — `native` orchestrator only; evaluator (`steps[0]`) scores candidates thinkers (`steps[1:]`) generate, branching and pruning a search tree via `breadth`/`beam_width`/`max_depth`; see [ADR-0018](docs/adr/0018-tree-of-thoughts-strategy.md) |
 | General graph execution (arbitrary DAGs, not just linear/parallel) | 📋 |
 | CrewAI orchestrator backend | 📋 — registered today as a clear "not yet implemented" placeholder |
 | AutoGen orchestrator backend | 📋 — same |

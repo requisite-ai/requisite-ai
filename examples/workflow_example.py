@@ -248,6 +248,41 @@ def main() -> None:
         f"{[getattr(s, 'agent_name', 'ResearchTeam (nested Workflow)') for s in hierarchical_result.steps]})"
     )
 
+    # Tree-of-thoughts: the first agent evaluates candidate reasoning steps
+    # the remaining agents (thinkers) generate; each level, `breadth`
+    # candidates are scored together and pruned to the top `beam_width`
+    # before continuing, for up to `max_depth` levels.
+    tot_evaluator = Agent(
+        name="Evaluator",
+        provider="gemini",
+        system_prompt=(
+            "You evaluate candidate reasoning steps for a math word problem, "
+            "scoring how promising and correct each one is."
+        ),
+        rate_limiter=shared_rate_limit,
+    )
+    tot_thinker = Agent(
+        name="Thinker",
+        provider="gemini",
+        system_prompt="You propose the next reasoning step to solve a math word problem.",
+        rate_limiter=shared_rate_limit,
+    )
+    tot_workflow = Workflow().tree_of_thoughts()
+    tot_workflow.add(tot_evaluator).add(tot_thinker)
+    tot_result = tot_workflow.run(
+        "A train travels 60 miles in the first hour and 90 miles in the "
+        "second hour. What is its average speed over the two hours?",
+        breadth=3,
+        beam_width=2,
+        max_depth=3,
+    )
+    print("\n--- tree_of_thoughts (native) ---")
+    print(tot_result.content)
+    print(
+        f"(generated {len(tot_result.steps)} candidate thoughts across up to 3 levels, "
+        f"pruned to a beam of 2 each level)"
+    )
+
 
 if __name__ == "__main__":
     main()

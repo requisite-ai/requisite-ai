@@ -46,6 +46,7 @@ _KNOWN_STRATEGIES = {
     "debate",
     "map_reduce",
     "hierarchical",
+    "tree_of_thoughts",
 }
 
 
@@ -79,18 +80,22 @@ class Workflow:
         - ``"hierarchical"``: same as ``"supervisor"``, except a
           delegate may also be another named ``Workflow`` ("team"),
           giving real recursive delegation (see :meth:`hierarchical`).
+        - ``"tree_of_thoughts"``: the first agent evaluates candidate
+          reasoning steps the remaining agents generate, branching and
+          pruning a search tree over several levels (see
+          :meth:`tree_of_thoughts`).
 
-        Further multi-agent strategies remain on the roadmap
-        (tree-of-thoughts, general graph execution) -- each becomes a
-        new ``strategy`` value handled by the underlying orchestrator,
-        with no change to this class's public API. ``"reflection"``,
-        ``"planner"``, ``"critic"``, ``"consensus"``, ``"debate"``,
-        ``"map_reduce"``, and ``"hierarchical"`` are currently only
-        implemented on the ``"native"`` orchestrator backend.
-        ``"supervisor"`` is implemented on both ``"native"`` and
-        ``"langgraph"`` -- on langgraph it's a real conditional graph
-        (``add_conditional_edges`` plus a loop-back cycle), not a
-        disguised Python loop; see ``docs/adr/0016-langgraph-branching.md``.
+        Further multi-agent strategies remain on the roadmap (general
+        graph execution) -- each becomes a new ``strategy`` value
+        handled by the underlying orchestrator, with no change to this
+        class's public API. ``"reflection"``, ``"planner"``, ``"critic"``,
+        ``"consensus"``, ``"debate"``, ``"map_reduce"``, ``"hierarchical"``,
+        and ``"tree_of_thoughts"`` are currently only implemented on the
+        ``"native"`` orchestrator backend. ``"supervisor"`` is implemented
+        on both ``"native"`` and ``"langgraph"`` -- on langgraph it's a
+        real conditional graph (``add_conditional_edges`` plus a
+        loop-back cycle), not a disguised Python loop; see
+        ``docs/adr/0016-langgraph-branching.md``.
     orchestrator:
         Execution backend: ``"native"`` (default, pure Python, no extra
         dependency) or ``"langgraph"``. Change via :meth:`use_langgraph` /
@@ -261,6 +266,24 @@ class Workflow:
         not one of the items itself. Requires at least 2 agents.
         """
         self._strategy = "map_reduce"
+        return self
+
+    def tree_of_thoughts(self) -> "Workflow":
+        """Switch to the tree-of-thoughts strategy. Returns ``self`` for chaining.
+
+        The first agent added becomes the evaluator; every agent added
+        after it is a thinker that proposes candidate next reasoning
+        steps, assigned round-robin. Each level, pass ``breadth=`` to
+        :meth:`run`/:meth:`arun` to control how many candidates are
+        generated per surviving path (default 3); all candidates that
+        level are scored together in one call, then pruned to the top
+        ``beam_width=`` (default 1) before continuing. Runs for up to
+        ``max_depth=`` levels (default 3), stopping early if any
+        candidate is scored as a complete final answer. Requires at
+        least 2 agents. See
+        ``docs/adr/0018-tree-of-thoughts-strategy.md``.
+        """
+        self._strategy = "tree_of_thoughts"
         return self
 
     def use_native(self) -> "Workflow":

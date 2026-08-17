@@ -139,7 +139,7 @@ Status legend: ✅ Done · 🚧 Partial · 📋 Not started · N/A Deliberately 
 | Consensus | ✅ | `native` orchestrator only — synthesizer (`steps[0]`) combines the independent, concurrently-run answers of `steps[1:]`; ADR-0011 |
 | Hierarchical | ✅ | `native` orchestrator only — same shape as Supervisor, except a delegate may be an `Agent` or a named `Workflow` (nested "team"); ADR-0013 |
 | Map-reduce | ✅ | `native` orchestrator only — reducer (`steps[0]`) combines mapper (`steps[1:]`) results for `map_items=`, assigned round-robin; ADR-0012 |
-| Tree of thoughts | 📋 | |
+| Tree of thoughts | ✅ | `native` orchestrator only — evaluator (`steps[0]`) scores candidate reasoning steps thinkers (`steps[1:]`) generate; `breadth`/`beam_width`/`max_depth` control the search; ADR-0018 |
 | Graph execution (arbitrary DAGs) | 🚧 | `LangGraphOrchestrator` builds two specific graph shapes today (linear for sequential, conditional+cycle for supervisor — ADR-0016); general arbitrary DAGs are still 📋 |
 
 ## Orchestration

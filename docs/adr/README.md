@@ -56,3 +56,4 @@ need one — `CONTRIBUTING.md` already covers those.
 | [0015](0015-mcp-server-integration.md) | MCP server integration: exposing Requisite as an MCP server | Accepted |
 | [0016](0016-langgraph-branching.md) | LangGraph backend: branching/conditional graphs | Accepted |
 | [0017](0017-entry-point-plugin-discovery.md) | Entry-point plugin discovery | Accepted |
+| [0018](0018-tree-of-thoughts-strategy.md) | Tree-of-thoughts multi-agent strategy | Accepted |

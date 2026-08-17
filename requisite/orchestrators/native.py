@@ -1,17 +1,19 @@
 """
 Native orchestrator: sequential, parallel, reflection, planner,
-supervisor, critic, consensus, debate, map-reduce, and hierarchical
-execution -- no external orchestration framework required.
+supervisor, critic, consensus, debate, map-reduce, hierarchical, and
+tree-of-thoughts execution -- no external orchestration framework
+required.
 
 This is the default backend for :class:`~requisite.workflows.workflow.Workflow`.
-Further strategies (tree-of-thoughts, general graph execution) are
-natural extensions of this class -- add a ``_run_<strategy>`` /
-``_arun_<strategy>`` pair and a branch in :meth:`NativeOrchestrator.run`
-/ :meth:`NativeOrchestrator.arun`; nothing else needs to change. See
+Further strategies (general graph execution) are natural extensions of
+this class -- add a ``_run_<strategy>`` / ``_arun_<strategy>`` pair and a
+branch in :meth:`NativeOrchestrator.run` / :meth:`NativeOrchestrator.arun`;
+nothing else needs to change. See
 ``docs/adr/0011-critic-and-consensus-strategies.md``,
-``docs/adr/0012-debate-and-map-reduce-strategies.md``, and
-``docs/adr/0013-hierarchical-strategy.md`` for which of those fit this
-flat coordinator/worker shape directly and which don't.
+``docs/adr/0012-debate-and-map-reduce-strategies.md``,
+``docs/adr/0013-hierarchical-strategy.md``, and
+``docs/adr/0018-tree-of-thoughts-strategy.md`` for which of those fit
+this flat coordinator/worker shape directly and which don't.
 """
 
 from __future__ import annotations
@@ -53,6 +55,23 @@ class _SupervisorDecision(BaseModel):
     worker: Optional[str] = None
     task: Optional[str] = None
     final_answer: Optional[str] = None
+
+
+class _ThoughtScore(BaseModel):
+    """One candidate's score in the `tree_of_thoughts` strategy's listwise evaluation."""
+
+    index: int
+    score: float = Field(ge=0.0, le=10.0)
+    finished: bool = False
+
+
+class _ThoughtEvaluation(BaseModel):
+    """Structured output requested from the evaluating agent in the `tree_of_thoughts`
+    strategy -- scores every candidate thought generated this level in one call,
+    mirroring :class:`~requisite.rag.reranker.LLMReranker`'s listwise re-ranking shape.
+    """
+
+    scores: list[_ThoughtScore] = Field(default_factory=list)
 
 
 def _planner_prompt(task: str, worker_names: Sequence[str]) -> str:
@@ -208,6 +227,44 @@ def _consensus_prompt(task: str, results: Sequence["AgentResult"]) -> str:
     return "\n".join(lines)
 
 
+def _tot_thinker_prompt(task: str, path: Sequence[str]) -> str:
+    lines = [f"Task: {task}", ""]
+    if path:
+        lines.append("Reasoning steps so far, in order:")
+        for i, thought in enumerate(path, start=1):
+            lines.append(f"{i}. {thought}")
+        lines.append("")
+        lines.append(
+            "Propose exactly one next reasoning step that continues toward solving "
+            "the task. If the steps so far already fully solve the task, state the "
+            "complete final answer instead."
+        )
+    else:
+        lines.append("Propose exactly one first reasoning step toward solving the task.")
+    lines.append("Respond with that single step only -- no commentary about the process.")
+    return "\n".join(lines)
+
+
+def _tot_evaluation_prompt(task: str, candidates: Sequence[Sequence[str]]) -> str:
+    lines = [
+        "Several candidate next reasoning steps for the task below were generated "
+        "independently. Score each candidate from 0 (a dead end or incorrect) to "
+        "10 (clearly correct and promising), based on its full path so far. Mark "
+        "`finished=true` only for a candidate whose path already constitutes a "
+        "complete, correct final answer to the task.",
+        "",
+        f"Task: {task}",
+        "",
+    ]
+    for index, path in enumerate(candidates):
+        lines.append(f"Candidate {index}:")
+        for i, thought in enumerate(path, start=1):
+            lines.append(f"  {i}. {thought}")
+        lines.append("")
+    lines.append("Score every candidate listed above, identified by its index.")
+    return "\n".join(lines)
+
+
 class NativeOrchestrator(BaseOrchestrator):
     """Runs agents sequentially or in parallel using plain Python -- no
     external orchestration framework required.
@@ -270,6 +327,16 @@ class NativeOrchestrator(BaseOrchestrator):
         Delegating to a ``Workflow`` runs whatever strategy it's
         configured with -- including another ``supervisor`` or
         ``hierarchical`` -- giving real recursive delegation.
+
+    Tree-of-thoughts strategy
+        The first agent (``steps[0]``) evaluates candidate reasoning
+        steps; the remaining agents (``steps[1:]``) generate them,
+        assigned round-robin. Each level, ``breadth`` candidates are
+        generated per surviving path, all scored together in one
+        structured call, and pruned to the top ``beam_width`` -- for up
+        to ``max_depth`` levels, stopping early if any candidate is
+        scored as a complete final answer. See
+        ``docs/adr/0018-tree-of-thoughts-strategy.md``.
     """
 
     _STRATEGIES = (
@@ -282,6 +349,7 @@ class NativeOrchestrator(BaseOrchestrator):
         "consensus",
         "debate",
         "map_reduce",
+        "tree_of_thoughts",
         "hierarchical",
     )
 
@@ -320,6 +388,8 @@ class NativeOrchestrator(BaseOrchestrator):
             return self._run_debate(steps, input, **kwargs)
         if strategy == "map_reduce":
             return self._run_map_reduce(steps, input, **kwargs)
+        if strategy == "tree_of_thoughts":
+            return self._run_tree_of_thoughts(steps, input, **kwargs)
         if strategy == "hierarchical":
             return self._run_hierarchical(steps, input, **kwargs)
         raise ConfigurationException(
@@ -358,6 +428,8 @@ class NativeOrchestrator(BaseOrchestrator):
             return await self._arun_debate(steps, input, **kwargs)
         if strategy == "map_reduce":
             return await self._arun_map_reduce(steps, input, **kwargs)
+        if strategy == "tree_of_thoughts":
+            return await self._arun_tree_of_thoughts(steps, input, **kwargs)
         if strategy == "hierarchical":
             return await self._arun_hierarchical(steps, input, **kwargs)
         raise ConfigurationException(
@@ -1069,3 +1141,160 @@ class NativeOrchestrator(BaseOrchestrator):
             orchestrator=self.name,
             strategy="map_reduce",
         )
+
+    def _run_tree_of_thoughts(
+        self,
+        steps: Sequence["Agent"],
+        input: str,  # noqa: A002
+        *,
+        breadth: int = 3,
+        beam_width: int = 1,
+        max_depth: int = 3,
+        **kwargs: Any,
+    ) -> WorkflowResult:
+        self._validate_tot_params(breadth=breadth, beam_width=beam_width, max_depth=max_depth)
+        evaluator, thinkers = self._split_coordinator_and_workers(
+            steps, role="tree-of-thoughts evaluator"
+        )
+        thinker_list = list(thinkers.values())
+
+        paths: list[list[str]] = [[]]
+        results: list["AgentResult"] = []
+
+        for _ in range(max_depth):
+            tasks = [path for path in paths for _ in range(breadth)]
+            with ThreadPoolExecutor(max_workers=max(len(tasks), 1)) as executor:
+                futures = [
+                    executor.submit(
+                        thinker_list[i % len(thinker_list)].run,
+                        _tot_thinker_prompt(input, path),
+                        **kwargs,
+                    )
+                    for i, path in enumerate(tasks)
+                ]
+                candidate_results = [future.result() for future in futures]
+            results.extend(candidate_results)
+            candidate_paths = [
+                [*path, result.content]
+                for path, result in zip(tasks, candidate_results, strict=True)
+            ]
+
+            evaluation = evaluator.ai.chat(
+                _tot_evaluation_prompt(input, candidate_paths), response_model=_ThoughtEvaluation
+            )
+            final = self._select_finished_tot_candidate(evaluation, candidate_paths)
+            if final is not None:
+                return WorkflowResult(
+                    content=final[-1],
+                    steps=results,
+                    orchestrator=self.name,
+                    strategy="tree_of_thoughts",
+                )
+
+            paths = self._prune_tot_candidates(evaluation, candidate_paths, beam_width=beam_width)
+
+        best_path = paths[0]
+        return WorkflowResult(
+            content=best_path[-1] if best_path else "",
+            steps=results,
+            orchestrator=self.name,
+            strategy="tree_of_thoughts",
+        )
+
+    async def _arun_tree_of_thoughts(
+        self,
+        steps: Sequence["Agent"],
+        input: str,  # noqa: A002
+        *,
+        breadth: int = 3,
+        beam_width: int = 1,
+        max_depth: int = 3,
+        **kwargs: Any,
+    ) -> WorkflowResult:
+        self._validate_tot_params(breadth=breadth, beam_width=beam_width, max_depth=max_depth)
+        evaluator, thinkers = self._split_coordinator_and_workers(
+            steps, role="tree-of-thoughts evaluator"
+        )
+        thinker_list = list(thinkers.values())
+
+        paths: list[list[str]] = [[]]
+        results: list["AgentResult"] = []
+
+        for _ in range(max_depth):
+            tasks = [path for path in paths for _ in range(breadth)]
+            candidate_results = list(
+                await asyncio.gather(
+                    *(
+                        thinker_list[i % len(thinker_list)].arun(
+                            _tot_thinker_prompt(input, path), **kwargs
+                        )
+                        for i, path in enumerate(tasks)
+                    )
+                )
+            )
+            results.extend(candidate_results)
+            candidate_paths = [
+                [*path, result.content]
+                for path, result in zip(tasks, candidate_results, strict=True)
+            ]
+
+            evaluation = await evaluator.ai.achat(
+                _tot_evaluation_prompt(input, candidate_paths), response_model=_ThoughtEvaluation
+            )
+            final = self._select_finished_tot_candidate(evaluation, candidate_paths)
+            if final is not None:
+                return WorkflowResult(
+                    content=final[-1],
+                    steps=results,
+                    orchestrator=self.name,
+                    strategy="tree_of_thoughts",
+                )
+
+            paths = self._prune_tot_candidates(evaluation, candidate_paths, beam_width=beam_width)
+
+        best_path = paths[0]
+        return WorkflowResult(
+            content=best_path[-1] if best_path else "",
+            steps=results,
+            orchestrator=self.name,
+            strategy="tree_of_thoughts",
+        )
+
+    @staticmethod
+    def _validate_tot_params(*, breadth: int, beam_width: int, max_depth: int) -> None:
+        if breadth < 1:
+            raise ConfigurationException(
+                f"The 'tree_of_thoughts' strategy requires breadth >= 1. Got {breadth}.",
+            )
+        if beam_width < 1:
+            raise ConfigurationException(
+                f"The 'tree_of_thoughts' strategy requires beam_width >= 1. Got {beam_width}.",
+            )
+        if max_depth < 1:
+            raise ConfigurationException(
+                f"The 'tree_of_thoughts' strategy requires max_depth >= 1. Got {max_depth}.",
+            )
+
+    @staticmethod
+    def _select_finished_tot_candidate(
+        evaluation: _ThoughtEvaluation, candidate_paths: Sequence[list[str]]
+    ) -> Optional[list[str]]:
+        finished = [
+            s for s in evaluation.scores if s.finished and 0 <= s.index < len(candidate_paths)
+        ]
+        if not finished:
+            return None
+        best = max(finished, key=lambda s: s.score)
+        return candidate_paths[best.index]
+
+    @staticmethod
+    def _prune_tot_candidates(
+        evaluation: _ThoughtEvaluation, candidate_paths: Sequence[list[str]], *, beam_width: int
+    ) -> list[list[str]]:
+        score_by_index = {s.index: s.score for s in evaluation.scores}
+        ranked = sorted(
+            range(len(candidate_paths)),
+            key=lambda i: score_by_index.get(i, 0.0),
+            reverse=True,
+        )
+        return [candidate_paths[i] for i in ranked[:beam_width]]
