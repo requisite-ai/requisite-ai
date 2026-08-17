@@ -138,6 +138,44 @@ like `"weather"`), open an issue first to discuss the name — capability
 names are a shared namespace across the ecosystem, so bikeshedding them in
 public is worth the friction.
 
+## Writing a plugin
+
+A plugin is a separate, installable package — not something that lives in
+this repo. It registers with one or more of the registries above exactly
+like the examples in this file, typically from its own `__init__.py`:
+
+```python
+# my_requisite_plugin/__init__.py
+from requisite.capabilities import default_registry
+
+def my_search_tool(query: str) -> str:
+    """A real web search implementation."""
+    ...
+
+default_registry.register("internet_search", my_search_tool, provider_name="my-search-provider")
+```
+
+To make it discoverable via `requisite.plugins.discover()` /
+`requisite plugins` (see
+[ADR-0017](docs/adr/0017-entry-point-plugin-discovery.md)), declare it
+under the `"requisite.plugins"` entry-point group in *your own*
+`pyproject.toml`:
+
+```toml
+[project.entry-points."requisite.plugins"]
+my_plugin = "my_requisite_plugin"
+```
+
+The entry point can point at a plain module (its top-level code
+registers on import, as above) or `"my_requisite_plugin:register"` — a
+zero-argument function, called once after import. Either way, discovery
+never does anything beyond what explicit `import my_requisite_plugin` +
+manual registration already does today — see ADR-0017 for why.
+
+Name your package `requisite-plugin-<something>` on PyPI so it's
+discoverable by search, in addition to (not instead of) the
+entry-point mechanism above.
+
 ## Commit messages & PRs
 
 - Keep commits focused; prefer several small, reviewable commits over one

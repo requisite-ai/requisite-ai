@@ -154,6 +154,69 @@ def test_capabilities_lists_builtin_capabilities(capsys: pytest.CaptureFixture[s
     assert "priority=" in out
 
 
+# --- plugins ------------------------------------------------------------------
+
+
+def test_plugins_reports_no_plugins_found(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    monkeypatch.setattr("requisite.plugins.entry_points", lambda *, group: [])
+
+    exit_code = main(["plugins"])
+    assert exit_code == 0
+    out = capsys.readouterr().out
+    assert "No plugins found" in out
+
+
+def test_plugins_lists_loaded_plugins(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    from importlib.metadata import EntryPoint
+
+    from requisite.plugins import DEFAULT_GROUP
+
+    ep = EntryPoint(name="fixture", value="tests.fixture_plugin", group=DEFAULT_GROUP)
+    monkeypatch.setattr("requisite.plugins.entry_points", lambda *, group: [ep])
+
+    exit_code = main(["plugins"])
+    assert exit_code == 0
+    out = capsys.readouterr().out
+    assert "Loaded:" in out
+    assert "fixture" in out
+
+
+def test_plugins_reports_failures_and_returns_nonzero(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    from importlib.metadata import EntryPoint
+
+    from requisite.plugins import DEFAULT_GROUP
+
+    ep = EntryPoint(name="broken", value="tests.fixture_plugin:does_not_exist", group=DEFAULT_GROUP)
+    monkeypatch.setattr("requisite.plugins.entry_points", lambda *, group: [ep])
+
+    exit_code = main(["plugins"])
+    assert exit_code == 1
+    out = capsys.readouterr().out
+    assert "Failed:" in out
+    assert "broken" in out
+
+
+def test_plugins_custom_group(monkeypatch: pytest.MonkeyPatch) -> None:
+    from importlib.metadata import EntryPoint
+
+    captured: dict[str, str] = {}
+
+    def fake_entry_points(*, group: str) -> list[EntryPoint]:
+        captured["group"] = group
+        return []
+
+    monkeypatch.setattr("requisite.plugins.entry_points", fake_entry_points)
+
+    main(["plugins", "--group", "custom.group"])
+    assert captured["group"] == "custom.group"
+
+
 # --- agents -----------------------------------------------------------------
 
 

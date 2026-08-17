@@ -105,6 +105,7 @@ the convention the rest of the CLI looks for:
 requisite providers        # every registered provider -- SDK installed? API key set?
 requisite capabilities     # every registered capability and its competing providers
 requisite agents           # agents registered in this project's agents.py
+requisite plugins          # installed packages registered under the "requisite.plugins" entry-point group
 requisite chat             # interactive chat REPL (bare AI, or --agent NAME for a project agent)
 requisite chat "explain LangGraph in one sentence"   # one-shot
 ```
@@ -349,6 +350,28 @@ This is the same interface + registry pattern used for providers and
 orchestrators, one layer up: `CapabilityRegistry.resolve(name)` picks the
 highest-priority provider whose `is_available()` currently returns
 `True`, raising `CapabilityException` if none are.
+
+### Plugins
+
+Third-party packages register with any of the registries above the same
+way first-party code does — no special `Plugin` class. Discover every
+installed one (rather than manually importing each) by declaring it
+under the `"requisite.plugins"` entry-point group and calling:
+
+```python
+from requisite.plugins import discover
+
+result = discover()
+print(result.loaded)   # names of plugins that registered successfully
+print(result.failed)   # {name: error} for any that didn't -- one broken
+                        # plugin never blocks the rest
+```
+
+Never automatic — nothing runs from a package you didn't ask to
+discover. Also available as `requisite plugins` on the CLI. See
+[`CONTRIBUTING.md`](CONTRIBUTING.md#writing-a-plugin) for how to write
+one, and [ADR-0017](docs/adr/0017-entry-point-plugin-discovery.md) for
+the design.
 
 ### MCP integration
 
@@ -659,8 +682,9 @@ requisite/
 │                   # reflection, planner, supervisor) and langgraph backends
 │                   # + OrchestratorRegistry
 ├── workflows/      # Workflow -- the small, ergonomic multi-agent facade
-├── cli/            # requisite init/providers/capabilities/agents/chat --
+├── cli/            # requisite init/providers/capabilities/agents/plugins/chat --
 │                   # see the CLI section above and ADR-0014
+├── plugins.py      # discover() -- entry-point plugin discovery, see ADR-0017
 └── ai.py           # The `AI` facade -- the class most users touch directly
 ```
 
@@ -721,7 +745,7 @@ Pinecone / Weaviate vector stores, dense retrieval), memory + conversation polic
 (`Agent(memory=..., conversation_policy=...)`), prompt templates,
 structured logging, agents + registry, multi-agent workflows (sequential,
 parallel, reflection, planner, supervisor on the native backend;
-sequential and supervisor on langgraph).
+sequential and supervisor on langgraph), entry-point plugin discovery.
 
 See [`ROADMAP.md`](ROADMAP.md) for the full, per-layer status table
 (providers, orchestration strategies, MCP, memory, RAG, ...) and what's

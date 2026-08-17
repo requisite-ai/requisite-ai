@@ -247,17 +247,18 @@ and hybrid/BM25 retrieval + re-ranking (ADR-0010) are all shipped.
 | Vector stores | ✅ | `VectorStoreRegistry.register(...)` — `in_memory`, `pinecone`, `weaviate` all registered by default |
 | Memory providers | ✅ | `MemoryRegistry.register(...)` |
 | Prompt templates | ✅ | `PromptTemplateRegistry.register(...)` |
-| Discovery mechanism (entry points) | 📋 | Deliberately deferred — explicit import + register for v1; see ADR-0001's Plugin Discovery section for the trigger to add it |
+| Discovery mechanism (entry points) | ✅ | `requisite.plugins.discover()` scans the `"requisite.plugins"` entry-point group and imports/calls each one; explicit `.register(...)` registration (v1's mechanism) is unchanged and still required inside the plugin — discovery only automates the import step. `requisite plugins` on the CLI — see [ADR-0017](docs/adr/0017-entry-point-plugin-discovery.md) |
 
 ## CLI
 
 | Item | Status | Notes |
 |---|---|---|
-| `requisite` CLI | ✅ | `requisite init/providers/capabilities/agents/chat` — see [ADR-0014](docs/adr/0014-cli.md) |
+| `requisite` CLI | ✅ | `requisite init/providers/capabilities/agents/plugins/chat` — see [ADR-0014](docs/adr/0014-cli.md) |
 | Scaffold a new project | ✅ | `requisite init NAME [--provider]` |
 | List registered providers | ✅ | `requisite providers` — also reports SDK-installed / API-key-configured status |
 | List registered capabilities | ✅ | `requisite capabilities` |
 | List registered agents | ✅ | `requisite agents` — reads the scaffolded project's `agents.py` `agent_registry` convention, since (unlike providers/capabilities) there's no framework-wide default `AgentRegistry` to introspect |
+| Discover installed plugins | ✅ | `requisite plugins [--group]` — see [ADR-0017](docs/adr/0017-entry-point-plugin-discovery.md) |
 | Quick chat | ✅ | `requisite chat [PROMPT]` — one-shot or interactive REPL; `--agent NAME` routes through a scaffolded project's agent |
 
 ## Coding standards

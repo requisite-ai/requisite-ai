@@ -16,17 +16,25 @@ from typing import Optional
 
 from requisite import __version__
 from requisite.capabilities import default_registry as default_capability_registry
-from requisite.cli.commands import cmd_agents, cmd_capabilities, cmd_chat, cmd_init, cmd_providers
+from requisite.cli.commands import (
+    cmd_agents,
+    cmd_capabilities,
+    cmd_chat,
+    cmd_init,
+    cmd_plugins,
+    cmd_providers,
+)
 from requisite.cli.scaffold import PROVIDER_ENV_VARS
 from requisite.config.settings import Settings
 from requisite.core.exceptions import AIException
+from requisite.plugins import DEFAULT_GROUP
 from requisite.providers.factory import ProviderRegistry, default_registry
 
 
 def _build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="requisite",
-        description="Scaffold a project, inspect registered providers/capabilities/agents, or run a quick chat.",
+        description="Scaffold a project, inspect registered providers/capabilities/agents/plugins, or run a quick chat.",
     )
     parser.add_argument("--version", action="version", version=f"requisite-ai {__version__}")
 
@@ -46,6 +54,15 @@ def _build_parser() -> argparse.ArgumentParser:
 
     subparsers.add_parser("providers", help="List registered providers")
     subparsers.add_parser("capabilities", help="List registered capabilities")
+
+    plugins_parser = subparsers.add_parser(
+        "plugins", help="Discover and load installed plugins (entry-point based)"
+    )
+    plugins_parser.add_argument(
+        "--group",
+        default=None,
+        help=f"Entry-point group to scan (default: {DEFAULT_GROUP!r})",
+    )
 
     agents_parser = subparsers.add_parser(
         "agents", help="List agents registered in the current project's agents.py"
@@ -108,6 +125,8 @@ def main(
             return cmd_providers(args, registry=provider_registry, settings=resolved_settings)
         if args.command == "capabilities":
             return cmd_capabilities(args, registry=default_capability_registry)
+        if args.command == "plugins":
+            return cmd_plugins(args)
         if args.command == "agents":
             return cmd_agents(args)
         if args.command == "chat":

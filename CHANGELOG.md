@@ -7,6 +7,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.16.0] - 2026-08-17
+
+### Added
+
+- Entry-point plugin discovery -- see
+  [ADR-0017](docs/adr/0017-entry-point-plugin-discovery.md) for the
+  full design, including why a single `"requisite.plugins"` entry-point
+  group (not one per registry) and why a broken plugin can't block
+  discovery of the rest.
+- `requisite.plugins.discover(group="requisite.plugins")`: imports every
+  package registered under the group, letting each self-register with
+  whichever framework registry it targets exactly as manual registration
+  already works (`default_registry.register(...)` in the plugin's own
+  `__init__.py`, or a `module:register` callable target). No new
+  registration mechanism -- this only automates the import step ADR-0001
+  originally deferred.
+- `requisite plugins [--group]` on the CLI: discovers and reports
+  loaded/failed plugins, exits `1` if any plugin failed to load.
+- Never automatic -- `discover()` is not called anywhere in `requisite`'s
+  own import chain; an application (or the CLI) calls it explicitly.
+
 ## [0.15.1] - 2026-08-11
 
 ### Fixed

@@ -101,6 +101,12 @@ underlying API key/quota:
 >>> shared_limit = RateLimiter(requests_per_minute=15)
 >>> research = Agent(name="Researcher", provider="gemini", rate_limiter=shared_limit)  # doctest: +SKIP
 >>> writer = Agent(name="Writer", provider="gemini", rate_limiter=shared_limit)  # doctest: +SKIP
+
+Discovering installed plugins (packages that register themselves under
+the ``"requisite.plugins"`` entry-point group):
+>>> from requisite.plugins import discover
+>>> result = discover()  # doctest: +SKIP
+>>> result.loaded  # doctest: +SKIP
 """
 
 from requisite.agents.agent import Agent, AgentResult
@@ -251,4 +257,4 @@ __all__ = [
     "tool",
 ]
 
-__version__ = "0.15.1"
+__version__ = "0.16.0"

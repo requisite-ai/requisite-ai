@@ -22,6 +22,7 @@ from requisite.capabilities.registry import CapabilityRegistry
 from requisite.cli.project import DEFAULT_MODULE_NAME, load_agent_registry
 from requisite.cli.scaffold import write_project
 from requisite.config.settings import Settings
+from requisite.plugins import DEFAULT_GROUP, discover
 from requisite.providers.factory import ProviderRegistry
 
 logger = logging.getLogger("requisite.cli.commands")
@@ -106,6 +107,29 @@ def cmd_agents(args: argparse.Namespace) -> int:
     print("Registered agents:")
     for name in names:
         print(f"  {name}")
+    return 0
+
+
+def cmd_plugins(args: argparse.Namespace) -> int:
+    """Discover and load installed plugins (``requisite plugins``)."""
+    group = args.group or DEFAULT_GROUP
+    result = discover(group=group)
+
+    if not result.loaded and not result.failed:
+        print(f"No plugins found under entry-point group '{group}'.")
+        return 0
+
+    if result.loaded:
+        print("Loaded:")
+        for name in result.loaded:
+            print(f"  {name}")
+
+    if result.failed:
+        print("Failed:")
+        for name, error in result.failed.items():
+            print(f"  {name}: {error}")
+        return 1
+
     return 0
 
 
