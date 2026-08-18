@@ -7,6 +7,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.19.0] - 2026-08-19
+
+### Added
+
+- `github` default capability resolver -- see
+  [ADR-0020](docs/adr/0020-github-capability-resolver.md) for the full
+  design. Closes the last remaining line in `ROADMAP.md`'s Capabilities
+  section.
+- `agent.requires("github")` now resolves to `search_github(query)`,
+  backed by GitHub's free, unauthenticated Search API (top 5 repositories
+  by stars). No API key required -- `GITHUB_TOKEN` (reserved in
+  `.env.example`) remains earmarked for a separate, future first-party
+  MCP GitHub server, which would register at a higher priority.
+- `examples/capability_example.py` extended with a `"github"`
+  demonstration alongside the existing three built-in capabilities.
+
 ## [0.18.0] - 2026-08-19
 
 ### Added

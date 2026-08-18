@@ -4,14 +4,18 @@ and :meth:`requisite.agents.agent.Agent.requires`.
 
 from __future__ import annotations
 
+import io
+import json
+import urllib.error
 from collections.abc import AsyncIterator, Iterator, Sequence
 from typing import Any
+from unittest.mock import patch
 
 import pytest
 
 from requisite.agents.agent import Agent
 from requisite.capabilities.registry import CapabilityRegistry
-from requisite.capabilities.resolvers import register_default_capabilities
+from requisite.capabilities.resolvers import register_default_capabilities, search_github
 from requisite.config.settings import Settings
 from requisite.core.exceptions import CapabilityException
 from requisite.core.interfaces import ChatResponse, Message, StreamChunk
@@ -95,10 +99,91 @@ def test_unregister_removes_specific_provider() -> None:
 def test_default_capabilities_are_registered() -> None:
     registry = CapabilityRegistry()
     register_default_capabilities(registry)
-    assert set(registry.list_capabilities()) == {"filesystem", "weather", "internet_search"}
+    assert set(registry.list_capabilities()) == {
+        "filesystem",
+        "weather",
+        "internet_search",
+        "github",
+    }
     for capability in registry.list_capabilities():
-        # All three ship always-available (no API key required).
+        # All four ship always-available (no API key required).
         assert registry.resolve(capability) is not None
+
+
+# ---------------------------------------------------------------------------
+# search_github (the "github" capability's implementation)
+# ---------------------------------------------------------------------------
+
+
+def _github_search_response(payload: dict[str, Any]) -> io.BytesIO:
+    return io.BytesIO(json.dumps(payload).encode("utf-8"))
+
+
+def test_search_github_formats_results() -> None:
+    payload = {
+        "items": [
+            {
+                "full_name": "octocat/Hello-World",
+                "stargazers_count": 42,
+                "description": "My first repository on GitHub!",
+                "html_url": "https://github.com/octocat/Hello-World",
+            }
+        ]
+    }
+    with patch(
+        "urllib.request.urlopen", return_value=_github_search_response(payload)
+    ) as mock_urlopen:
+        result = search_github("hello world")
+
+    assert "octocat/Hello-World" in result
+    assert "42 stars" in result
+    assert "My first repository on GitHub!" in result
+    assert "https://github.com/octocat/Hello-World" in result
+    # GitHub's API rejects requests with no User-Agent header -- confirm we send one.
+    request = mock_urlopen.call_args[0][0]
+    assert request.get_header("User-agent") == "requisite-ai"
+
+
+def test_search_github_no_results() -> None:
+    with patch("urllib.request.urlopen", return_value=_github_search_response({"items": []})):
+        result = search_github("zzzznonexistentrepoquery")
+
+    assert "No GitHub repositories found" in result
+
+
+def test_search_github_rate_limited_returns_actionable_message() -> None:
+    error = urllib.error.HTTPError(
+        url="https://api.github.com/search/repositories",
+        code=403,
+        msg="Forbidden",
+        hdrs=None,  # type: ignore[arg-type]
+        fp=None,
+    )
+    with patch("urllib.request.urlopen", side_effect=error):
+        result = search_github("query")
+
+    assert "rate limited" in result
+
+
+def test_search_github_generic_http_error() -> None:
+    error = urllib.error.HTTPError(
+        url="https://api.github.com/search/repositories",
+        code=500,
+        msg="Server Error",
+        hdrs=None,  # type: ignore[arg-type]
+        fp=None,
+    )
+    with patch("urllib.request.urlopen", side_effect=error):
+        result = search_github("query")
+
+    assert "HTTP 500" in result
+
+
+def test_search_github_network_error() -> None:
+    with patch("urllib.request.urlopen", side_effect=urllib.error.URLError("boom")):
+        result = search_github("query")
+
+    assert "Error searching GitHub" in result
 
 
 # ---------------------------------------------------------------------------

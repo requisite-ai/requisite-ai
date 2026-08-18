@@ -174,7 +174,7 @@ Status legend: ✅ Done · 🚧 Partial · 📋 Not started · N/A Deliberately 
 | Remote tools | ✅ | Streamable HTTP transport |
 | Local tools | ✅ | stdio transport |
 | Filesystem MCP server | 📋 | A native (non-MCP) `"filesystem"` capability already ships — see Capabilities below; an MCP-based one is a config away (`MCPClient.stdio(...)` pointed at any filesystem MCP server) but not shipped as a default |
-| GitHub MCP server | 📋 | `GITHUB_TOKEN` reserved in `.env.example`; works today via `MCPClient` + a GitHub MCP server, just not registered as a default capability yet |
+| GitHub MCP server | 📋 | A native (non-MCP) `"github"` capability already ships (`search_github`, unauthenticated GitHub Search API — ADR-0020); `GITHUB_TOKEN` is reserved in `.env.example` for this separate, authenticated MCP-based one, which would register at a higher priority once built |
 | Databases MCP server | 📋 | Same as above — usable today via `MCPClient`, not a shipped default |
 | Any MCP tool surfaces as a `CapabilityProvider` | ✅ | `BaseMCPClient.register_as_capability(...)` — verified `agent.requires(...)` can't tell native tool from MCP server |
 

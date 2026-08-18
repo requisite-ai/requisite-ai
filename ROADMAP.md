@@ -61,7 +61,7 @@ construction (each lives in its own module, imported lazily).
 | `CapabilityRegistry` — priority + availability-based resolution | ✅ |
 | Default resolvers: `filesystem`, `weather`, `internet_search` | ✅ |
 | `Agent.requires(...)` | ✅ |
-| `github` default resolver (public, unauthenticated REST API) | 📋 |
+| `github` default resolver (public, unauthenticated REST API) | ✅ — `search_github(query)` searches GitHub's free, keyless Search API (`sort=stars`), top 5 results; unauthenticated only (`GITHUB_TOKEN` is reserved separately for the future MCP server, below); see [ADR-0020](docs/adr/0020-github-capability-resolver.md) |
 | Cost-based / policy-based resolution (beyond priority + availability) | 💭 |
 | Conflict handling when two plugins register the same capability at equal priority | 💭 — currently first-registered wins; needs a real spec, not a default |
 

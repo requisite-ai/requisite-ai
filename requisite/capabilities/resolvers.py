@@ -2,13 +2,13 @@
 Default capability resolvers.
 
 These ship with the framework so ``agent.requires(...)`` is demonstrable
-out of the box, with zero extra dependencies and (for two of the three)
-zero API keys. They're intentionally simple reference implementations,
+out of the box, with zero extra dependencies and zero API keys required
+for any of them. They're intentionally simple reference implementations,
 not production-grade integrations -- the point is that application code
 written against the capability name (``"weather"``, ``"internet_search"``,
-``"filesystem"``) keeps working unchanged when a real plugin, an MCP
-server, or a paid API registers a higher-priority provider for the same
-capability later.
+``"filesystem"``, ``"github"``) keeps working unchanged when a real
+plugin, an MCP server, or a paid API registers a higher-priority provider
+for the same capability later.
 
 Register a better provider for the same capability at higher priority to
 have it take over automatically:
@@ -151,6 +151,59 @@ def search_web(query: str) -> str:
     return f"No quick summary found for '{query}'. Try a more specific query."
 
 
+def search_github(query: str) -> str:
+    """Search GitHub repositories and return the top matches.
+
+    Parameters
+    ----------
+    query:
+        The search query, e.g. ``"llm agent framework python"``.
+
+    Notes
+    -----
+    Reference implementation of the ``"github"`` capability, backed by
+    GitHub's free `Search API <https://docs.github.com/en/rest/search>`_.
+    No API key required -- this is deliberately unauthenticated-only; the
+    separate ``GITHUB_TOKEN`` reserved in ``.env.example`` is for a future,
+    higher-priority first-party MCP GitHub server, not this resolver.
+    Subject to GitHub's unauthenticated rate limit (10 searches/minute).
+    For higher limits or authenticated access, register your own provider
+    at a higher priority.
+    """
+    search_url = "https://api.github.com/search/repositories?" + urllib.parse.urlencode(
+        {"q": query, "sort": "stars", "order": "desc", "per_page": 5}
+    )
+    request = urllib.request.Request(
+        search_url,
+        headers={"User-Agent": "requisite-ai", "Accept": "application/vnd.github+json"},
+    )
+    try:
+        with urllib.request.urlopen(request, timeout=_REQUEST_TIMEOUT) as response:
+            data = json.loads(response.read())
+    except urllib.error.HTTPError as exc:
+        if exc.code == 403:
+            return (
+                f"Error searching GitHub for '{query}': rate limited (unauthenticated "
+                "requests are limited to 10 searches/minute). Try again shortly."
+            )
+        return f"Error searching GitHub for '{query}': HTTP {exc.code}."
+    except (urllib.error.URLError, TimeoutError, json.JSONDecodeError) as exc:
+        return f"Error searching GitHub for '{query}': {exc}"
+
+    items = data.get("items") or []
+    if not items:
+        return f"No GitHub repositories found for '{query}'."
+
+    lines = []
+    for item in items:
+        name = item.get("full_name", "unknown")
+        stars = item.get("stargazers_count", 0)
+        description = item.get("description") or "No description."
+        html_url = item.get("html_url", "")
+        lines.append(f"{name} ({stars} stars) - {description} {html_url}")
+    return "\n".join(lines)
+
+
 def register_default_capabilities(registry: CapabilityRegistry) -> None:
     """Register the framework's built-in capability providers on ``registry``.
 
@@ -160,7 +213,9 @@ def register_default_capabilities(registry: CapabilityRegistry) -> None:
     - ``"filesystem"`` -> :func:`read_file`
     - ``"weather"`` -> :func:`get_weather`
     - ``"internet_search"`` -> :func:`search_web`
+    - ``"github"`` -> :func:`search_github`
     """
     registry.register("filesystem", read_file, provider_name="local-filesystem")
     registry.register("weather", get_weather, provider_name="open-meteo")
     registry.register("internet_search", search_web, provider_name="duckduckgo-instant-answer")
+    registry.register("github", search_github, provider_name="github-rest-api")

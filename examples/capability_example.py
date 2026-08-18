@@ -13,15 +13,19 @@ from requisite import Agent
 
 
 def main() -> None:
-    # The three built-in capabilities work with zero setup: "weather" and
-    # "internet_search" call free, keyless public APIs; "filesystem" reads
-    # local files. See requisite/capabilities/resolvers.py.
+    # The four built-in capabilities work with zero setup: "weather",
+    # "internet_search", and "github" call free, keyless public APIs;
+    # "filesystem" reads local files. See requisite/capabilities/resolvers.py.
     agent = Agent(name="Assistant", provider="gemini")
-    agent.requires("weather", "internet_search", "filesystem")
+    agent.requires("weather", "internet_search", "filesystem", "github")
 
     result = agent.run("What's the weather in Tokyo right now?")
     print(result.content)
     print(f"Tools used: {result.tool_calls_executed}")
+
+    github_result = agent.run("Find a popular Python framework for building AI agents on GitHub.")
+    print(github_result.content)
+    print(f"Tools used: {github_result.tool_calls_executed}")
 
     # --- Overriding a capability with a better implementation ---
     #
