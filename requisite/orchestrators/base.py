@@ -21,6 +21,14 @@ from typing import Any, Optional
 
 from pydantic import BaseModel, ConfigDict, Field
 
+#: Sentinel edge target marking a terminating edge in the ``"graph"``
+#: strategy -- see :meth:`~requisite.workflows.workflow.Workflow.add_edge`.
+#: Lives here (rather than in ``workflows/workflow.py``) so both
+#: ``Workflow`` and every orchestrator backend can import it without a
+#: circular import (``native.py`` -> ``workflow.py`` -> ``factory.py`` ->
+#: ``native.py``).
+END = "__end__"
+
 
 class WorkflowResult(BaseModel):
     """The outcome of running a :class:`~requisite.workflows.workflow.Workflow`.

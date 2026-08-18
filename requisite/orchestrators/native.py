@@ -1,33 +1,34 @@
 """
 Native orchestrator: sequential, parallel, reflection, planner,
-supervisor, critic, consensus, debate, map-reduce, hierarchical, and
-tree-of-thoughts execution -- no external orchestration framework
-required.
+supervisor, critic, consensus, debate, map-reduce, hierarchical,
+tree-of-thoughts, and graph execution -- no external orchestration
+framework required.
 
 This is the default backend for :class:`~requisite.workflows.workflow.Workflow`.
-Further strategies (general graph execution) are natural extensions of
-this class -- add a ``_run_<strategy>`` / ``_arun_<strategy>`` pair and a
-branch in :meth:`NativeOrchestrator.run` / :meth:`NativeOrchestrator.arun`;
-nothing else needs to change. See
+Further strategies are natural extensions of this class -- add a
+``_run_<strategy>`` / ``_arun_<strategy>`` pair and a branch in
+:meth:`NativeOrchestrator.run` / :meth:`NativeOrchestrator.arun`; nothing
+else needs to change. See
 ``docs/adr/0011-critic-and-consensus-strategies.md``,
 ``docs/adr/0012-debate-and-map-reduce-strategies.md``,
-``docs/adr/0013-hierarchical-strategy.md``, and
-``docs/adr/0018-tree-of-thoughts-strategy.md`` for which of those fit
-this flat coordinator/worker shape directly and which don't.
+``docs/adr/0013-hierarchical-strategy.md``,
+``docs/adr/0018-tree-of-thoughts-strategy.md``, and
+``docs/adr/0019-graph-execution-strategy.md`` for which of those fit this
+flat coordinator/worker shape directly and which don't.
 """
 
 from __future__ import annotations
 
 import asyncio
 import logging
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 from concurrent.futures import ThreadPoolExecutor
 from typing import TYPE_CHECKING, Any, Literal, Optional
 
 from pydantic import BaseModel, Field
 
 from requisite.core.exceptions import AgentException, ConfigurationException
-from requisite.orchestrators.base import BaseOrchestrator, WorkflowResult
+from requisite.orchestrators.base import END, BaseOrchestrator, WorkflowResult
 
 if TYPE_CHECKING:
     from requisite.agents.agent import Agent, AgentResult
@@ -337,6 +338,17 @@ class NativeOrchestrator(BaseOrchestrator):
         to ``max_depth`` levels, stopping early if any candidate is
         scored as a complete final answer. See
         ``docs/adr/0018-tree-of-thoughts-strategy.md``.
+
+    Graph strategy
+        An arbitrary graph of nodes (``steps``, each an ``Agent`` or a
+        named ``Workflow`` "team") wired together with edges declared
+        ahead of time via ``Workflow.add_edge(...)``. Unlike every
+        strategy above, routing isn't decided by an LLM at run time --
+        the first node (``steps[0]``) is the entry point, then each
+        node's output content is checked against its outgoing edges (in
+        the order they were declared) to pick the next node
+        deterministically. Cycles are allowed, bounded by ``max_steps``
+        (default 25). See ``docs/adr/0019-graph-execution-strategy.md``.
     """
 
     _STRATEGIES = (
@@ -351,6 +363,7 @@ class NativeOrchestrator(BaseOrchestrator):
         "map_reduce",
         "tree_of_thoughts",
         "hierarchical",
+        "graph",
     )
 
     @property
@@ -392,6 +405,8 @@ class NativeOrchestrator(BaseOrchestrator):
             return self._run_tree_of_thoughts(steps, input, **kwargs)
         if strategy == "hierarchical":
             return self._run_hierarchical(steps, input, **kwargs)
+        if strategy == "graph":
+            return self._run_graph(steps, input, **kwargs)
         raise ConfigurationException(
             f"Unknown execution strategy '{strategy}' for the native orchestrator. "
             f"Supported: {', '.join(self._STRATEGIES)}.",
@@ -432,6 +447,8 @@ class NativeOrchestrator(BaseOrchestrator):
             return await self._arun_tree_of_thoughts(steps, input, **kwargs)
         if strategy == "hierarchical":
             return await self._arun_hierarchical(steps, input, **kwargs)
+        if strategy == "graph":
+            return await self._arun_graph(steps, input, **kwargs)
         raise ConfigurationException(
             f"Unknown execution strategy '{strategy}' for the native orchestrator. "
             f"Supported: {', '.join(self._STRATEGIES)}.",
@@ -1298,3 +1315,137 @@ class NativeOrchestrator(BaseOrchestrator):
             reverse=True,
         )
         return [candidate_paths[i] for i in ranked[:beam_width]]
+
+    def _run_graph(
+        self,
+        steps: Sequence[Any],
+        input: str,  # noqa: A002
+        *,
+        edges: Sequence[tuple[str, str, Optional[Callable[[str], bool]]]] = (),
+        max_steps: int = 25,
+        **kwargs: Any,
+    ) -> WorkflowResult:
+        if max_steps < 1:
+            raise ConfigurationException(
+                f"The 'graph' strategy requires max_steps >= 1. Got {max_steps}."
+            )
+        nodes = self._index_graph_nodes(steps, role="graph")
+        edges_by_source = self._validate_graph_edges(edges, nodes)
+
+        results: list[Any] = []
+        current_name = steps[0].name
+        current_input = input
+        for _ in range(max_steps):
+            result = nodes[current_name].run(current_input, **kwargs)
+            results.append(result)
+            current_input = result.content
+            next_name = self._resolve_next_graph_node(current_name, result.content, edges_by_source)
+            if next_name is None:
+                return WorkflowResult(
+                    content=result.content, steps=results, orchestrator=self.name, strategy="graph"
+                )
+            current_name = next_name
+
+        raise AgentException(
+            f"Workflow graph exceeded max_steps={max_steps} without reaching an end.",
+        )
+
+    async def _arun_graph(
+        self,
+        steps: Sequence[Any],
+        input: str,  # noqa: A002
+        *,
+        edges: Sequence[tuple[str, str, Optional[Callable[[str], bool]]]] = (),
+        max_steps: int = 25,
+        **kwargs: Any,
+    ) -> WorkflowResult:
+        if max_steps < 1:
+            raise ConfigurationException(
+                f"The 'graph' strategy requires max_steps >= 1. Got {max_steps}."
+            )
+        nodes = self._index_graph_nodes(steps, role="graph")
+        edges_by_source = self._validate_graph_edges(edges, nodes)
+
+        results: list[Any] = []
+        current_name = steps[0].name
+        current_input = input
+        for _ in range(max_steps):
+            result = await nodes[current_name].arun(current_input, **kwargs)
+            results.append(result)
+            current_input = result.content
+            next_name = self._resolve_next_graph_node(current_name, result.content, edges_by_source)
+            if next_name is None:
+                return WorkflowResult(
+                    content=result.content, steps=results, orchestrator=self.name, strategy="graph"
+                )
+            current_name = next_name
+
+        raise AgentException(
+            f"Workflow graph exceeded max_steps={max_steps} without reaching an end.",
+        )
+
+    @staticmethod
+    def _index_graph_nodes(steps: Sequence[Any], *, role: str) -> dict[str, Any]:
+        """Name-address the ``graph`` strategy's nodes.
+
+        Unlike :meth:`_split_coordinator_and_delegates`, there's no
+        coordinator/worker split here -- every step is a peer node,
+        including ``steps[0]`` (the entry point). Duck-typed
+        (``getattr(node, "name", None)``, not ``isinstance``) for the same
+        reason ``_split_coordinator_and_delegates`` is: a node may be
+        either an ``Agent`` or a named ``Workflow`` "team", and
+        ``native.py`` can't import either at runtime without a circular
+        import.
+        """
+        for node in steps:
+            if getattr(node, "name", None) is None:
+                raise ConfigurationException(
+                    f"The '{role}' strategy requires every node to have a name -- a "
+                    f"Workflow used as a node must be constructed with name=... (got "
+                    f"an unnamed {type(node).__name__}).",
+                )
+        node_names = [node.name for node in steps]
+        if len(set(node_names)) != len(node_names):
+            raise ConfigurationException(
+                f"The '{role}' strategy requires unique node names; got {node_names}.",
+            )
+        return {node.name: node for node in steps}
+
+    @staticmethod
+    def _validate_graph_edges(
+        edges: Sequence[tuple[str, str, Optional[Callable[[str], bool]]]],
+        nodes: dict[str, Any],
+    ) -> dict[str, list[tuple[str, Optional[Callable[[str], bool]]]]]:
+        edges_by_source: dict[str, list[tuple[str, Optional[Callable[[str], bool]]]]] = {}
+        for from_, to, condition in edges:
+            if from_ not in nodes:
+                raise ConfigurationException(
+                    f"Graph edge references unknown source node '{from_}'. "
+                    f"Available nodes: {sorted(nodes)}.",
+                )
+            if to != END and to not in nodes:
+                raise ConfigurationException(
+                    f"Graph edge from '{from_}' references unknown target node '{to}'. "
+                    f"Available nodes: {sorted(nodes)}, or END.",
+                )
+            edges_by_source.setdefault(from_, []).append((to, condition))
+        return edges_by_source
+
+    @staticmethod
+    def _resolve_next_graph_node(
+        current_name: str,
+        output: str,
+        edges_by_source: dict[str, list[tuple[str, Optional[Callable[[str], bool]]]]],
+    ) -> Optional[str]:
+        outgoing = edges_by_source.get(current_name, [])
+        if not outgoing:
+            return None
+        for to, condition in outgoing:
+            if condition is None or condition(output):
+                return None if to == END else to
+        raise AgentException(
+            f"Workflow graph node '{current_name}' produced output that matched none "
+            f"of its outgoing edges' conditions, and none is an unconditional "
+            f"fallback edge. Add a fallback edge (condition=None) or a condition "
+            f"that always matches.",
+        )

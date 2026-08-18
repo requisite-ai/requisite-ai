@@ -26,10 +26,11 @@ Running agents in parallel instead of as a pipeline:
 from __future__ import annotations
 
 import logging
+from collections.abc import Callable
 from typing import Any, Optional
 
 from requisite.core.exceptions import ConfigurationException
-from requisite.orchestrators.base import WorkflowResult
+from requisite.orchestrators.base import END, WorkflowResult
 from requisite.orchestrators.factory import OrchestratorRegistry
 from requisite.orchestrators.factory import default_registry as default_orchestrator_registry
 
@@ -47,7 +48,10 @@ _KNOWN_STRATEGIES = {
     "map_reduce",
     "hierarchical",
     "tree_of_thoughts",
+    "graph",
 }
+
+__all__ = ["END", "Workflow"]
 
 
 class Workflow:
@@ -84,18 +88,20 @@ class Workflow:
           reasoning steps the remaining agents generate, branching and
           pruning a search tree over several levels (see
           :meth:`tree_of_thoughts`).
+        - ``"graph"``: an arbitrary graph of nodes wired together with
+          explicit, developer-declared edges (see :meth:`graph` and
+          :meth:`add_edge`) -- unlike every strategy above, routing isn't
+          decided by an LLM at run time; the graph's shape is fixed when
+          you build it.
 
-        Further multi-agent strategies remain on the roadmap (general
-        graph execution) -- each becomes a new ``strategy`` value
-        handled by the underlying orchestrator, with no change to this
-        class's public API. ``"reflection"``, ``"planner"``, ``"critic"``,
-        ``"consensus"``, ``"debate"``, ``"map_reduce"``, ``"hierarchical"``,
-        and ``"tree_of_thoughts"`` are currently only implemented on the
-        ``"native"`` orchestrator backend. ``"supervisor"`` is implemented
-        on both ``"native"`` and ``"langgraph"`` -- on langgraph it's a
-        real conditional graph (``add_conditional_edges`` plus a
-        loop-back cycle), not a disguised Python loop; see
-        ``docs/adr/0016-langgraph-branching.md``.
+        ``"reflection"``, ``"planner"``, ``"critic"``, ``"consensus"``,
+        ``"debate"``, ``"map_reduce"``, ``"hierarchical"``,
+        ``"tree_of_thoughts"``, and ``"graph"`` are currently only
+        implemented on the ``"native"`` orchestrator backend.
+        ``"supervisor"`` is implemented on both ``"native"`` and
+        ``"langgraph"`` -- on langgraph it's a real conditional graph
+        (``add_conditional_edges`` plus a loop-back cycle), not a
+        disguised Python loop; see ``docs/adr/0016-langgraph-branching.md``.
     orchestrator:
         Execution backend: ``"native"`` (default, pure Python, no extra
         dependency) or ``"langgraph"``. Change via :meth:`use_langgraph` /
@@ -129,6 +135,7 @@ class Workflow:
     ) -> None:
         self.name = name
         self._steps: list[Any] = []
+        self._edges: list[tuple[str, str, Optional[Callable[[str], bool]]]] = []
         self._strategy = strategy
         self._orchestrator_name = orchestrator
         self._registry = registry or default_orchestrator_registry
@@ -137,11 +144,30 @@ class Workflow:
         """Append a step to the pipeline. Returns ``self`` for chaining.
 
         Normally an :class:`~requisite.agents.agent.Agent`. Under the
-        :meth:`hierarchical` strategy, a step may instead be another
-        named ``Workflow`` used as a delegate ("team") -- see
-        :meth:`hierarchical`.
+        :meth:`hierarchical` or :meth:`graph` strategies, a step may
+        instead be another named ``Workflow`` used as a delegate/node
+        ("team") -- see :meth:`hierarchical` and :meth:`graph`.
         """
         self._steps.append(agent)
+        return self
+
+    def add_edge(
+        self, from_: str, to: str, *, condition: Optional[Callable[[str], bool]] = None
+    ) -> "Workflow":
+        """Declare an edge for the :meth:`graph` strategy. Returns ``self`` for chaining.
+
+        ``from_`` and ``to`` are node names (``agent.name``, matching how
+        every other strategy addresses workers/delegates by name), or
+        ``to=`` may be :data:`~requisite.workflows.workflow.END` to mark a
+        terminating edge. ``condition``, if given, receives the source
+        node's output content (a ``str``) and returns ``bool``; ``None``
+        means "always matches" -- useful as a fallback/default edge when
+        added last. When a node has multiple outgoing edges, they're
+        evaluated in the order ``add_edge`` was called and the first match
+        wins. A node with no outgoing edges at all terminates the graph
+        implicitly, so wiring every leaf to ``END`` is optional.
+        """
+        self._edges.append((from_, to, condition))
         return self
 
     @property
@@ -286,6 +312,23 @@ class Workflow:
         self._strategy = "tree_of_thoughts"
         return self
 
+    def graph(self) -> "Workflow":
+        """Switch to the graph strategy. Returns ``self`` for chaining.
+
+        Execute an arbitrary graph of nodes (added via :meth:`add`, each
+        an :class:`~requisite.agents.agent.Agent` or a named ``Workflow``
+        "team") wired together with edges declared via :meth:`add_edge`.
+        The first node added is the entry point. Unlike every other
+        strategy, routing is deterministic and developer-declared, not
+        decided by an LLM at run time: each node runs, then its output
+        content is checked against its outgoing edges (in the order they
+        were added) to pick the next node. Cycles are allowed -- pass
+        ``max_steps=`` to :meth:`run`/:meth:`arun` to bound them (default
+        25). See ``docs/adr/0019-graph-execution-strategy.md``.
+        """
+        self._strategy = "graph"
+        return self
+
     def use_native(self) -> "Workflow":
         """Use the built-in, dependency-free execution engine. Returns ``self`` for chaining."""
         self._orchestrator_name = "native"
@@ -331,6 +374,8 @@ class Workflow:
             raise ConfigurationException(
                 f"Unknown strategy '{self._strategy}'. Supported: {sorted(_KNOWN_STRATEGIES)}",
             )
+        if self._strategy == "graph":
+            kwargs.setdefault("edges", self._edges)
         orchestrator_instance = self._registry.create(self._orchestrator_name)
         return orchestrator_instance.run(self._steps, input, strategy=self._strategy, **kwargs)
 
@@ -340,6 +385,8 @@ class Workflow:
             raise ConfigurationException(
                 f"Unknown strategy '{self._strategy}'. Supported: {sorted(_KNOWN_STRATEGIES)}",
             )
+        if self._strategy == "graph":
+            kwargs.setdefault("edges", self._edges)
         orchestrator_instance = self._registry.create(self._orchestrator_name)
         return await orchestrator_instance.arun(
             self._steps, input, strategy=self._strategy, **kwargs

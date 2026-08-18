@@ -75,7 +75,7 @@ construction (each lives in its own module, imported lazily).
 | Native orchestrator: sequential strategy | ✅ |
 | Native orchestrator: parallel strategy | ✅ |
 | `langgraph` orchestrator backend (linear graph) | ✅ |
-| `langgraph` backend: branching / conditional graphs | ✅ — `supervisor` strategy only (real `add_conditional_edges` + a loop-back cycle, not a disguised loop); `reflection`/`hierarchical` on langgraph remain 📋 — see [ADR-0016](docs/adr/0016-langgraph-branching.md) |
+| `langgraph` backend: branching / conditional graphs | ✅ — `supervisor` strategy only (real `add_conditional_edges` + a loop-back cycle, not a disguised loop); `reflection`/`hierarchical`/`graph` on langgraph remain 📋 — see [ADR-0016](docs/adr/0016-langgraph-branching.md) |
 | Supervisor strategy (a coordinating agent delegates to others) | ✅ — `native` orchestrator only; see [ADR-0007](docs/adr/0007-multi-agent-orchestration-strategies.md) |
 | Planner strategy | ✅ — `native` orchestrator only; see [ADR-0007](docs/adr/0007-multi-agent-orchestration-strategies.md) |
 | Reflection strategy (agent critiques and revises its own output) | ✅ — `native` orchestrator only; see [ADR-0007](docs/adr/0007-multi-agent-orchestration-strategies.md) |
@@ -83,7 +83,7 @@ construction (each lives in its own module, imported lazily).
 | Hierarchical strategy | ✅ — `native` orchestrator only; a delegate may be an `Agent` or a named `Workflow` (nested "team"), giving real recursive delegation; see [ADR-0013](docs/adr/0013-hierarchical-strategy.md) |
 | Map-reduce strategy | ✅ — `native` orchestrator only; work items via `map_items=`, round-robin across mappers; see [ADR-0012](docs/adr/0012-debate-and-map-reduce-strategies.md) |
 | Tree-of-thoughts strategy | ✅ — `native` orchestrator only; evaluator (`steps[0]`) scores candidates thinkers (`steps[1:]`) generate, branching and pruning a search tree via `breadth`/`beam_width`/`max_depth`; see [ADR-0018](docs/adr/0018-tree-of-thoughts-strategy.md) |
-| General graph execution (arbitrary DAGs, not just linear/parallel) | 📋 |
+| General graph execution (arbitrary DAGs, not just linear/parallel) | ✅ — `native` orchestrator only; nodes (`Agent` or named `Workflow`) wired with developer-declared edges via `Workflow.add_edge(from_, to, condition=...)` — routing is deterministic, not LLM-decided like every other strategy; cycles allowed, bounded by `max_steps`; see [ADR-0019](docs/adr/0019-graph-execution-strategy.md) |
 | CrewAI orchestrator backend | 📋 — registered today as a clear "not yet implemented" placeholder |
 | AutoGen orchestrator backend | 📋 — same |
 

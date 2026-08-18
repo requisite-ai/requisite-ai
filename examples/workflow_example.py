@@ -13,7 +13,7 @@ instead of letting Gemini reject the call with a 429. See the "Rate
 limiting" section of README.md and docs/adr/0008-rate-limiting.md.
 """
 
-from requisite import Agent, RateLimiter, Workflow
+from requisite import END, Agent, RateLimiter, Workflow
 
 # Shared across every agent below since they all draw on the same Gemini
 # API key/quota -- a limiter scoped to just one agent wouldn't help, since
@@ -282,6 +282,81 @@ def main() -> None:
         f"(generated {len(tot_result.steps)} candidate thoughts across up to 3 levels, "
         f"pruned to a beam of 2 each level)"
     )
+
+    # Graph: an arbitrary graph of nodes wired with developer-declared
+    # edges. Unlike every strategy above, routing isn't decided by an LLM
+    # at run time -- Triage's output content is checked against each
+    # edge's condition to pick the next node. Run twice with different
+    # inputs to show two genuinely different paths get taken.
+    triage_agent = Agent(
+        name="Triage",
+        provider="gemini",
+        system_prompt=(
+            "You triage incoming requests. If answering well requires factual "
+            "research, respond with exactly: NEEDS_RESEARCH: <one-sentence reason>. "
+            "Otherwise, if you can answer directly without research, respond with "
+            "exactly: DIRECT_ANSWER: <your answer>."
+        ),
+        rate_limiter=shared_rate_limit,
+    )
+    triage_workflow = Workflow().graph()
+    triage_workflow.add(triage_agent).add(research).add(writer)
+    triage_workflow.add_edge(
+        "Triage", "Researcher", condition=lambda c: c.strip().startswith("NEEDS_RESEARCH")
+    )
+    triage_workflow.add_edge(
+        "Triage", "Writer", condition=lambda c: c.strip().startswith("DIRECT_ANSWER")
+    )
+    triage_workflow.add_edge("Researcher", "Writer")
+    # "Writer" has no outgoing edges, so it terminates the graph implicitly.
+
+    direct_result = triage_workflow.run("What is 2 + 2?")
+    print("\n--- graph, direct-answer path (native) ---")
+    print(direct_result.content)
+    print(f"(path taken: {[s.agent_name for s in direct_result.steps]})")
+
+    research_result = triage_workflow.run(
+        "Research the current state of quantum error correction and summarize it."
+    )
+    print("\n--- graph, needs-research path (native) ---")
+    print(research_result.content)
+    print(f"(path taken: {[s.agent_name for s in research_result.steps]})")
+
+    # A cycle: a single node loops back on itself -- via add_edge(name,
+    # name) -- until its own output satisfies a condition, then reaches
+    # END. Bounded by max_steps so a model that never complies can't loop
+    # forever; wrapped in try/except since whether the model actually
+    # emits the sentinel within max_steps depends on its own judgment
+    # (the same category of risk reflection's NO_CHANGES_NEEDED sentinel
+    # already carries elsewhere in this file).
+    drafter_agent = Agent(
+        name="Drafter",
+        provider="gemini",
+        system_prompt=(
+            "You are shortening a product pitch for an open-source AI framework, "
+            "one round at a time. Count the words in the current pitch. If it is "
+            "8 words or fewer, respond with exactly 'FINAL:' followed by the "
+            "pitch unchanged. Otherwise, respond with a shorter version that "
+            "preserves the meaning (no prefix) -- and nothing else."
+        ),
+        rate_limiter=shared_rate_limit,
+    )
+    cycle_workflow = Workflow().graph()
+    cycle_workflow.add(drafter_agent)
+    cycle_workflow.add_edge("Drafter", END, condition=lambda c: c.strip().startswith("FINAL:"))
+    cycle_workflow.add_edge("Drafter", "Drafter")
+    try:
+        cycle_result = cycle_workflow.run(
+            "Write an initial one-sentence pitch (15-20 words) for an open-source "
+            "AI framework that lets developers swap LLM providers without "
+            "rewriting code.",
+            max_steps=8,
+        )
+        print("\n--- graph, self-revising cycle (native) ---")
+        print(cycle_result.content)
+        print(f"(revision rounds: {len(cycle_result.steps)})")
+    except Exception as exc:  # noqa: BLE001
+        print(f"\ngraph cycle didn't converge within max_steps this run: {exc}")
 
 
 if __name__ == "__main__":

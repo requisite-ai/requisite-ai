@@ -7,6 +7,31 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.18.0] - 2026-08-19
+
+### Added
+
+- General graph execution: a new `"graph"` multi-agent strategy -- see
+  [ADR-0019](docs/adr/0019-graph-execution-strategy.md) for the full
+  design. Closes the last remaining line in `ROADMAP.md`'s "Agents &
+  multi-agent orchestration" section.
+- `Workflow.graph()` / `Workflow.add_edge(from_, to, *, condition=None)`:
+  nodes (an `Agent` or a named `Workflow` "team", added via `.add()` as
+  usual) are wired together with developer-declared edges. Unlike every
+  other strategy, routing isn't decided by an LLM at run time -- each
+  edge's `condition` is a plain Python callable checked against the
+  source node's output content; the first matching edge (in declaration
+  order) is taken. The first node added is the entry point; a node
+  reaches `requisite.END` via a matching edge, or terminates implicitly
+  if it has no outgoing edges. Cycles are allowed, bounded by `max_steps=`
+  (default 25).
+- New top-level export `requisite.END`, the sentinel edge target marking
+  a terminating edge in the `"graph"` strategy.
+- `examples/workflow_example.py` extended with `.graph()` demonstrations:
+  a conditional-branch triage pipeline (run twice with different inputs
+  to show two different paths taken) and a self-revising cycle bounded
+  by `max_steps=`.
+
 ## [0.17.0] - 2026-08-17
 
 ### Added

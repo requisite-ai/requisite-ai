@@ -28,7 +28,7 @@ from requisite.orchestrators.native import (
 )
 from requisite.providers.base import BaseProvider
 from requisite.providers.factory import ProviderRegistry
-from requisite.workflows.workflow import Workflow
+from requisite.workflows.workflow import END, Workflow
 
 
 class EchoProvider(BaseProvider):
@@ -1155,6 +1155,164 @@ async def test_workflow_arun_hierarchical() -> None:
     result = await workflow.arun("task")
 
     assert result.content == "done"
+
+
+# ---------------------------------------------------------------------------
+# Graph strategy
+# ---------------------------------------------------------------------------
+
+
+def test_workflow_graph_linear_three_nodes() -> None:
+    workflow = Workflow().graph()
+    workflow.add(make_agent("A", "a")).add(make_agent("B", "b")).add(make_agent("C", "c"))
+    workflow.add_edge("A", "B").add_edge("B", "C")
+
+    result = workflow.run("start")
+
+    assert result.strategy == "graph"
+    assert result.orchestrator == "native"
+    assert [s.agent_name for s in result.steps] == ["A", "B", "C"]
+    assert result.content == "c:b:a:start"
+
+
+def test_workflow_graph_conditional_branch_takes_yes_edge() -> None:
+    workflow = Workflow().graph()
+    workflow.add(make_agent("Router", "router"))
+    workflow.add(make_agent("BranchYes", "yes-branch"))
+    workflow.add(make_agent("BranchNo", "no-branch"))
+    workflow.add_edge("Router", "BranchYes", condition=lambda c: "yes" in c)
+    workflow.add_edge("Router", "BranchNo", condition=lambda c: "no" in c)
+
+    result = workflow.run("please say yes")
+
+    assert [s.agent_name for s in result.steps] == ["Router", "BranchYes"]
+
+
+def test_workflow_graph_conditional_branch_takes_no_edge() -> None:
+    workflow = Workflow().graph()
+    workflow.add(make_agent("Router", "router"))
+    workflow.add(make_agent("BranchYes", "yes-branch"))
+    workflow.add(make_agent("BranchNo", "no-branch"))
+    workflow.add_edge("Router", "BranchYes", condition=lambda c: "yes" in c)
+    workflow.add_edge("Router", "BranchNo", condition=lambda c: "no" in c)
+
+    result = workflow.run("please say no")
+
+    assert [s.agent_name for s in result.steps] == ["Router", "BranchNo"]
+
+
+def test_workflow_graph_edge_to_end_terminates() -> None:
+    workflow = Workflow().graph()
+    workflow.add(make_agent("A", "a")).add(make_agent("B", "b"))
+    workflow.add_edge("A", "B", condition=lambda c: "stop" not in c)
+    workflow.add_edge("A", END, condition=lambda c: "stop" in c)
+
+    result = workflow.run("please stop here")
+
+    assert [s.agent_name for s in result.steps] == ["A"]
+    assert result.content == "a:please stop here"
+
+
+def test_workflow_graph_node_with_no_outgoing_edges_terminates_implicitly() -> None:
+    workflow = Workflow().graph()
+    workflow.add(make_agent("Solo", "solo"))
+
+    result = workflow.run("task")
+
+    assert [s.agent_name for s in result.steps] == ["Solo"]
+    assert result.content == "solo:task"
+
+
+def test_workflow_graph_cycle_terminates_via_condition() -> None:
+    workflow = Workflow().graph()
+    workflow.add(make_agent("Counter", "count"))
+    workflow.add_edge("Counter", END, condition=lambda c: c.count("count:") >= 3)
+    workflow.add_edge("Counter", "Counter")
+
+    result = workflow.run("start")
+
+    assert [s.agent_name for s in result.steps] == ["Counter", "Counter", "Counter"]
+    assert result.content == "count:count:count:start"
+
+
+def test_workflow_graph_exceeds_max_steps_raises() -> None:
+    workflow = Workflow().graph()
+    workflow.add(make_agent("Looper", "loop"))
+    workflow.add_edge("Looper", "Looper")
+
+    with pytest.raises(AgentException, match="max_steps"):
+        workflow.run("task", max_steps=2)
+
+
+def test_workflow_graph_no_matching_edge_raises() -> None:
+    workflow = Workflow().graph()
+    workflow.add(make_agent("A", "a")).add(make_agent("B", "b"))
+    workflow.add_edge("A", "B", condition=lambda c: "never" in c)
+
+    with pytest.raises(AgentException, match="matched none"):
+        workflow.run("task")
+
+
+def test_workflow_graph_unknown_edge_source_raises() -> None:
+    workflow = Workflow().graph()
+    workflow.add(make_agent("A", "a"))
+    workflow.add_edge("Ghost", "A")
+
+    with pytest.raises(ConfigurationException, match="unknown source node"):
+        workflow.run("task")
+
+
+def test_workflow_graph_unknown_edge_target_raises() -> None:
+    workflow = Workflow().graph()
+    workflow.add(make_agent("A", "a"))
+    workflow.add_edge("A", "Ghost")
+
+    with pytest.raises(ConfigurationException, match="unknown target node"):
+        workflow.run("task")
+
+
+def test_workflow_graph_duplicate_node_names_raises() -> None:
+    workflow = Workflow().graph()
+    workflow.add(make_agent("Dup", "a")).add(make_agent("Dup", "b"))
+
+    with pytest.raises(ConfigurationException, match="unique node names"):
+        workflow.run("task")
+
+
+def test_workflow_graph_unnamed_workflow_node_raises() -> None:
+    workflow = Workflow().graph()
+    workflow.add(make_agent("A", "a")).add(Workflow())  # no name=
+
+    with pytest.raises(ConfigurationException, match="name"):
+        workflow.run("task")
+
+
+def test_workflow_graph_nested_workflow_node() -> None:
+    team = Workflow(name="Team")
+    team.add(make_agent("SubWorker", "sub"))
+
+    workflow = Workflow().graph()
+    workflow.add(make_agent("A", "a")).add(team)
+    workflow.add_edge("A", "Team")
+
+    result = workflow.run("task")
+
+    assert len(result.steps) == 2
+    assert result.steps[0].agent_name == "A"
+    assert isinstance(result.steps[1], WorkflowResult)
+    assert result.steps[1].content == "sub:a:task"
+
+
+@pytest.mark.asyncio
+async def test_workflow_arun_graph() -> None:
+    workflow = Workflow().graph()
+    workflow.add(make_agent("A", "a")).add(make_agent("B", "b"))
+    workflow.add_edge("A", "B")
+
+    result = await workflow.arun("start")
+
+    assert [s.agent_name for s in result.steps] == ["A", "B"]
+    assert result.content == "b:a:start"
 
 
 def test_default_orchestrator_registry_has_native_and_langgraph() -> None:

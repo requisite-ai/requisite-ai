@@ -140,7 +140,7 @@ Status legend: ✅ Done · 🚧 Partial · 📋 Not started · N/A Deliberately 
 | Hierarchical | ✅ | `native` orchestrator only — same shape as Supervisor, except a delegate may be an `Agent` or a named `Workflow` (nested "team"); ADR-0013 |
 | Map-reduce | ✅ | `native` orchestrator only — reducer (`steps[0]`) combines mapper (`steps[1:]`) results for `map_items=`, assigned round-robin; ADR-0012 |
 | Tree of thoughts | ✅ | `native` orchestrator only — evaluator (`steps[0]`) scores candidate reasoning steps thinkers (`steps[1:]`) generate; `breadth`/`beam_width`/`max_depth` control the search; ADR-0018 |
-| Graph execution (arbitrary DAGs) | 🚧 | `LangGraphOrchestrator` builds two specific graph shapes today (linear for sequential, conditional+cycle for supervisor — ADR-0016); general arbitrary DAGs are still 📋 |
+| Graph execution (arbitrary DAGs) | ✅ | `native` orchestrator only — nodes (`Agent` or named `Workflow`) wired with developer-declared edges via `Workflow.add_edge(from_, to, condition=...)`; routing is deterministic (checked against a node's output), not LLM-decided like every strategy above; cycles allowed, bounded by `max_steps`; ADR-0019. `LangGraphOrchestrator` still only builds two specific graph shapes (linear for sequential, conditional+cycle for supervisor — ADR-0016); a generic langgraph graph-builder remains 📋 |
 
 ## Orchestration
 
