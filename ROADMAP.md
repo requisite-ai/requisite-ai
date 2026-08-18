@@ -169,8 +169,8 @@ original interface design).
 | Item | Status | Notes |
 |---|---|---|
 | Structured (JSON) logging | ✅ | `requisite.telemetry.JSONFormatter` + `configure_logging()` — opt-in, never automatic; see [ADR-0003](docs/adr/0003-prompt-templates-structured-logging-conversation-policy.md) |
-| Tracing (e.g. OpenTelemetry spans around provider calls) | 📋 | |
-| Metrics (request counts, latency, token usage aggregation) | 📋 | |
+| Tracing (e.g. OpenTelemetry spans around provider calls) | ✅ | `requisite.telemetry.otel.get_tracer()` — spans on every `AI` provider call and the `Agent` tool-calling loop (including tool-call children), nesting automatically via OTel's context propagation; opt-in like structured logging, but even more so — `opentelemetry-api` only (no `-sdk`), no-op by design without an app-configured provider; see [ADR-0021](docs/adr/0021-opentelemetry-tracing-and-metrics.md) |
+| Metrics (request counts, latency, token usage aggregation) | ✅ | `requisite.telemetry.otel.get_meter()` — request counts, latency histograms, and token-usage counters on `AI` calls; run counts, run duration, and tool-call counts on `Agent`; see [ADR-0021](docs/adr/0021-opentelemetry-tracing-and-metrics.md) |
 
 ## CLI
 

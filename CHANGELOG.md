@@ -7,6 +7,31 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.20.0] - 2026-08-19
+
+### Added
+
+- OpenTelemetry tracing and metrics -- see
+  [ADR-0021](docs/adr/0021-opentelemetry-tracing-and-metrics.md) for the
+  full design. Closes both remaining lines in `ROADMAP.md`'s Telemetry
+  section.
+- `requisite.telemetry.otel.get_tracer()`/`get_meter()`: spans on every
+  `AI` provider call (`chat_response`, `achat_response`, `stream`,
+  `astream`, `stream_response`, `astream_response`) and on `Agent.run`/
+  `arun`'s tool-calling loop, including per-tool-call child spans that
+  nest automatically -- verified against a real exporter, including
+  concurrent tool calls under `arun`. Request counts, latency
+  histograms, and token-usage counters on `AI`; run counts, run
+  duration, and tool-call counts on `Agent`.
+- Install with `pip install requisite-ai[otel]` (`opentelemetry-api`
+  only -- the application installs `opentelemetry-sdk` plus whichever
+  exporter it wants and configures the provider). Without
+  `opentelemetry-api` installed, or without an app-configured provider,
+  every instrumentation call is a safe no-op -- opt-in, never automatic,
+  matching structured logging's existing convention.
+- `examples/telemetry_example.py`: configures a console-exporting
+  tracer/meter and runs a real `Agent` to show the emitted span tree.
+
 ## [0.19.0] - 2026-08-19
 
 ### Added

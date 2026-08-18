@@ -22,6 +22,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import time
 from collections.abc import Callable, Sequence
 from typing import Any, Optional, Union
 
@@ -39,10 +40,23 @@ from requisite.memory.policies import BaseConversationPolicy
 from requisite.providers.base import BaseProvider
 from requisite.providers.factory import ProviderRegistry
 from requisite.skills.base import BaseSkill
+from requisite.telemetry.otel import get_meter, get_tracer
 from requisite.tools.base import Tool
 from requisite.tools.registry import ToolRegistry
 
 logger = logging.getLogger("requisite.agents")
+
+_tracer = get_tracer("requisite.agent")
+_meter = get_meter("requisite.agent")
+_run_counter = _meter.create_counter(
+    "requisite.agent.runs", description="Agent.run()/arun() calls", unit="1"
+)
+_run_duration = _meter.create_histogram(
+    "requisite.agent.run.duration", description="Agent.run()/arun() duration", unit="s"
+)
+_tool_call_counter = _meter.create_counter(
+    "requisite.agent.tool_calls", description="Tool calls executed by an Agent", unit="1"
+)
 
 ToolLike = Union[Tool, Callable[..., Any]]
 
@@ -369,38 +383,55 @@ class Agent:
         available_tools = self._tool_registry.all() or None
         tools_executed: list[str] = []
 
-        for iteration in range(1, self.max_iterations + 1):
-            response = self._ai.chat_response(messages, tools=available_tools, **kwargs)
+        run_attributes = {"requisite.agent_name": self.name}
+        with _tracer.start_as_current_span("requisite.agent.run", attributes=run_attributes):
+            run_start = time.monotonic()
+            run_status = "error"
+            try:
+                for iteration in range(1, self.max_iterations + 1):
+                    response = self._ai.chat_response(messages, tools=available_tools, **kwargs)
 
-            if not response.has_tool_calls:
-                if self._memory is not None and user_text is not None:
-                    # Only the user's turn and the final answer are persisted --
-                    # not the intermediate tool-call round-trip (see class docstring).
-                    self._memory.append(self._session_id, Message.user(user_text))  # type: ignore[arg-type]
-                    self._memory.append(self._session_id, Message.assistant(response.content))  # type: ignore[arg-type]
-                return AgentResult(
-                    content=response.content,
-                    agent_name=self.name,
-                    iterations=iteration,
-                    tool_calls_executed=tools_executed,
-                    raw_response=response,
+                    if not response.has_tool_calls:
+                        if self._memory is not None and user_text is not None:
+                            # Only the user's turn and the final answer are persisted --
+                            # not the intermediate tool-call round-trip (see class docstring).
+                            self._memory.append(self._session_id, Message.user(user_text))  # type: ignore[arg-type]
+                            self._memory.append(
+                                self._session_id,  # type: ignore[arg-type]
+                                Message.assistant(response.content),
+                            )
+                        run_status = "success"
+                        return AgentResult(
+                            content=response.content,
+                            agent_name=self.name,
+                            iterations=iteration,
+                            tool_calls_executed=tools_executed,
+                            raw_response=response,
+                        )
+
+                    messages.append(
+                        Message.assistant_tool_calls(response.tool_calls, content=response.content)
+                    )
+                    for call in response.tool_calls:
+                        tool_instance = self._tool_registry.get(call.name)
+                        tool_attributes = {**run_attributes, "requisite.tool_name": call.name}
+                        with _tracer.start_as_current_span(
+                            "requisite.agent.tool_call", attributes=tool_attributes
+                        ):
+                            result = tool_instance.execute(**call.arguments)
+                        _tool_call_counter.add(1, tool_attributes)
+                        tools_executed.append(call.name)
+                        messages.append(
+                            Message.tool_result(str(result), tool_call_id=call.id, name=call.name)
+                        )
+
+                raise AgentException(
+                    f"Agent '{self.name}' exceeded max_iterations={self.max_iterations} "
+                    f"without reaching a final answer.",
                 )
-
-            messages.append(
-                Message.assistant_tool_calls(response.tool_calls, content=response.content)
-            )
-            for call in response.tool_calls:
-                tool_instance = self._tool_registry.get(call.name)
-                result = tool_instance.execute(**call.arguments)
-                tools_executed.append(call.name)
-                messages.append(
-                    Message.tool_result(str(result), tool_call_id=call.id, name=call.name)
-                )
-
-        raise AgentException(
-            f"Agent '{self.name}' exceeded max_iterations={self.max_iterations} "
-            f"without reaching a final answer.",
-        )
+            finally:
+                _run_duration.record(time.monotonic() - run_start, run_attributes)
+                _run_counter.add(1, {**run_attributes, "requisite.status": run_status})
 
     async def arun(self, prompt: Union[str, Sequence[Message]], **kwargs: Any) -> AgentResult:
         """Async counterpart to :meth:`run`."""
@@ -418,47 +449,71 @@ class Agent:
         available_tools = self._tool_registry.all() or None
         tools_executed: list[str] = []
 
-        for iteration in range(1, self.max_iterations + 1):
-            response = await self._ai.achat_response(messages, tools=available_tools, **kwargs)
-
-            if not response.has_tool_calls:
-                if self._memory is not None and user_text is not None:
-                    await self._memory.aappend(self._session_id, Message.user(user_text))  # type: ignore[arg-type]
-                    await self._memory.aappend(
-                        self._session_id,  # type: ignore[arg-type]
-                        Message.assistant(response.content),
+        run_attributes = {"requisite.agent_name": self.name}
+        with _tracer.start_as_current_span("requisite.agent.run", attributes=run_attributes):
+            run_start = time.monotonic()
+            run_status = "error"
+            try:
+                for iteration in range(1, self.max_iterations + 1):
+                    response = await self._ai.achat_response(
+                        messages, tools=available_tools, **kwargs
                     )
-                return AgentResult(
-                    content=response.content,
-                    agent_name=self.name,
-                    iterations=iteration,
-                    tool_calls_executed=tools_executed,
-                    raw_response=response,
-                )
 
-            messages.append(
-                Message.assistant_tool_calls(response.tool_calls, content=response.content)
-            )
-            # Independent tool calls from the same turn run concurrently --
-            # asyncio.gather preserves input order in its results regardless
-            # of completion order, so messages/tools_executed stay
-            # deterministic even though execution isn't sequential.
-            results = await asyncio.gather(
-                *(
-                    self._tool_registry.get(call.name).aexecute(**call.arguments)
-                    for call in response.tool_calls
-                )
-            )
-            for call, result in zip(response.tool_calls, results):
-                tools_executed.append(call.name)
-                messages.append(
-                    Message.tool_result(str(result), tool_call_id=call.id, name=call.name)
-                )
+                    if not response.has_tool_calls:
+                        if self._memory is not None and user_text is not None:
+                            await self._memory.aappend(self._session_id, Message.user(user_text))  # type: ignore[arg-type]
+                            await self._memory.aappend(
+                                self._session_id,  # type: ignore[arg-type]
+                                Message.assistant(response.content),
+                            )
+                        run_status = "success"
+                        return AgentResult(
+                            content=response.content,
+                            agent_name=self.name,
+                            iterations=iteration,
+                            tool_calls_executed=tools_executed,
+                            raw_response=response,
+                        )
 
-        raise AgentException(
-            f"Agent '{self.name}' exceeded max_iterations={self.max_iterations} "
-            f"without reaching a final answer.",
-        )
+                    messages.append(
+                        Message.assistant_tool_calls(response.tool_calls, content=response.content)
+                    )
+
+                    async def _traced_aexecute(call: Any) -> Any:
+                        tool_attributes = {**run_attributes, "requisite.tool_name": call.name}
+                        with _tracer.start_as_current_span(
+                            "requisite.agent.tool_call", attributes=tool_attributes
+                        ):
+                            result = await self._tool_registry.get(call.name).aexecute(
+                                **call.arguments
+                            )
+                        _tool_call_counter.add(1, tool_attributes)
+                        return result
+
+                    # Independent tool calls from the same turn run concurrently --
+                    # asyncio.gather preserves input order in its results regardless
+                    # of completion order, so messages/tools_executed stay
+                    # deterministic even though execution isn't sequential. Each
+                    # gathered coroutine becomes its own asyncio.Task with an
+                    # independent copy of the current OTel context, so each tool
+                    # call's span correctly nests under this run's span without
+                    # cross-task leakage.
+                    results = await asyncio.gather(
+                        *(_traced_aexecute(call) for call in response.tool_calls)
+                    )
+                    for call, result in zip(response.tool_calls, results):
+                        tools_executed.append(call.name)
+                        messages.append(
+                            Message.tool_result(str(result), tool_call_id=call.id, name=call.name)
+                        )
+
+                raise AgentException(
+                    f"Agent '{self.name}' exceeded max_iterations={self.max_iterations} "
+                    f"without reaching a final answer.",
+                )
+            finally:
+                _run_duration.record(time.monotonic() - run_start, run_attributes)
+                _run_counter.add(1, {**run_attributes, "requisite.status": run_status})
 
     def __repr__(self) -> str:  # pragma: no cover - trivial
         return f"Agent(name={self.name!r}, provider={self._ai.provider.name!r})"

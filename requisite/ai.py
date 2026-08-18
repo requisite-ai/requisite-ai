@@ -26,6 +26,7 @@ Injecting an isolated registry / settings (useful in tests):
 from __future__ import annotations
 
 import logging
+import time
 from collections.abc import AsyncIterator, Iterator, Sequence
 from typing import Any, Optional, TypeVar, Union
 
@@ -37,7 +38,20 @@ from requisite.core.interfaces import ChatResponse, Message, StreamChunk
 from requisite.core.rate_limiter import RateLimiter
 from requisite.providers.base import BaseProvider
 from requisite.providers.factory import ProviderRegistry, default_registry
+from requisite.telemetry.otel import get_meter, get_tracer
 from requisite.tools.registry import ToolLike, resolve_tool_like
+
+_tracer = get_tracer("requisite.ai")
+_meter = get_meter("requisite.ai")
+_request_counter = _meter.create_counter(
+    "requisite.ai.requests", description="AI facade calls made to a provider", unit="1"
+)
+_request_duration = _meter.create_histogram(
+    "requisite.ai.request.duration", description="AI facade call duration", unit="s"
+)
+_token_counter = _meter.create_counter(
+    "requisite.ai.tokens", description="Tokens used per AI facade call", unit="1"
+)
 
 logger = logging.getLogger("requisite")
 
@@ -253,14 +267,37 @@ class AI:
         resolved_tools = [resolve_tool_like(t) for t in tools] if tools else None
         if self._rate_limiter is not None:
             self._rate_limiter.acquire()
-        return self._provider.chat(
-            messages,
-            model=model,
-            temperature=effective_temperature,
-            tools=resolved_tools,
-            response_model=response_model,
-            **kwargs,
-        )
+        attributes = {
+            "requisite.provider": self._provider.name,
+            "requisite.model": model or self._settings.model,
+        }
+        with _tracer.start_as_current_span("requisite.ai.chat_response", attributes=attributes):
+            start = time.monotonic()
+            try:
+                response = self._provider.chat(
+                    messages,
+                    model=model,
+                    temperature=effective_temperature,
+                    tools=resolved_tools,
+                    response_model=response_model,
+                    **kwargs,
+                )
+            except Exception:
+                # start_as_current_span already records the exception and sets
+                # an error status on the span automatically as it propagates
+                # out of this `with` block -- only the metric needs recording here.
+                _request_counter.add(1, {**attributes, "requisite.status": "error"})
+                raise
+            _request_duration.record(time.monotonic() - start, attributes)
+            _request_counter.add(1, {**attributes, "requisite.status": "success"})
+            _token_counter.add(
+                response.usage.prompt_tokens, {**attributes, "requisite.token_type": "prompt"}
+            )
+            _token_counter.add(
+                response.usage.completion_tokens,
+                {**attributes, "requisite.token_type": "completion"},
+            )
+            return response
 
     async def achat(
         self,
@@ -306,14 +343,37 @@ class AI:
         resolved_tools = [resolve_tool_like(t) for t in tools] if tools else None
         if self._rate_limiter is not None:
             await self._rate_limiter.aacquire()
-        return await self._provider.achat(
-            messages,
-            model=model,
-            temperature=effective_temperature,
-            tools=resolved_tools,
-            response_model=response_model,
-            **kwargs,
-        )
+        attributes = {
+            "requisite.provider": self._provider.name,
+            "requisite.model": model or self._settings.model,
+        }
+        with _tracer.start_as_current_span("requisite.ai.achat_response", attributes=attributes):
+            start = time.monotonic()
+            try:
+                response = await self._provider.achat(
+                    messages,
+                    model=model,
+                    temperature=effective_temperature,
+                    tools=resolved_tools,
+                    response_model=response_model,
+                    **kwargs,
+                )
+            except Exception:
+                # start_as_current_span already records the exception and sets
+                # an error status on the span automatically as it propagates
+                # out of this `with` block -- only the metric needs recording here.
+                _request_counter.add(1, {**attributes, "requisite.status": "error"})
+                raise
+            _request_duration.record(time.monotonic() - start, attributes)
+            _request_counter.add(1, {**attributes, "requisite.status": "success"})
+            _token_counter.add(
+                response.usage.prompt_tokens, {**attributes, "requisite.token_type": "prompt"}
+            )
+            _token_counter.add(
+                response.usage.completion_tokens,
+                {**attributes, "requisite.token_type": "completion"},
+            )
+            return response
 
     def stream(
         self,
@@ -348,11 +408,30 @@ class AI:
         resolved_tools = [resolve_tool_like(t) for t in tools] if tools else None
         if self._rate_limiter is not None:
             self._rate_limiter.acquire()
-        for chunk in self._provider.stream(
-            messages, model=model, temperature=effective_temperature, tools=resolved_tools, **kwargs
-        ):
-            if chunk.delta:
-                yield chunk.delta
+        attributes = {
+            "requisite.provider": self._provider.name,
+            "requisite.model": model or self._settings.model,
+        }
+        with _tracer.start_as_current_span("requisite.ai.stream", attributes=attributes):
+            start = time.monotonic()
+            try:
+                for chunk in self._provider.stream(
+                    messages,
+                    model=model,
+                    temperature=effective_temperature,
+                    tools=resolved_tools,
+                    **kwargs,
+                ):
+                    if chunk.delta:
+                        yield chunk.delta
+            except Exception:
+                # start_as_current_span already records the exception and sets
+                # an error status on the span automatically as it propagates
+                # out of this `with` block -- only the metric needs recording here.
+                _request_counter.add(1, {**attributes, "requisite.status": "error"})
+                raise
+            _request_duration.record(time.monotonic() - start, attributes)
+            _request_counter.add(1, {**attributes, "requisite.status": "success"})
 
     async def astream(
         self,
@@ -372,11 +451,30 @@ class AI:
         resolved_tools = [resolve_tool_like(t) for t in tools] if tools else None
         if self._rate_limiter is not None:
             await self._rate_limiter.aacquire()
-        async for chunk in self._provider.astream(
-            messages, model=model, temperature=effective_temperature, tools=resolved_tools, **kwargs
-        ):
-            if chunk.delta:
-                yield chunk.delta
+        attributes = {
+            "requisite.provider": self._provider.name,
+            "requisite.model": model or self._settings.model,
+        }
+        with _tracer.start_as_current_span("requisite.ai.astream", attributes=attributes):
+            start = time.monotonic()
+            try:
+                async for chunk in self._provider.astream(
+                    messages,
+                    model=model,
+                    temperature=effective_temperature,
+                    tools=resolved_tools,
+                    **kwargs,
+                ):
+                    if chunk.delta:
+                        yield chunk.delta
+            except Exception:
+                # start_as_current_span already records the exception and sets
+                # an error status on the span automatically as it propagates
+                # out of this `with` block -- only the metric needs recording here.
+                _request_counter.add(1, {**attributes, "requisite.status": "error"})
+                raise
+            _request_duration.record(time.monotonic() - start, attributes)
+            _request_counter.add(1, {**attributes, "requisite.status": "success"})
 
     def stream_response(
         self,
@@ -404,9 +502,28 @@ class AI:
         resolved_tools = [resolve_tool_like(t) for t in tools] if tools else None
         if self._rate_limiter is not None:
             self._rate_limiter.acquire()
-        yield from self._provider.stream(
-            messages, model=model, temperature=effective_temperature, tools=resolved_tools, **kwargs
-        )
+        attributes = {
+            "requisite.provider": self._provider.name,
+            "requisite.model": model or self._settings.model,
+        }
+        with _tracer.start_as_current_span("requisite.ai.stream_response", attributes=attributes):
+            start = time.monotonic()
+            try:
+                yield from self._provider.stream(
+                    messages,
+                    model=model,
+                    temperature=effective_temperature,
+                    tools=resolved_tools,
+                    **kwargs,
+                )
+            except Exception:
+                # start_as_current_span already records the exception and sets
+                # an error status on the span automatically as it propagates
+                # out of this `with` block -- only the metric needs recording here.
+                _request_counter.add(1, {**attributes, "requisite.status": "error"})
+                raise
+            _request_duration.record(time.monotonic() - start, attributes)
+            _request_counter.add(1, {**attributes, "requisite.status": "success"})
 
     async def astream_response(
         self,
@@ -426,10 +543,29 @@ class AI:
         resolved_tools = [resolve_tool_like(t) for t in tools] if tools else None
         if self._rate_limiter is not None:
             await self._rate_limiter.aacquire()
-        async for chunk in self._provider.astream(
-            messages, model=model, temperature=effective_temperature, tools=resolved_tools, **kwargs
-        ):
-            yield chunk
+        attributes = {
+            "requisite.provider": self._provider.name,
+            "requisite.model": model or self._settings.model,
+        }
+        with _tracer.start_as_current_span("requisite.ai.astream_response", attributes=attributes):
+            start = time.monotonic()
+            try:
+                async for chunk in self._provider.astream(
+                    messages,
+                    model=model,
+                    temperature=effective_temperature,
+                    tools=resolved_tools,
+                    **kwargs,
+                ):
+                    yield chunk
+            except Exception:
+                # start_as_current_span already records the exception and sets
+                # an error status on the span automatically as it propagates
+                # out of this `with` block -- only the metric needs recording here.
+                _request_counter.add(1, {**attributes, "requisite.status": "error"})
+                raise
+            _request_duration.record(time.monotonic() - start, attributes)
+            _request_counter.add(1, {**attributes, "requisite.status": "success"})
 
     def __repr__(self) -> str:  # pragma: no cover - trivial
         return f"AI(provider={self._provider.name!r}, model={self._provider.model!r})"
