@@ -142,6 +142,7 @@ from requisite.memory.factory import MemoryRegistry
 from requisite.memory.in_process import InProcessMemory
 from requisite.memory.policies import BaseConversationPolicy, MessageCountPolicy, SummarizingPolicy
 from requisite.memory.sqlite import SQLiteMemory
+from requisite.memory.vector import VectorMemory
 from requisite.orchestrators.base import END, WorkflowResult
 from requisite.prompts import default_prompt_registry
 from requisite.prompts.registry import PromptTemplateRegistry
@@ -242,6 +243,7 @@ __all__ = [
     "ToolCall",
     "ToolException",
     "ToolRegistry",
+    "VectorMemory",
     "VectorStoreException",
     "VectorStoreRegistry",
     # Multi-agent workflows
@@ -259,4 +261,4 @@ __all__ = [
     "tool",
 ]
 
-__version__ = "0.20.0"
+__version__ = "0.21.0"

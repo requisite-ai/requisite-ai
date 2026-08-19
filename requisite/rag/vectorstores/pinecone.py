@@ -143,7 +143,13 @@ class PineconeVectorStore(BaseVectorStore):
                 original_error=exc,
             ) from exc
 
-    def search(self, query_embedding: Sequence[float], *, top_k: int = 5) -> list[ScoredChunk]:
+    def search(
+        self,
+        query_embedding: Sequence[float],
+        *,
+        top_k: int = 5,
+        filter: Optional[dict[str, Any]] = None,  # noqa: A002
+    ) -> list[ScoredChunk]:
         index = self._get_index()
         try:
             response = index.query(
@@ -151,6 +157,7 @@ class PineconeVectorStore(BaseVectorStore):
                 top_k=top_k,
                 namespace=self._namespace,
                 include_metadata=True,
+                filter=filter,
             )
         except Exception as exc:  # noqa: BLE001
             raise VectorStoreException(

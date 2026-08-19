@@ -8,6 +8,7 @@ Default model ``gemini-embedding-001`` -- the current GA embedding model.
 
 from __future__ import annotations
 
+import os
 from collections.abc import Sequence
 from typing import Any, Optional
 
@@ -39,7 +40,11 @@ class GeminiEmbeddingProvider(BaseEmbeddingProvider):
         model: str = "gemini-embedding-001",
         **kwargs: Any,
     ) -> None:
-        self._api_key = api_key
+        self._api_key = (
+            api_key
+            if api_key is not None
+            else os.environ.get("GEMINI_API_KEY") or os.environ.get("GOOGLE_API_KEY")
+        )
         self._model = model
         self._client: Any = None
 

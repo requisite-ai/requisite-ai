@@ -14,8 +14,10 @@ import tempfile
 from pathlib import Path
 
 from requisite import Agent
-from requisite.memory import InProcessMemory
+from requisite.memory import InProcessMemory, VectorMemory
 from requisite.memory.sqlite import SQLiteMemory
+from requisite.rag.embeddings.gemini import GeminiEmbeddingProvider
+from requisite.rag.vectorstores import InMemoryVectorStore
 
 
 def in_process_example() -> None:
@@ -52,6 +54,37 @@ def sqlite_example() -> None:
     #   )
 
 
+def vector_memory_example() -> None:
+    print("\n--- VectorMemory (semantic recall, not just chronological) ---")
+    # VectorMemory composes a plain chronological backend (InProcessMemory
+    # by default -- swap in SQLiteMemory/RedisMemory for persistence) with
+    # an embedding provider + vector store, so it's a drop-in BaseMemory
+    # (Agent.run() sees plain chronological load()/append() like every
+    # other backend) that *also* supports semantic top-k recall beyond
+    # what any other backend can do.
+    memory = VectorMemory(
+        embedding_provider=GeminiEmbeddingProvider(),
+        vector_store=InMemoryVectorStore(),
+    )
+    agent = Agent(name="Assistant", memory=memory, session_id="user-42")
+
+    agent.run("My favorite color is teal.")
+    agent.run("My favorite food is ramen.")
+    agent.run("I'm planning a trip to Japan next spring.")
+
+    print("Chronological history (memory.load):")
+    for message in memory.load("user-42"):
+        print(f"  [{message.role.value}] {message.content}")
+
+    # load_relevant() is *not* on Agent -- it's an explicit, opt-in call
+    # application code makes to pull the most semantically relevant past
+    # turns for a query, distinct from the full chronological history above.
+    print("\nSemantically relevant to 'What should I eat?':")
+    for message in memory.load_relevant("user-42", "What should I eat?", top_k=1):
+        print(f"  [{message.role.value}] {message.content}")
+
+
 if __name__ == "__main__":
     in_process_example()
     sqlite_example()
+    vector_memory_example()

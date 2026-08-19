@@ -17,8 +17,27 @@ from requisite.core.interfaces import ChatResponse, Message, StreamChunk
 from requisite.memory.factory import MemoryRegistry, default_registry
 from requisite.memory.in_process import InProcessMemory
 from requisite.memory.sqlite import SQLiteMemory
+from requisite.memory.vector import VectorMemory
 from requisite.providers.base import BaseProvider
 from requisite.providers.factory import ProviderRegistry
+from requisite.rag.base import BaseEmbeddingProvider
+from requisite.rag.vectorstores import InMemoryVectorStore
+
+
+class FakeEmbeddingProvider(BaseEmbeddingProvider):
+    """Deterministic fake: a one-hot-ish vector over a small fixed
+    vocabulary, so cosine similarity meaningfully discriminates topics
+    without any real embedding model."""
+
+    _VOCAB = ("blue", "color", "pizza", "food")
+
+    @property
+    def name(self) -> str:
+        return "fake"
+
+    def embed(self, texts: Sequence[str]) -> list[list[float]]:
+        return [[1.0 if word in text.lower() else 0.0 for word in self._VOCAB] for text in texts]
+
 
 # ---------------------------------------------------------------------------
 # InProcessMemory / MemoryRegistry
@@ -91,6 +110,14 @@ def test_default_memory_registry_has_redis() -> None:
     assert memory.name == "redis"
 
 
+def test_default_memory_registry_has_vector() -> None:
+    assert "vector" in default_registry.available()
+    memory = default_registry.create(
+        "vector", embedding_provider=FakeEmbeddingProvider(), vector_store=InMemoryVectorStore()
+    )
+    assert memory.name == "vector"
+
+
 # ---------------------------------------------------------------------------
 # SQLiteMemory
 # ---------------------------------------------------------------------------
@@ -135,6 +162,207 @@ async def test_sqlite_memory_async_methods(tmp_path: Path) -> None:
     await memory.aappend("s1", Message.user("hi"))
     assert [m.content for m in await memory.aload("s1")] == ["hi"]
     await memory.aclear("s1")
+    assert await memory.aload("s1") == []
+
+
+# ---------------------------------------------------------------------------
+# VectorMemory
+# ---------------------------------------------------------------------------
+
+
+def make_vector_memory(**kwargs: Any) -> VectorMemory:
+    return VectorMemory(
+        embedding_provider=FakeEmbeddingProvider(), vector_store=InMemoryVectorStore(), **kwargs
+    )
+
+
+def test_vector_memory_load_append_clear() -> None:
+    memory = make_vector_memory()
+    assert memory.load("s1") == []
+
+    memory.append("s1", Message.user("hi"))
+    memory.append("s1", Message.assistant("hello!"))
+    assert [m.content for m in memory.load("s1")] == ["hi", "hello!"]
+
+    memory.clear("s1")
+    assert memory.load("s1") == []
+
+
+def test_vector_memory_name() -> None:
+    assert make_vector_memory().name == "vector"
+
+
+def test_vector_memory_load_relevant_ranks_by_semantic_similarity() -> None:
+    memory = make_vector_memory()
+    memory.append("s1", Message.user("My favorite color is blue."))
+    memory.append("s1", Message.assistant("Got it, blue is a great color!"))
+    memory.append("s1", Message.user("My favorite food is pizza."))
+
+    color_results = memory.load_relevant("s1", "What color do I like?", top_k=1)
+    assert "blue" in color_results[0].content.lower()
+
+    food_results = memory.load_relevant("s1", "What food do I like?", top_k=1)
+    assert food_results[0].content == "My favorite food is pizza."
+
+
+def test_vector_memory_load_relevant_is_scoped_to_session() -> None:
+    memory = make_vector_memory()
+    memory.append("s1", Message.user("My favorite color is blue."))
+    memory.append("s2", Message.user("Unrelated session message about blue too."))
+
+    results = memory.load_relevant("s1", "blue", top_k=5)
+    assert [r.content for r in results] == ["My favorite color is blue."]
+
+
+def test_vector_memory_clear_removes_vector_store_entries_too() -> None:
+    memory = make_vector_memory()
+    memory.append("s1", Message.user("My favorite color is blue."))
+    memory.clear("s1")
+
+    assert memory.load_relevant("s1", "blue", top_k=5) == []
+
+
+def test_vector_memory_uses_default_top_k() -> None:
+    memory = make_vector_memory(top_k=1)
+    memory.append("s1", Message.user("My favorite color is blue."))
+    memory.append("s1", Message.user("My favorite food is pizza."))
+
+    assert len(memory.load_relevant("s1", "color")) == 1
+
+
+def test_vector_memory_skips_embedding_empty_content() -> None:
+    memory = make_vector_memory()
+    memory.append("s1", Message.assistant(""))
+    # Doesn't raise, and produces no searchable chunk.
+    assert memory.load("s1")[0].content == ""
+    assert memory.load_relevant("s1", "anything") == []
+
+
+def test_vector_memory_defaults_to_an_in_process_history_backend() -> None:
+    # No history_backend= given -- history shouldn't outlive this instance
+    # or be shared with a second, independently-constructed instance.
+    memory = VectorMemory(
+        embedding_provider=FakeEmbeddingProvider(), vector_store=InMemoryVectorStore()
+    )
+    memory.append("s1", Message.user("hi"))
+
+    other = VectorMemory(
+        embedding_provider=FakeEmbeddingProvider(), vector_store=InMemoryVectorStore()
+    )
+    assert other.load("s1") == []
+
+
+def test_vector_memory_accepts_a_persistent_history_backend(tmp_path: Path) -> None:
+    memory = VectorMemory(
+        embedding_provider=FakeEmbeddingProvider(),
+        vector_store=InMemoryVectorStore(),
+        history_backend=SQLiteMemory(db_path=str(tmp_path / "memory.db")),
+    )
+    memory.append("s1", Message.user("hi"))
+    assert [m.content for m in memory.load("s1")] == ["hi"]
+
+
+@pytest.mark.asyncio
+async def test_vector_memory_async_methods() -> None:
+    memory = make_vector_memory()
+    await memory.aappend("s1", Message.user("My favorite color is blue."))
+    await memory.aappend("s1", Message.user("My favorite food is pizza."))
+
+    assert [m.content for m in await memory.aload("s1")] == [
+        "My favorite color is blue.",
+        "My favorite food is pizza.",
+    ]
+
+    results = await memory.aload_relevant("s1", "What color do I like?", top_k=1)
+    assert results[0].content == "My favorite color is blue."
+
+    await memory.aclear("s1")
+    assert await memory.aload("s1") == []
+    assert await memory.aload_relevant("s1", "blue") == []
+
+
+def test_vector_memory_load_relevant_top_k_zero_returns_empty() -> None:
+    # top_k=0 is an explicit request for zero results -- falsy-but-given,
+    # must not be silently replaced with the instance default.
+    memory = make_vector_memory(top_k=5)
+    memory.append("s1", Message.user("My favorite color is blue."))
+
+    assert memory.load_relevant("s1", "blue", top_k=0) == []
+
+
+@pytest.mark.asyncio
+async def test_vector_memory_aload_relevant_top_k_zero_returns_empty() -> None:
+    memory = make_vector_memory(top_k=5)
+    await memory.aappend("s1", Message.user("My favorite color is blue."))
+
+    assert await memory.aload_relevant("s1", "blue", top_k=0) == []
+
+
+def test_vector_memory_clear_then_append_does_not_leak_old_content() -> None:
+    memory = make_vector_memory()
+    memory.append("s1", Message.user("My favorite color is blue."))
+    memory.clear("s1")
+    memory.append("s1", Message.user("My favorite food is pizza."))
+
+    # Only the post-clear message should ever be recallable -- the
+    # pre-clear "blue" content must not resurface under the reused id.
+    results = memory.load_relevant("s1", "blue", top_k=5)
+    assert [r.content for r in results] == ["My favorite food is pizza."]
+    assert [m.content for m in memory.load("s1")] == ["My favorite food is pizza."]
+
+
+def test_vector_memory_concurrent_appends_produce_unique_chunk_ids() -> None:
+    import threading
+
+    memory = make_vector_memory()
+    thread_count = 50
+
+    def append_one(i: int) -> None:
+        memory.append("s1", Message.user(f"message number {i}"))
+
+    threads = [threading.Thread(target=append_one, args=(i,)) for i in range(thread_count)]
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join()
+
+    history = memory.load("s1")
+    assert len(history) == thread_count
+    # No chunk id collisions -- every concurrently-allocated turn_index was unique.
+    assert len(memory.vector_store._chunks) == thread_count  # noqa: SLF001
+
+
+class FailingEmbeddingProvider(BaseEmbeddingProvider):
+    """A fake embedding provider whose embed() always raises, to exercise
+    VectorMemory's failure-ordering guarantee."""
+
+    @property
+    def name(self) -> str:
+        return "failing"
+
+    def embed(self, texts: Sequence[str]) -> list[list[float]]:
+        raise RuntimeError("simulated embedding failure")
+
+
+def test_vector_memory_append_does_not_persist_history_on_embedding_failure() -> None:
+    memory = VectorMemory(
+        embedding_provider=FailingEmbeddingProvider(), vector_store=InMemoryVectorStore()
+    )
+    with pytest.raises(RuntimeError):
+        memory.append("s1", Message.user("this should not be persisted"))
+
+    # Embedding failed *before* history was touched -- nothing partially saved.
+    assert memory.load("s1") == []
+
+
+@pytest.mark.asyncio
+async def test_vector_memory_aappend_does_not_persist_history_on_embedding_failure() -> None:
+    memory = VectorMemory(
+        embedding_provider=FailingEmbeddingProvider(), vector_store=InMemoryVectorStore()
+    )
+    with pytest.raises(RuntimeError):
+        await memory.aappend("s1", Message.user("this should not be persisted"))
+
     assert await memory.aload("s1") == []
 
 

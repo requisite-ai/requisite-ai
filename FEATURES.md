@@ -186,7 +186,7 @@ Status legend: ✅ Done · 🚧 Partial · 📋 Not started · N/A Deliberately 
 | Conversation memory | ✅ | `InProcessMemory` |
 | Redis-backed memory | ✅ | `RedisMemory` (`requisite.memory.redis`, `pip install requisite-ai[redis]`) |
 | SQLite-backed memory | ✅ | `SQLiteMemory` (`requisite.memory.sqlite`) — zero extra dependency, stdlib `sqlite3` |
-| Vector-database-backed memory | 📋 | Depends on RAG's vector store work |
+| Vector-database-backed memory | ✅ | `VectorMemory` (`requisite.memory.vector`) — composes a chronological `BaseMemory` delegate with RAG's `BaseEmbeddingProvider`/`BaseVectorStore` for semantic top-k recall (`load_relevant()`), beyond `BaseMemory`'s own plain-storage contract; ADR-0022 |
 | Postgres-backed memory | 📋 | |
 | Knowledge-graph-backed memory | 📋 | |
 

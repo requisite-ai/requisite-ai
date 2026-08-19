@@ -10,6 +10,7 @@ newer model as needed.
 
 from __future__ import annotations
 
+import os
 from collections.abc import Sequence
 from typing import Any, Optional
 
@@ -48,7 +49,7 @@ class OpenAIEmbeddingProvider(BaseEmbeddingProvider):
         max_retries: int = 2,
         **kwargs: Any,
     ) -> None:
-        self._api_key = api_key
+        self._api_key = api_key if api_key is not None else os.environ.get("OPENAI_API_KEY")
         self._model = model
         self._timeout = timeout
         self._max_retries = max_retries

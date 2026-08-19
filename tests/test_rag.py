@@ -130,6 +130,30 @@ def test_in_memory_vector_store_name() -> None:
     assert InMemoryVectorStore().name == "in_memory"
 
 
+def test_in_memory_vector_store_search_filters_by_metadata() -> None:
+    store = InMemoryVectorStore()
+    store.add(
+        [
+            Chunk(id="1", text="a", embedding=[1.0, 0.0], metadata={"session_id": "s1"}),
+            Chunk(id="2", text="b", embedding=[1.0, 0.0], metadata={"session_id": "s2"}),
+        ]
+    )
+    results = store.search([1.0, 0.0], top_k=5, filter={"session_id": "s1"})
+    assert [r.chunk.id for r in results] == ["1"]
+
+
+def test_in_memory_vector_store_search_unfiltered_returns_everything() -> None:
+    store = InMemoryVectorStore()
+    store.add(
+        [
+            Chunk(id="1", text="a", embedding=[1.0, 0.0], metadata={"session_id": "s1"}),
+            Chunk(id="2", text="b", embedding=[1.0, 0.0], metadata={"session_id": "s2"}),
+        ]
+    )
+    results = store.search([1.0, 0.0], top_k=5)
+    assert {r.chunk.id for r in results} == {"1", "2"}
+
+
 @pytest.mark.asyncio
 async def test_in_memory_vector_store_async_methods() -> None:
     store = InMemoryVectorStore()
@@ -605,10 +629,38 @@ def test_openai_embedding_provider(monkeypatch: pytest.MonkeyPatch) -> None:
     assert vectors == [[2.0], [4.0]]
 
 
-def test_openai_embedding_provider_missing_key_raises() -> None:
+def test_openai_embedding_provider_missing_key_raises(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
     from requisite.rag.embeddings.openai import OpenAIEmbeddingProvider
 
     provider = OpenAIEmbeddingProvider(api_key=None)
+    with pytest.raises(ConfigurationException):
+        provider.embed(["hi"])
+
+
+def test_openai_embedding_provider_falls_back_to_env_var(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("OPENAI_API_KEY", "sk-from-env")
+    fake_module = types.ModuleType("openai")
+    fake_module.OpenAI = _FakeOpenAIEmbeddingClient  # type: ignore[attr-defined]
+    monkeypatch.setitem(sys.modules, "openai", fake_module)
+
+    from requisite.rag.embeddings.openai import OpenAIEmbeddingProvider
+
+    provider = OpenAIEmbeddingProvider()
+    assert provider.embed(["ab"]) == [[2.0]]
+
+
+def test_openai_embedding_provider_empty_string_key_does_not_fall_back_to_env(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # An explicitly-passed "" is a deliberate override, not "not provided" --
+    # it must still fail even if a real key is ambient in the environment.
+    monkeypatch.setenv("OPENAI_API_KEY", "sk-from-env")
+    from requisite.rag.embeddings.openai import OpenAIEmbeddingProvider
+
+    provider = OpenAIEmbeddingProvider(api_key="")
     with pytest.raises(ConfigurationException):
         provider.embed(["hi"])
 
@@ -646,10 +698,43 @@ def test_gemini_embedding_provider(monkeypatch: pytest.MonkeyPatch) -> None:
     assert vectors == [[2.0], [4.0]]
 
 
-def test_gemini_embedding_provider_missing_key_raises() -> None:
+def test_gemini_embedding_provider_missing_key_raises(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.delenv("GEMINI_API_KEY", raising=False)
+    monkeypatch.delenv("GOOGLE_API_KEY", raising=False)
     from requisite.rag.embeddings.gemini import GeminiEmbeddingProvider
 
     provider = GeminiEmbeddingProvider(api_key=None)
+    with pytest.raises(ConfigurationException):
+        provider.embed(["hi"])
+
+
+def test_gemini_embedding_provider_falls_back_to_env_var(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("GEMINI_API_KEY", "g-from-env")
+    fake_genai_module = types.ModuleType("google.genai")
+    fake_genai_module.Client = _FakeGeminiEmbeddingClient  # type: ignore[attr-defined]
+    fake_google_module = types.ModuleType("google")
+    fake_google_module.genai = fake_genai_module  # type: ignore[attr-defined]
+    monkeypatch.setitem(sys.modules, "google", fake_google_module)
+    monkeypatch.setitem(sys.modules, "google.genai", fake_genai_module)
+
+    from requisite.rag.embeddings.gemini import GeminiEmbeddingProvider
+
+    provider = GeminiEmbeddingProvider()
+    assert provider.embed(["ab"]) == [[2.0]]
+
+
+def test_gemini_embedding_provider_empty_string_key_does_not_fall_back_to_env(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # An explicitly-passed "" is a deliberate override, not "not provided" --
+    # it must still fail even if a real key is ambient in the environment.
+    monkeypatch.setenv("GEMINI_API_KEY", "g-from-env")
+    monkeypatch.setenv("GOOGLE_API_KEY", "g-from-env-2")
+    from requisite.rag.embeddings.gemini import GeminiEmbeddingProvider
+
+    provider = GeminiEmbeddingProvider(api_key="")
     with pytest.raises(ConfigurationException):
         provider.embed(["hi"])
 
@@ -674,10 +759,18 @@ class _FakePineconeIndex:
         top_k: int,
         namespace: str = "",
         include_metadata: bool = False,
+        filter: Optional[dict[str, Any]] = None,  # noqa: A002
     ) -> Any:
+        candidates = self._vectors.items()
+        if filter:
+            candidates = [
+                (chunk_id, (values, metadata))
+                for chunk_id, (values, metadata) in candidates
+                if all(metadata.get(k) == v for k, v in filter.items())
+            ]
         scored = [
             (chunk_id, _cosine_similarity(vector, values), metadata)
-            for chunk_id, (values, metadata) in self._vectors.items()
+            for chunk_id, (values, metadata) in candidates
         ]
         scored.sort(key=lambda item: item[1], reverse=True)
         matches = [
@@ -730,6 +823,22 @@ def test_pinecone_vector_store_add_and_search(fake_pinecone_module: types.Module
     assert results[0].chunk.id == "1"
     assert results[0].chunk.text == "cats are great"
     assert results[0].chunk.metadata == {"topic": "pets"}
+
+
+def test_pinecone_vector_store_search_filters_by_metadata(
+    fake_pinecone_module: types.ModuleType,
+) -> None:
+    from requisite.rag.vectorstores.pinecone import PineconeVectorStore
+
+    store = PineconeVectorStore(api_key="pc-test", index_name="demo", dimension=2)
+    store.add(
+        [
+            Chunk(id="1", text="a", embedding=[1.0, 0.0], metadata={"session_id": "s1"}),
+            Chunk(id="2", text="b", embedding=[1.0, 0.0], metadata={"session_id": "s2"}),
+        ]
+    )
+    results = store.search([1.0, 0.0], top_k=5, filter={"session_id": "s1"})
+    assert [r.chunk.id for r in results] == ["1"]
 
 
 def test_pinecone_vector_store_delete(fake_pinecone_module: types.ModuleType) -> None:
@@ -802,6 +911,7 @@ class _FakeWeaviateQuery:
         *,
         near_vector: list[float],
         limit: int,
+        offset: int = 0,
         return_metadata: Any = None,
         return_properties: Any = None,
     ) -> Any:
@@ -810,7 +920,8 @@ class _FakeWeaviateQuery:
             for properties, vector in self._store.values()
         ]
         scored.sort(key=lambda item: item[0])
-        objects = [_FakeWeaviateObject(props, distance) for distance, props in scored[:limit]]
+        page = scored[offset : offset + limit]
+        objects = [_FakeWeaviateObject(props, distance) for distance, props in page]
         return types.SimpleNamespace(objects=objects)
 
 
@@ -889,6 +1000,61 @@ def test_weaviate_vector_store_add_and_search(fake_weaviate_module: types.Module
     assert results[0].chunk.id == "1"
     assert results[0].chunk.text == "cats are great"
     assert results[0].chunk.metadata == {"topic": "pets"}
+
+
+def test_weaviate_vector_store_search_filters_by_metadata(
+    fake_weaviate_module: types.ModuleType,
+) -> None:
+    from requisite.rag.vectorstores.weaviate import WeaviateVectorStore
+
+    store = WeaviateVectorStore(url="https://example.weaviate.network", api_key="w-test")
+    store.add(
+        [
+            Chunk(id="1", text="a", embedding=[1.0, 0.0], metadata={"session_id": "s1"}),
+            Chunk(id="2", text="b", embedding=[1.0, 0.0], metadata={"session_id": "s2"}),
+        ]
+    )
+    results = store.search([1.0, 0.0], top_k=5, filter={"session_id": "s1"})
+    assert [r.chunk.id for r in results] == ["1"]
+
+
+def test_weaviate_vector_store_search_paginates_past_first_page_to_find_filter_match(
+    fake_weaviate_module: types.ModuleType,
+) -> None:
+    from requisite.rag.vectorstores.weaviate import WeaviateVectorStore
+
+    store = WeaviateVectorStore(url="https://example.weaviate.network", api_key="w-test")
+    # 200 chunks that are a perfect vector match but belong to a different
+    # session -- they fill the entire first page. The one chunk that
+    # actually matches the filter is vector-dissimilar, so it only appears
+    # on the second page. Proves search() pages past the first window
+    # instead of silently missing a match outside it (the original bug).
+    noise = [
+        Chunk(
+            id=f"noise-{i}",
+            text="noise",
+            embedding=[1.0, 0.0],
+            metadata={"session_id": "other"},
+        )
+        for i in range(200)
+    ]
+    target = Chunk(id="target", text="target", embedding=[0.0, 1.0], metadata={"session_id": "s1"})
+    store.add([*noise, target])
+
+    results = store.search([1.0, 0.0], top_k=5, filter={"session_id": "s1"})
+    assert [r.chunk.id for r in results] == ["target"]
+
+
+def test_weaviate_vector_store_search_top_k_zero_returns_empty(
+    fake_weaviate_module: types.ModuleType,
+) -> None:
+    from requisite.rag.vectorstores.weaviate import WeaviateVectorStore
+
+    store = WeaviateVectorStore(url="https://example.weaviate.network", api_key="w-test")
+    store.add([Chunk(id="1", text="a", embedding=[1.0, 0.0], metadata={"session_id": "s1"})])
+
+    assert store.search([1.0, 0.0], top_k=0, filter={"session_id": "s1"}) == []
+    assert store.search([1.0, 0.0], top_k=0) == []
 
 
 def test_weaviate_vector_store_delete(fake_weaviate_module: types.ModuleType) -> None:

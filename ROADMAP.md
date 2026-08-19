@@ -118,7 +118,7 @@ or care whether `"github"` is resolved by a native tool or an MCP server.
 | `Agent(memory=..., session_id=...)` integration | ✅ |
 | Redis-backed memory | ✅ — `RedisMemory`, `pip install requisite-ai[redis]` |
 | SQLite-backed memory | ✅ — `SQLiteMemory`, zero extra dependency (stdlib `sqlite3`) |
-| Vector-database-backed memory | 📋 |
+| Vector-database-backed memory | ✅ — `VectorMemory` composes a chronological `BaseMemory` delegate with a `BaseEmbeddingProvider`/`BaseVectorStore` pair (same shape as `Retriever`); `load()`/`append()`/`clear()` are drop-in, `load_relevant()` adds semantic top-k recall beyond `BaseMemory`'s own contract; see [ADR-0022](docs/adr/0022-vector-memory.md) |
 | Knowledge-graph-backed memory | 💭 |
 
 ## RAG

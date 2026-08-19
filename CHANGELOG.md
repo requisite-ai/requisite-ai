@@ -7,6 +7,70 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.21.0] - 2026-08-19
+
+### Added
+
+- Vector-database-backed memory -- see
+  [ADR-0022](docs/adr/0022-vector-memory.md) for the full design. Closes
+  the last remaining line in `ROADMAP.md`'s Memory section.
+- `VectorMemory` (`requisite.memory.vector`, also exported from
+  `requisite`/`requisite.memory` top-level): composes a chronological
+  `BaseMemory` delegate (defaults to `InProcessMemory`; pass
+  `SQLiteMemory`/`RedisMemory` for persistence) with a
+  `BaseEmbeddingProvider` + `BaseVectorStore` pair -- the same
+  composition `Retriever` already uses. `load()`/`append()`/`clear()`
+  are a fully drop-in `BaseMemory` implementation (`Agent` needs zero
+  changes); `load_relevant(session_id, query, top_k=...)` /
+  `aload_relevant(...)` add semantic top-k recall over past messages,
+  beyond `BaseMemory`'s own plain-chronological contract by design.
+  Per-session chunk-id allocation is cached and lock-guarded (a
+  `threading.Lock` for sync calls, a separate `asyncio.Lock` for async
+  calls) rather than re-derived from a full history reload on every
+  call, and `append()` embeds before writing to chronological history so
+  a failed embedding call never leaves a message durably logged but
+  permanently unsearchable -- see
+  [ADR-0022](docs/adr/0022-vector-memory.md) for the full reasoning.
+- `BaseVectorStore.search`/`asearch` gain an optional `filter: dict[str, Any] | None`
+  parameter (exact-match on chunk metadata; `None` default is fully
+  backward compatible) -- implemented natively for `InMemoryVectorStore`
+  and `PineconeVectorStore` (sharing a `matches_filter()` helper),
+  paginated client-side filtering for `WeaviateVectorStore` since its
+  schema doesn't expose per-key queryable metadata properties. This is
+  what lets `VectorMemory` scope semantic recall to one session.
+- `examples/memory_example.py` extended with a `VectorMemory`
+  demonstration showing semantic recall distinct from plain chronological
+  history.
+
+### Fixed
+
+- `GeminiEmbeddingProvider`/`OpenAIEmbeddingProvider` now actually honor
+  the `GEMINI_API_KEY`/`GOOGLE_API_KEY`/`OPENAI_API_KEY` environment
+  variable fallback their own docstrings already promised -- found via
+  this feature's real-network smoke test. Both previously stored
+  `api_key` as given (`None` if omitted) and validated it *before* ever
+  constructing the underlying SDK client, so the SDK's own env-var
+  fallback was unreachable; the check just failed first. Now resolved in
+  `__init__`, matching every other backend's env-var-fallback
+  convention -- and refined so an *explicitly*-passed empty string is
+  still treated as a deliberate override (fails deterministically)
+  rather than silently falling back to an ambient environment variable
+  the caller never asked for.
+- A round of review before release caught and fixed several real issues
+  in the above, all covered by new regression tests: `VectorMemory`
+  reloading a session's full chronological history on every single
+  `append()`/`clear()` call just to compute a counter (O(n) per call, O(n²)
+  per conversation, against the persistent backends this feature
+  recommends); a race where concurrent appends to the same session could
+  silently collide on the same vector-store chunk id; a race where
+  `clear()` could leave an orphaned chunk that resurfaces under a reused
+  id; `WeaviateVectorStore.search(top_k=0, ...)` returning one result
+  instead of zero; `VectorMemory.load_relevant(..., top_k=0)` silently
+  treating the explicit `0` as "not given" and using the instance default
+  instead; and `WeaviateVectorStore`'s filtered search silently missing
+  true matches that ranked outside one fixed over-fetch window (now
+  paginated instead).
+
 ## [0.20.0] - 2026-08-19
 
 ### Added

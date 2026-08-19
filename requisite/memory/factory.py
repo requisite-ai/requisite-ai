@@ -74,9 +74,15 @@ def _register_builtin_backends(registry: MemoryRegistry) -> None:
 
         return RedisMemory(**kwargs)
 
+    def _build_vector(**kwargs: Any) -> BaseMemory:
+        from requisite.memory.vector import VectorMemory
+
+        return VectorMemory(**kwargs)
+
     registry.register("in_process", _build_in_process)
     registry.register("sqlite", _build_sqlite)
     registry.register("redis", _build_redis)
+    registry.register("vector", _build_vector)
 
 
 default_registry = MemoryRegistry()

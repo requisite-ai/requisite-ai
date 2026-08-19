@@ -14,8 +14,9 @@ from __future__ import annotations
 import math
 import threading
 from collections.abc import Sequence
+from typing import Any, Optional
 
-from requisite.rag.base import BaseVectorStore, Chunk, ScoredChunk
+from requisite.rag.base import BaseVectorStore, Chunk, ScoredChunk, matches_filter
 
 
 def _cosine_similarity(a: Sequence[float], b: Sequence[float]) -> float:
@@ -52,9 +53,20 @@ class InMemoryVectorStore(BaseVectorStore):
             for chunk in chunks:
                 self._chunks[chunk.id] = chunk
 
-    def search(self, query_embedding: Sequence[float], *, top_k: int = 5) -> list[ScoredChunk]:
+    def search(
+        self,
+        query_embedding: Sequence[float],
+        *,
+        top_k: int = 5,
+        filter: Optional[dict[str, Any]] = None,  # noqa: A002
+    ) -> list[ScoredChunk]:
+        if top_k <= 0:
+            return []
+
         with self._lock:
             candidates = list(self._chunks.values())
+
+        candidates = [chunk for chunk in candidates if matches_filter(chunk.metadata, filter)]
 
         scored = [
             ScoredChunk(chunk=chunk, score=_cosine_similarity(query_embedding, chunk.embedding))

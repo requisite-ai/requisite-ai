@@ -97,6 +97,22 @@ class BaseEmbeddingProvider(ABC):
         return (await self.aembed([text]))[0]
 
 
+def matches_filter(metadata: dict[str, Any], filter: Optional[dict[str, Any]]) -> bool:  # noqa: A002
+    """Whether ``metadata`` satisfies every key/value pair in ``filter`` (exact equality).
+
+    ``filter=None`` (or empty) always matches. Shared by
+    :class:`~requisite.rag.vectorstores.in_memory.InMemoryVectorStore` and
+    :class:`~requisite.rag.vectorstores.weaviate.WeaviateVectorStore`, the
+    two concrete stores that implement :meth:`BaseVectorStore.search`'s
+    ``filter`` parameter themselves rather than delegating to a vector
+    database's own native filtering (which
+    :class:`~requisite.rag.vectorstores.pinecone.PineconeVectorStore` does).
+    """
+    if not filter:
+        return True
+    return all(metadata.get(key) == value for key, value in filter.items())
+
+
 class BaseVectorStore(ABC):
     """Abstract interface for storing and searching embedded chunks."""
 
@@ -110,8 +126,20 @@ class BaseVectorStore(ABC):
         """Store chunks, each of which must already have ``embedding`` set."""
 
     @abstractmethod
-    def search(self, query_embedding: Sequence[float], *, top_k: int = 5) -> list[ScoredChunk]:
-        """Return the ``top_k`` chunks most similar to ``query_embedding``, best first."""
+    def search(
+        self,
+        query_embedding: Sequence[float],
+        *,
+        top_k: int = 5,
+        filter: Optional[dict[str, Any]] = None,  # noqa: A002
+    ) -> list[ScoredChunk]:
+        """Return the ``top_k`` chunks most similar to ``query_embedding``, best first.
+
+        ``filter``, if given, restricts candidates to chunks whose
+        ``metadata`` matches every key/value pair (exact equality).
+        ``None`` (default) searches the whole store -- unchanged behavior
+        from before this parameter existed.
+        """
 
     @abstractmethod
     def delete(self, chunk_ids: Sequence[str]) -> None:
@@ -122,10 +150,14 @@ class BaseVectorStore(ABC):
         await asyncio.to_thread(self.add, chunks)
 
     async def asearch(
-        self, query_embedding: Sequence[float], *, top_k: int = 5
+        self,
+        query_embedding: Sequence[float],
+        *,
+        top_k: int = 5,
+        filter: Optional[dict[str, Any]] = None,  # noqa: A002
     ) -> list[ScoredChunk]:
         """Async counterpart to :meth:`search`. Default: thread-wrapped."""
-        return await asyncio.to_thread(self.search, query_embedding, top_k=top_k)
+        return await asyncio.to_thread(self.search, query_embedding, top_k=top_k, filter=filter)
 
     async def adelete(self, chunk_ids: Sequence[str]) -> None:
         """Async counterpart to :meth:`delete`. Default: thread-wrapped."""

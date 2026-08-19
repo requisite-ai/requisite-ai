@@ -25,9 +25,17 @@ from collections.abc import Sequence
 from typing import Any, Optional
 
 from requisite.core.exceptions import ConfigurationException, VectorStoreException
-from requisite.rag.base import BaseVectorStore, Chunk, ScoredChunk
+from requisite.rag.base import BaseVectorStore, Chunk, ScoredChunk, matches_filter
 
 _UUID_NAMESPACE = uuid.UUID("f4f339a6-3e21-4b8e-9f7d-3a2a9f0f9f10")
+
+# Client-side-filtered search pages through the collection instead of
+# scoring one fixed window -- see search()'s docstring/comment for why a
+# native server-side filter isn't possible here. Bounded to
+# _FILTER_PAGE_SIZE * _FILTER_MAX_PAGES scanned candidates so a filter
+# matching very little of a very large collection can't scan forever.
+_FILTER_PAGE_SIZE = 200
+_FILTER_MAX_PAGES = 10
 
 
 def _uuid_for(chunk_id: str) -> str:
@@ -168,41 +176,90 @@ class WeaviateVectorStore(BaseVectorStore):
                 original_error=exc,
             ) from exc
 
-    def search(self, query_embedding: Sequence[float], *, top_k: int = 5) -> list[ScoredChunk]:
+    def search(
+        self,
+        query_embedding: Sequence[float],
+        *,
+        top_k: int = 5,
+        filter: Optional[dict[str, Any]] = None,  # noqa: A002
+    ) -> list[ScoredChunk]:
+        if top_k <= 0:
+            return []
+
         import json
 
         collection = self._get_collection()
 
         from weaviate.classes.query import MetadataQuery
 
-        try:
-            response = collection.query.near_vector(
-                near_vector=list(query_embedding),
-                limit=top_k,
-                return_metadata=MetadataQuery(distance=True),
-                return_properties=["chunk_id", "text", "metadata_json"],
-            )
-        except Exception as exc:  # noqa: BLE001
-            raise VectorStoreException(
-                f"Weaviate query failed: {exc}",
-                store=self.name,
-                original_error=exc,
-            ) from exc
-
-        results: list[ScoredChunk] = []
-        for obj in response.objects:
-            metadata = json.loads(obj.properties.get("metadata_json") or "{}")
+        def to_scored_chunk(obj: Any, metadata: dict[str, Any]) -> ScoredChunk:
             distance = obj.metadata.distance if obj.metadata.distance is not None else 1.0
-            results.append(
-                ScoredChunk(
-                    chunk=Chunk(
-                        id=str(obj.properties.get("chunk_id", "")),
-                        text=str(obj.properties.get("text", "")),
-                        metadata=metadata,
-                    ),
-                    score=1.0 - distance,
-                )
+            return ScoredChunk(
+                chunk=Chunk(
+                    id=str(obj.properties.get("chunk_id", "")),
+                    text=str(obj.properties.get("text", "")),
+                    metadata=metadata,
+                ),
+                score=1.0 - distance,
             )
+
+        if filter is None:
+            try:
+                response = collection.query.near_vector(
+                    near_vector=list(query_embedding),
+                    limit=top_k,
+                    return_metadata=MetadataQuery(distance=True),
+                    return_properties=["chunk_id", "text", "metadata_json"],
+                )
+            except Exception as exc:  # noqa: BLE001
+                raise VectorStoreException(
+                    f"Weaviate query failed: {exc}",
+                    store=self.name,
+                    original_error=exc,
+                ) from exc
+            return [
+                to_scored_chunk(obj, json.loads(obj.properties.get("metadata_json") or "{}"))
+                for obj in response.objects
+            ]
+
+        # Metadata isn't stored as separate queryable Weaviate properties --
+        # it's JSON-serialized into one opaque `metadata_json` property (see
+        # _get_collection's fixed schema) -- so there's no schema-compatible
+        # way to build a native server-side filter for an arbitrary caller
+        # key without a breaking schema change to every existing collection.
+        # Page through nearest-neighbor results (closest-first) and filter
+        # client-side instead, stopping once top_k matches are found or the
+        # collection is exhausted -- bounded by _FILTER_MAX_PAGES so a filter
+        # matching very little of a very large collection can't scan forever.
+        results: list[ScoredChunk] = []
+        offset = 0
+        for _ in range(_FILTER_MAX_PAGES):
+            try:
+                response = collection.query.near_vector(
+                    near_vector=list(query_embedding),
+                    limit=_FILTER_PAGE_SIZE,
+                    offset=offset,
+                    return_metadata=MetadataQuery(distance=True),
+                    return_properties=["chunk_id", "text", "metadata_json"],
+                )
+            except Exception as exc:  # noqa: BLE001
+                raise VectorStoreException(
+                    f"Weaviate query failed: {exc}",
+                    store=self.name,
+                    original_error=exc,
+                ) from exc
+
+            page = response.objects
+            for obj in page:
+                metadata = json.loads(obj.properties.get("metadata_json") or "{}")
+                if not matches_filter(metadata, filter):
+                    continue
+                results.append(to_scored_chunk(obj, metadata))
+                if len(results) >= top_k:
+                    return results
+            if len(page) < _FILTER_PAGE_SIZE:
+                break  # collection exhausted
+            offset += _FILTER_PAGE_SIZE
         return results
 
     def delete(self, chunk_ids: Sequence[str]) -> None:
