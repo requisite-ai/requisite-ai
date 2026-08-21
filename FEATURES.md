@@ -174,8 +174,8 @@ Status legend: ✅ Done · 🚧 Partial · 📋 Not started · N/A Deliberately 
 | Remote tools | ✅ | Streamable HTTP transport |
 | Local tools | ✅ | stdio transport |
 | Filesystem MCP server | 📋 | A native (non-MCP) `"filesystem"` capability already ships — see Capabilities below; an MCP-based one is a config away (`MCPClient.stdio(...)` pointed at any filesystem MCP server) but not shipped as a default |
-| GitHub MCP server | 📋 | A native (non-MCP) `"github"` capability already ships (`search_github`, unauthenticated GitHub Search API — ADR-0020); `GITHUB_TOKEN` is reserved in `.env.example` for this separate, authenticated MCP-based one, which would register at a higher priority once built |
-| Databases MCP server | 📋 | Same as above — usable today via `MCPClient`, not a shipped default |
+| GitHub MCP server | ✅ | `register_github_mcp_capability()` — GitHub's official remote MCP server, gated on `GITHUB_TOKEN`, registers `"github"` at priority 10 over the native `search_github` REST resolver (ADR-0020) — ADR-0023 |
+| Databases MCP server | 📋 | No single canonical database MCP server to hardcode as a default; the generic `register_mcp_capability()` helper (same one `register_github_mcp_capability()` is built on) is shipped for wiring up any database MCP server — see `examples/mcp_default_capabilities.py`, ADR-0023 |
 | Any MCP tool surfaces as a `CapabilityProvider` | ✅ | `BaseMCPClient.register_as_capability(...)` — verified `agent.requires(...)` can't tell native tool from MCP server |
 
 ## Memory

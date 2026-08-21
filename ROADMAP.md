@@ -103,7 +103,7 @@ Each new strategy is a `_run_<strategy>` / `_arun_<strategy>` pair on
 | Bridge into `CapabilityRegistry` (`agent.requires("github")` -> MCP server) | ✅ | `BaseMCPClient.register_as_capability(...)` |
 | MCP resource / prompt discovery (beyond tools) | 📋 | Out of scope for the initial client — ADR-0004 |
 | MCP server integration (expose Requisite tools/agents as an MCP server) | ✅ | `MCPServer` (stdio + Streamable HTTP), `Agent.as_tool()` -- see [ADR-0015](docs/adr/0015-mcp-server-integration.md) |
-| First-party MCP servers as default capability providers (GitHub, databases) | 📋 | `GITHUB_TOKEN` already reserved in `.env.example` |
+| First-party MCP servers as default capability providers (GitHub, databases) | ✅ | GitHub: `register_github_mcp_capability()` registers GitHub's official remote MCP server as the `github` capability at priority 10, gated on `GITHUB_TOKEN`, falling back to the REST resolver automatically when unset. Databases: no single canonical MCP server to hardcode as a default, so the same generic `register_mcp_capability()` helper is provided for wiring up any database MCP server -- see `examples/mcp_default_capabilities.py` and [ADR-0023](docs/adr/0023-mcp-default-capability-providers.md) |
 
 Shipped shape: an MCP-backed tool is just another `CapabilityProvider`
 in `CapabilityRegistry` — `agent.requires("github")` doesn't need to know

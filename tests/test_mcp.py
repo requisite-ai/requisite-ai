@@ -25,13 +25,16 @@ import pytest
 
 from requisite.agents.agent import Agent
 from requisite.capabilities.registry import CapabilityRegistry
+from requisite.capabilities.resolvers import register_default_capabilities
 from requisite.core.exceptions import ConfigurationException, MCPException, ToolException
 from requisite.core.interfaces import ChatResponse, Usage
 from requisite.mcp.client import MCPClient
+from requisite.mcp.defaults import register_github_mcp_capability, register_mcp_capability
 from requisite.mcp.registry import MCPClientRegistry
 from requisite.mcp.server import MCPServer
 from requisite.providers.base import BaseProvider
 from requisite.providers.factory import ProviderRegistry
+from requisite.tools.base import Tool
 from requisite.tools.decorator import tool
 
 
@@ -247,6 +250,134 @@ def test_register_as_capability_missing_tool_raises(monkeypatch: pytest.MonkeyPa
     registry = CapabilityRegistry()
     with pytest.raises(MCPException, match="does not expose a tool"):
         client.register_as_capability(registry, capability="does_not_exist")
+
+
+# ---------------------------------------------------------------------------
+# requisite.mcp.defaults -- register_mcp_capability
+# ---------------------------------------------------------------------------
+
+
+def test_register_mcp_capability_renames_tool_to_capability(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    client = MCPClient.stdio(name="fs", command="python", args=["server.py"])
+    fake_tools = [
+        _FakeMCPTool("search_repositories", "Search repos.", {"type": "object", "properties": {}})
+    ]
+    fake_results = {"search_repositories": _FakeCallToolResult(structured={"result": "ok"})}
+    _patch_session(monkeypatch, client, _FakeSession(fake_tools, fake_results))
+
+    registry = CapabilityRegistry()
+    result = register_mcp_capability(
+        registry, client, tool_name="search_repositories", capability="github", priority=10
+    )
+
+    assert result is True
+    resolved = registry.resolve("github")
+    assert resolved.name == "github"
+    assert resolved.execute() == {"result": "ok"}
+    providers = registry.providers_for("github")
+    assert providers[0].provider_name == "mcp:fs"
+    assert providers[0].priority == 10
+
+
+def test_register_mcp_capability_no_rename_when_names_already_match(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    client = MCPClient.stdio(name="fs", command="python", args=["server.py"])
+    fake_tools = [_FakeMCPTool("database", "", {"type": "object", "properties": {}})]
+    _patch_session(monkeypatch, client, _FakeSession(fake_tools, {}))
+
+    registry = CapabilityRegistry()
+    assert (
+        register_mcp_capability(registry, client, tool_name="database", capability="database")
+        is True
+    )
+    assert registry.resolve("database").name == "database"
+
+
+def test_register_mcp_capability_missing_tool_returns_false_not_raises(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    client = MCPClient.stdio(name="fs", command="python", args=["server.py"])
+    _patch_session(monkeypatch, client, _FakeSession([], {}))
+
+    registry = CapabilityRegistry()
+    result = register_mcp_capability(registry, client, tool_name="nope", capability="github")
+
+    assert result is False
+    assert "github" not in registry
+
+
+def test_register_mcp_capability_discovery_failure_returns_false_not_raises(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    client = MCPClient.stdio(name="fs", command="python", args=["server.py"])
+
+    def _boom() -> list[Tool]:
+        raise RuntimeError("connection refused")
+
+    monkeypatch.setattr(client, "discover_tools", _boom)
+
+    registry = CapabilityRegistry()
+    result = register_mcp_capability(registry, client, tool_name="x", capability="github")
+
+    assert result is False
+    assert "github" not in registry
+
+
+# ---------------------------------------------------------------------------
+# requisite.mcp.defaults -- register_github_mcp_capability
+# ---------------------------------------------------------------------------
+
+
+def test_register_github_mcp_capability_noop_without_token(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.delenv("GITHUB_TOKEN", raising=False)
+
+    def _fail(*args: object, **kwargs: object) -> None:
+        raise AssertionError("should not construct an MCP client without a token")
+
+    monkeypatch.setattr(MCPClient, "http", classmethod(_fail))
+
+    registry = CapabilityRegistry()
+    result = register_github_mcp_capability(registry)
+
+    assert result is False
+    assert "github" not in registry
+
+
+def test_register_github_mcp_capability_success_outranks_rest_fallback(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("GITHUB_TOKEN", "test-token")
+
+    def _fake_discover_tools(self: MCPClient) -> list[Tool]:
+        return [
+            Tool(
+                name="search_repositories",
+                description="Search GitHub repositories.",
+                parameters_schema={"type": "object", "properties": {}},
+                func=lambda **kwargs: "mcp result",
+            )
+        ]
+
+    monkeypatch.setattr(MCPClient, "discover_tools", _fake_discover_tools)
+
+    registry = CapabilityRegistry()
+    register_default_capabilities(registry)  # seeds the priority-0 REST resolver
+
+    assert register_github_mcp_capability(registry) is True
+
+    resolved = registry.resolve("github")
+    assert resolved.name == "github"
+    assert resolved.execute() == "mcp result"
+
+    providers = registry.providers_for("github")
+    assert [p.provider_name for p in providers] == ["mcp:github", "github-rest-api"]
+    assert providers[0].priority == 10
+    assert providers[1].priority == 0
 
 
 # ---------------------------------------------------------------------------

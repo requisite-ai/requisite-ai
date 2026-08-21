@@ -7,6 +7,36 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.22.0] - 2026-08-21
+
+### Added
+
+- First-party MCP servers as default capability providers -- see
+  [ADR-0023](docs/adr/0023-mcp-default-capability-providers.md) for the
+  full design. Closes the last remaining line in `ROADMAP.md`'s MCP
+  section.
+- `requisite.mcp.register_github_mcp_capability(registry, *, token=None,
+  tool_name="search_repositories", priority=10)`: registers GitHub's
+  official remote MCP server as the `"github"` capability, gated on
+  `GITHUB_TOKEN` -- no-ops without a token, never attempting a
+  connection. Registers at priority 10, above the existing unauthenticated
+  `search_github` REST resolver's priority 0, so it's picked up
+  automatically by `CapabilityRegistry.resolve` with zero application
+  code changes.
+- `requisite.mcp.register_mcp_capability(registry, client, *, tool_name,
+  capability, priority=0, is_available=None)`: the generic mechanism
+  `register_github_mcp_capability` is built on -- renames a discovered
+  MCP tool to the target capability name when they differ (unlike
+  `BaseMCPClient.register_as_capability`, which requires an exact match),
+  and returns `False` instead of raising if the server is unreachable or
+  doesn't expose the named tool. This is also the documented way to
+  register a database MCP server as a default capability provider, since
+  there's no single canonical one to hardcode -- see
+  `examples/mcp_default_capabilities.py`.
+- `DATABASE_URL` reserved in `.env.example`, alongside the existing
+  `GITHUB_TOKEN` reservation (now updated to describe its actual
+  consumer).
+
 ## [0.21.0] - 2026-08-19
 
 ### Added
