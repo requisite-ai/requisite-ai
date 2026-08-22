@@ -24,6 +24,7 @@ from requisite.providers.factory import ProviderRegistry
 from requisite.rag.base import BaseEmbeddingProvider, Chunk, ScoredChunk
 from requisite.rag.bm25 import BM25Retriever
 from requisite.rag.chunking import chunk_text
+from requisite.rag.compressor import LLMContextCompressor
 from requisite.rag.factory import (
     EmbeddingRegistry,
     VectorStoreRegistry,
@@ -592,6 +593,79 @@ async def test_llm_reranker_arerank() -> None:
     ]
     result = await reranker.arerank("query", candidates)
     assert [r.chunk.id for r in result] == ["c2", "c1"]
+
+
+# ---------------------------------------------------------------------------
+# LLMContextCompressor (scripted fake provider, no real LLM calls)
+# ---------------------------------------------------------------------------
+
+
+def _compressor_with_result(compressed: list[dict[str, Any]]) -> LLMContextCompressor:
+    registry = ProviderRegistry()
+    registry.register(
+        "scripted_rerank", lambda **kw: ScriptedRerankProvider({"compressed": compressed})
+    )
+    settings = Settings(default_provider="scripted_rerank", model="fake-model")
+    return LLMContextCompressor(ai=AI(settings=settings, registry=registry))
+
+
+def test_llm_compressor_replaces_chunk_text() -> None:
+    compressor = _compressor_with_result([{"chunk_id": "c1", "compressed_text": "shortened"}])
+    candidates = [
+        ScoredChunk(chunk=Chunk(id="c1", text="a much longer original passage"), score=0.7)
+    ]
+
+    result = compressor.compress("query", candidates)
+
+    assert len(result) == 1
+    assert result[0].chunk.id == "c1"
+    assert result[0].chunk.text == "shortened"
+    assert result[0].score == 0.7
+
+
+def test_llm_compressor_drops_empty_compression() -> None:
+    compressor = _compressor_with_result(
+        [
+            {"chunk_id": "c1", "compressed_text": "relevant part"},
+            {"chunk_id": "c2", "compressed_text": ""},
+        ]
+    )
+    candidates = [
+        ScoredChunk(chunk=Chunk(id="c1", text="first"), score=0.9),
+        ScoredChunk(chunk=Chunk(id="c2", text="second"), score=0.1),
+    ]
+
+    result = compressor.compress("query", candidates)
+
+    assert [r.chunk.id for r in result] == ["c1"]
+
+
+def test_llm_compressor_drops_chunk_missing_from_response() -> None:
+    compressor = _compressor_with_result([{"chunk_id": "c1", "compressed_text": "kept"}])
+    candidates = [
+        ScoredChunk(chunk=Chunk(id="c1", text="first"), score=0.5),
+        ScoredChunk(chunk=Chunk(id="c2", text="second"), score=0.5),
+    ]
+
+    result = compressor.compress("query", candidates)
+
+    assert [r.chunk.id for r in result] == ["c1"]
+
+
+def test_llm_compressor_empty_results_returns_empty() -> None:
+    compressor = _compressor_with_result([])
+    assert compressor.compress("query", []) == []
+
+
+@pytest.mark.asyncio
+async def test_llm_compressor_acompress() -> None:
+    compressor = _compressor_with_result([{"chunk_id": "c1", "compressed_text": "kept"}])
+    candidates = [ScoredChunk(chunk=Chunk(id="c1", text="original"), score=0.5)]
+
+    result = await compressor.acompress("query", candidates)
+
+    assert len(result) == 1
+    assert result[0].chunk.text == "kept"
 
 
 # ---------------------------------------------------------------------------

@@ -142,7 +142,7 @@ original interface design).
 | Hybrid / BM25 retriever | ✅ | `BM25Retriever` (keyword-only), `HybridRetriever` (dense + BM25, fused via Reciprocal Rank Fusion) — see [ADR-0010](docs/adr/0010-hybrid-bm25-retrieval-and-reranking.md) |
 | Retriever exposed as a `CapabilityProvider` (`agent.requires("knowledge_base")`) | ✅ | `Retriever.as_tool()` |
 | Re-ranking | ✅ | `BaseReranker` + `LLMReranker` (listwise, via `AI.chat_response(response_model=...)`) — see [ADR-0010](docs/adr/0010-hybrid-bm25-retrieval-and-reranking.md) |
-| Context compression | 📋 | |
+| Context compression | ✅ | `BaseCompressor` + `LLMContextCompressor` (listwise, reuses `AI`/`response_model=` — no new ML dependency, mirroring `LLMReranker`); shrinks each candidate's text to what's relevant to the query, dropping chunks with nothing relevant left — see [ADR-0024](docs/adr/0024-rag-context-compression.md) |
 
 ## Prompt templates & conversation management
 

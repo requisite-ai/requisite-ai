@@ -7,6 +7,29 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.23.0] - 2026-08-21
+
+### Added
+
+- RAG context compression -- see
+  [ADR-0024](docs/adr/0024-rag-context-compression.md) for the full
+  design. Closes the last remaining line in `ROADMAP.md`'s RAG section.
+- `requisite.rag.BaseCompressor`: abstract interface for compressing an
+  already-retrieved candidate list's text, mirroring `BaseReranker`'s
+  shape (a standalone, composable post-processing step, not a retriever
+  constructor parameter). `compress(query, results) -> list[ScoredChunk]`
+  shrinks each result's text to what's relevant to the query and drops
+  any result with nothing relevant left, rather than returning it with
+  blank text.
+- `requisite.rag.LLMContextCompressor`: the shipped implementation --
+  one listwise `AI.chat_response(response_model=...)` call compresses
+  every candidate at once, reusing the framework's own `AI` facade
+  instead of a new summarization-specific ML dependency, the same
+  reasoning `LLMReranker` (ADR-0010) already established. Same
+  constructor shape as `LLMReranker` (`ai=`/`provider=`/`model=`).
+- `examples/rag_example.py` extended with an `LLMContextCompressor`
+  demonstration chained after the existing `LLMReranker` call.
+
 ## [0.22.0] - 2026-08-21
 
 ### Added

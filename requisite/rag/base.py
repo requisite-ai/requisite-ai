@@ -214,3 +214,39 @@ class BaseReranker(ABC):
     ) -> list[ScoredChunk]:
         """Async counterpart to :meth:`rerank`. Default: thread-wrapped."""
         return await asyncio.to_thread(self.rerank, query, results, top_k=top_k)
+
+
+class BaseCompressor(ABC):
+    """Abstract interface for compressing an already-retrieved candidate
+    list's text content.
+
+    Like :class:`BaseReranker`, deliberately not wired into any
+    retriever's constructor -- a standalone, composable post-processing
+    step applied to whatever a retriever (and optionally a reranker)
+    already returned:
+
+    >>> compressor = SomeCompressor()  # doctest: +SKIP
+    >>> candidates = retriever.retrieve(query, top_k=20)  # doctest: +SKIP
+    >>> compressed = compressor.compress(query, candidates)  # doctest: +SKIP
+
+    This is a text-*reduction* step, not a re-scoring one: it shrinks
+    each chunk's ``text`` to whatever is relevant to the query, and
+    drops chunks with nothing relevant left -- it does not reorder or
+    truncate by count the way :meth:`BaseReranker.rerank`'s ``top_k``
+    does. Compose the two directly when both are wanted:
+    ``compressor.compress(query, reranker.rerank(query, results, top_k=N))``.
+    """
+
+    @abstractmethod
+    def compress(self, query: str, results: Sequence[ScoredChunk]) -> list[ScoredChunk]:
+        """Compress each result's text to the content relevant to ``query``.
+
+        Returns a new list of :class:`ScoredChunk` with ``chunk.text``
+        replaced by its compressed form and ``score`` unchanged. A
+        result with nothing relevant to ``query`` is dropped from the
+        output entirely, rather than returned with empty text.
+        """
+
+    async def acompress(self, query: str, results: Sequence[ScoredChunk]) -> list[ScoredChunk]:
+        """Async counterpart to :meth:`compress`. Default: thread-wrapped."""
+        return await asyncio.to_thread(self.compress, query, results)

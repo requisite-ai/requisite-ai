@@ -21,7 +21,13 @@ or vice versa.
 from requisite import Agent
 from requisite.capabilities import default_registry as capabilities
 from requisite.config.settings import Settings
-from requisite.rag import BM25Retriever, HybridRetriever, LLMReranker, Retriever
+from requisite.rag import (
+    BM25Retriever,
+    HybridRetriever,
+    LLMContextCompressor,
+    LLMReranker,
+    Retriever,
+)
 from requisite.rag.embeddings import GeminiEmbeddingProvider
 from requisite.rag.vectorstores import InMemoryVectorStore
 
@@ -31,6 +37,9 @@ DOCS = [
     "The Model Context Protocol (MCP) lets AI applications connect to external tools and data sources.",
     "The mitochondria is the powerhouse of the cell.",
     "REQ-4471 tracks the outstanding refund for order 88213.",
+    "REQ-5502 is a separate support ticket about a delayed shipment, "
+    "unrelated to biology. The mitochondria produces ATP through "
+    "oxidative phosphorylation, which powers nearly all cellular activity.",
 ]
 
 
@@ -88,7 +97,8 @@ def hybrid_and_rerank_example() -> None:
     Fusion, so both a keyword-only query and a semantic-paraphrase query
     (no shared words with the doc at all) find the right chunk from the
     same index. LLMReranker then re-scores a candidate list with one
-    structured-output LLM call.
+    structured-output LLM call, and LLMContextCompressor shrinks each
+    surviving passage down to just the text relevant to the query.
     """
     print("\n--- HybridRetriever (dense + BM25, fused) ---")
     settings = Settings()
@@ -105,10 +115,17 @@ def hybrid_and_rerank_example() -> None:
     print(f"  semantic query -> [{semantic_hit.score:.3f}] {semantic_hit.chunk.text}")
 
     print("\n--- LLMReranker (listwise, one structured-output call) ---")
-    candidates = retriever.retrieve("what powers a biological cell?", top_k=5)
+    query = "what powers a biological cell?"
+    candidates = retriever.retrieve(query, top_k=5)
     reranker = LLMReranker(provider="gemini", model="gemini-3.1-flash-lite")
-    reranked = reranker.rerank("what powers a biological cell?", candidates, top_k=1)
+    reranked = reranker.rerank(query, candidates, top_k=2)
     print(f"  [{reranked[0].score:.1f}] {reranked[0].chunk.text}")
+
+    print("\n--- LLMContextCompressor (shrinks each passage to what's relevant) ---")
+    compressor = LLMContextCompressor(provider="gemini", model="gemini-3.1-flash-lite")
+    compressed = compressor.compress(query, reranked)
+    for scored_chunk in compressed:
+        print(f"  [{scored_chunk.score:.1f}] {scored_chunk.chunk.text}")
 
 
 if __name__ == "__main__":

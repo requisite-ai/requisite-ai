@@ -203,7 +203,7 @@ and hybrid/BM25 retrieval + re-ranking (ADR-0010) are all shipped.
 | Retrievers | ✅ | `Retriever` (dense), `BM25Retriever` (keyword, zero deps), `HybridRetriever` (dense + BM25 fused via Reciprocal Rank Fusion); each exposed as a `CapabilityProvider` via `.as_tool()` — `agent.requires("knowledge_base")`, not a new `Agent` constructor parameter |
 | Hybrid search | ✅ | `HybridRetriever` — see [ADR-0010](docs/adr/0010-hybrid-bm25-retrieval-and-reranking.md) |
 | Re-ranking | ✅ | `BaseReranker` + `LLMReranker` (listwise, reuses `AI`/`response_model=` — no new ML dependency) |
-| Context compression | 📋 | |
+| Context compression | ✅ | `BaseCompressor` + `LLMContextCompressor` (listwise, reuses `AI`/`response_model=` — no new ML dependency) — [ADR-0024](docs/adr/0024-rag-context-compression.md) |
 
 ## Prompt templates & conversation management
 

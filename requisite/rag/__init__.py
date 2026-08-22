@@ -25,6 +25,7 @@ See ``docs/adr/0005-rag-integration.md`` for the full design.
 """
 
 from requisite.rag.base import (
+    BaseCompressor,
     BaseEmbeddingProvider,
     BaseReranker,
     BaseRetriever,
@@ -34,6 +35,7 @@ from requisite.rag.base import (
 )
 from requisite.rag.bm25 import BM25Retriever
 from requisite.rag.chunking import chunk_text
+from requisite.rag.compressor import LLMContextCompressor
 from requisite.rag.factory import (
     EmbeddingRegistry,
     VectorStoreRegistry,
@@ -46,6 +48,7 @@ from requisite.rag.retriever import Retriever
 
 __all__ = [
     "BM25Retriever",
+    "BaseCompressor",
     "BaseEmbeddingProvider",
     "BaseReranker",
     "BaseRetriever",
@@ -53,6 +56,7 @@ __all__ = [
     "Chunk",
     "EmbeddingRegistry",
     "HybridRetriever",
+    "LLMContextCompressor",
     "LLMReranker",
     "Retriever",
     "ScoredChunk",
