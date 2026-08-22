@@ -99,7 +99,7 @@ Each new strategy is a `_run_<strategy>` / `_arun_<strategy>` pair on
 | MCP client: stdio transport | ✅ | `MCPClient.stdio(...)` |
 | MCP client: Streamable HTTP transport | ✅ | `MCPClient.http(...)` |
 | MCP client: persistent session mode (vs. today's per-call reconnect) | 📋 | Deferred until reconnect latency is a measured problem — ADR-0004 |
-| Migrate to `mcp` 2.x's API | 📋 | Currently capped at `mcp>=1.28,<2.0` — 2.0.0 is a breaking rewrite (restructured package layout, renamed `CallToolResult` fields, removed `streamablehttp_client`). Deliberately deferred as its own change rather than rushed under CI-failure pressure — see `CHANGELOG.md`'s 0.4.1 entry and `DEVELOPMENT.md`'s dependency policy |
+| Migrate to `mcp` 2.x's API | ✅ | Hard cutover, `mcp>=2.0,<3.0`, no dual 1.x/2.x support (optional extra, pre-1.0 project). Renamed `CallToolResult`/`Tool` fields, rewrote the Streamable HTTP transport call (`streamable_http_client`, now `httpx2`-based), and rewrote the low-level `Server`'s handler registration from post-construction decorators to constructor kwargs — see [ADR-0025](docs/adr/0025-mcp-2x-migration.md) |
 | Bridge into `CapabilityRegistry` (`agent.requires("github")` -> MCP server) | ✅ | `BaseMCPClient.register_as_capability(...)` |
 | MCP resource / prompt discovery (beyond tools) | 📋 | Out of scope for the initial client — ADR-0004 |
 | MCP server integration (expose Requisite tools/agents as an MCP server) | ✅ | `MCPServer` (stdio + Streamable HTTP), `Agent.as_tool()` -- see [ADR-0015](docs/adr/0015-mcp-server-integration.md) |

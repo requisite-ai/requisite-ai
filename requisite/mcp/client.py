@@ -1,14 +1,16 @@
 """
 MCP client implementation, wrapping the official ``mcp`` Python SDK.
 
-Supports both current MCP transports (verified against ``mcp`` 1.28.1
-and the current spec): **stdio** (local subprocess, the default for
-local dev tools) and **Streamable HTTP** (remote servers; replaced the
-now-deprecated SSE transport in the November 2025 spec). Construct via
-:meth:`MCPClient.stdio` or :meth:`MCPClient.http` rather than the plain
-constructor -- each takes only the parameters relevant to that transport.
+Supports both current MCP transports (verified against ``mcp`` 2.0.0):
+**stdio** (local subprocess, the default for local dev tools) and
+**Streamable HTTP** (remote servers; replaced the now-deprecated SSE
+transport in the November 2025 spec). Construct via :meth:`MCPClient.stdio`
+or :meth:`MCPClient.http` rather than the plain constructor -- each takes
+only the parameters relevant to that transport.
 
-Install with: ``pip install mcp``
+Install with: ``pip install mcp`` -- see
+``docs/adr/0025-mcp-2x-migration.md`` for the 1.x -> 2.x migration this
+module went through (a hard cutover, no dual-version support).
 """
 
 from __future__ import annotations
@@ -167,14 +169,25 @@ class MCPClient(BaseMCPClient):
                     await session.initialize()
                     yield session
         else:
-            from mcp.client.streamable_http import streamablehttp_client
+            import httpx2
+            from mcp.client.streamable_http import streamable_http_client
 
-            async with streamablehttp_client(
-                self._url or "", headers=self._headers, timeout=self._timeout
-            ) as (read_stream, write_stream, _get_session_id):
-                async with ClientSession(read_stream, write_stream) as session:
-                    await session.initialize()
-                    yield session
+            # streamable_http_client no longer takes headers=/timeout= directly
+            # (mcp 2.x) -- its own docstring says to build an httpx2.AsyncClient
+            # and pass it in. It only manages that client's lifecycle itself
+            # when it constructs one internally ("only manage client lifecycle
+            # if we created it") -- since we're passing our own, we open and
+            # close it ourselves here.
+            async with httpx2.AsyncClient(
+                headers=self._headers, timeout=self._timeout
+            ) as http_client:
+                async with streamable_http_client(self._url or "", http_client=http_client) as (
+                    read_stream,
+                    write_stream,
+                ):
+                    async with ClientSession(read_stream, write_stream) as session:
+                        await session.initialize()
+                        yield session
 
     async def adiscover_tools(self) -> list[Tool]:
         try:
@@ -212,7 +225,7 @@ class MCPClient(BaseMCPClient):
         return Tool(
             name=tool_name,
             description=mcp_tool.description or "",
-            parameters_schema=mcp_tool.inputSchema or {"type": "object", "properties": {}},
+            parameters_schema=mcp_tool.input_schema or {"type": "object", "properties": {}},
             func=_call,
         )
 
@@ -228,15 +241,15 @@ class MCPClient(BaseMCPClient):
                 details={"server": self.name, "tool": tool_name},
             ) from exc
 
-        if result.isError:
+        if result.is_error:
             raise MCPException(
                 f"MCP tool '{tool_name}' on server '{self.name}' returned an error: "
                 f"{self._extract_text(result)}",
                 details={"server": self.name, "tool": tool_name},
             )
 
-        if result.structuredContent is not None:
-            return result.structuredContent
+        if result.structured_content is not None:
+            return result.structured_content
         return self._extract_text(result)
 
     @staticmethod

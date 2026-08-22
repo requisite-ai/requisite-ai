@@ -11,14 +11,19 @@ should depend on.)
 ``MCPServer`` tests take a different, simpler approach than the client
 tests below: rather than faking the SDK, they call
 ``MCPServer._handle_list_tools``/``_handle_call_tool`` directly -- these
-are plain async methods, registered onto the real ``mcp.server.lowlevel.Server``
-via its decorators in ``_build_server``, but never dependent on it
-themselves. No SDK object needs faking at all.
+are plain async methods, passed as constructor kwargs to the real
+``mcp.server.lowlevel.Server`` in ``_build_server`` (mcp 2.x's handler
+registration -- see ``docs/adr/0025-mcp-2x-migration.md``), but never
+dependent on it themselves. ``ctx`` is unused by either handler, so
+tests pass ``None``; ``params`` only needs a duck-typed stand-in
+(``SimpleNamespace``) carrying the couple of attributes each handler
+actually reads -- no real SDK request object needs faking.
 """
 
 from __future__ import annotations
 
 from contextlib import asynccontextmanager
+from types import SimpleNamespace
 from typing import Any
 
 import pytest
@@ -26,7 +31,7 @@ import pytest
 from requisite.agents.agent import Agent
 from requisite.capabilities.registry import CapabilityRegistry
 from requisite.capabilities.resolvers import register_default_capabilities
-from requisite.core.exceptions import ConfigurationException, MCPException, ToolException
+from requisite.core.exceptions import ConfigurationException, MCPException
 from requisite.core.interfaces import ChatResponse, Usage
 from requisite.mcp.client import MCPClient
 from requisite.mcp.defaults import register_github_mcp_capability, register_mcp_capability
@@ -42,7 +47,7 @@ class _FakeMCPTool:
     def __init__(self, name: str, description: str, input_schema: dict[str, Any]) -> None:
         self.name = name
         self.description = description
-        self.inputSchema = input_schema
+        self.input_schema = input_schema
 
 
 class _FakeListToolsResult:
@@ -59,8 +64,8 @@ class _FakeTextContent:
 class _FakeCallToolResult:
     def __init__(self, *, text: str = "", structured: Any = None, is_error: bool = False) -> None:
         self.content = [_FakeTextContent(text)] if text else []
-        self.structuredContent = structured
-        self.isError = is_error
+        self.structured_content = structured
+        self.is_error = is_error
 
 
 class _FakeSession:
@@ -145,7 +150,7 @@ def test_discover_tools_returns_requisite_tools(monkeypatch: pytest.MonkeyPatch)
     assert len(tools) == 1
     assert tools[0].name == "add"
     assert tools[0].description == "Add two numbers."
-    assert tools[0].parameters_schema == fake_tools[0].inputSchema
+    assert tools[0].parameters_schema == fake_tools[0].input_schema
 
 
 @pytest.mark.asyncio
@@ -472,23 +477,30 @@ def test_mcp_server_construction_registers_tools_and_agents() -> None:
     assert {t.name for t in server._tool_registry.all()} == {"add", "assistant"}
 
 
+def _call_tool_params(name: str, arguments: dict[str, Any]) -> Any:
+    """Minimal stand-in for mcp.types.CallToolRequestParams -- _handle_call_tool
+    only reads .name/.arguments, so a real SDK object isn't needed."""
+    return SimpleNamespace(name=name, arguments=arguments)
+
+
 @pytest.mark.asyncio
 async def test_handle_list_tools_returns_mcp_tools() -> None:
     server = MCPServer(name="demo", tools=[add])
 
-    mcp_tools = await server._handle_list_tools()
-    assert len(mcp_tools) == 1
-    assert mcp_tools[0].name == "add"
-    assert mcp_tools[0].description == "Add two numbers."
-    assert mcp_tools[0].inputSchema["required"] == ["a", "b"]
+    result = await server._handle_list_tools(None, None)
+    assert len(result.tools) == 1
+    assert result.tools[0].name == "add"
+    assert result.tools[0].description == "Add two numbers."
+    assert result.tools[0].input_schema["required"] == ["a", "b"]
 
 
 @pytest.mark.asyncio
 async def test_handle_call_tool_wraps_non_dict_result() -> None:
     server = MCPServer(name="demo", tools=[add])
 
-    result = await server._handle_call_tool("add", {"a": 2, "b": 3})
-    assert result == {"result": 5}
+    result = await server._handle_call_tool(None, _call_tool_params("add", {"a": 2, "b": 3}))
+    assert result.structured_content == {"result": 5}
+    assert result.is_error is False
 
 
 @pytest.mark.asyncio
@@ -500,27 +512,29 @@ async def test_handle_call_tool_passes_dict_result_through() -> None:
 
     server = MCPServer(name="demo", tools=[get_status])
 
-    result = await server._handle_call_tool("get_status", {})
-    assert result == {"ok": True, "count": 3}
+    result = await server._handle_call_tool(None, _call_tool_params("get_status", {}))
+    assert result.structured_content == {"ok": True, "count": 3}
 
 
 @pytest.mark.asyncio
-async def test_handle_call_tool_unknown_tool_raises() -> None:
+async def test_handle_call_tool_unknown_tool_returns_error_result() -> None:
+    """mcp 2.x's on_call_tool handler must build the result itself -- unlike
+    1.x's decorator wrapper, there's no automatic exception-to-is_error
+    conversion, so MCPServer now catches this itself (see the docstring
+    on _handle_call_tool) rather than letting it propagate."""
     server = MCPServer(name="demo", tools=[add])
 
-    with pytest.raises(ToolException):
-        await server._handle_call_tool("does_not_exist", {})
+    result = await server._handle_call_tool(None, _call_tool_params("does_not_exist", {}))
+    assert result.is_error is True
 
 
 @pytest.mark.asyncio
-async def test_handle_call_tool_propagates_tool_failure() -> None:
-    """The SDK's own call_tool() decorator wrapper turns any exception raised
-    here into an isError=True result -- MCPServer doesn't catch it itself
-    (see the docstring on _handle_call_tool)."""
+async def test_handle_call_tool_failure_returns_error_result() -> None:
     server = MCPServer(name="demo", tools=[boom])
 
-    with pytest.raises(ToolException):
-        await server._handle_call_tool("boom", {})
+    result = await server._handle_call_tool(None, _call_tool_params("boom", {}))
+    assert result.is_error is True
+    assert "kaboom" in result.content[0].text
 
 
 @pytest.mark.asyncio
@@ -528,8 +542,10 @@ async def test_handle_call_tool_agent_round_trip() -> None:
     agent = _fixed_answer_agent(name="assistant")
     server = MCPServer(name="demo", agents=[agent])
 
-    result = await server._handle_call_tool("assistant", {"prompt": "hello"})
-    assert result == {"result": "agent answer: hello"}
+    result = await server._handle_call_tool(
+        None, _call_tool_params("assistant", {"prompt": "hello"})
+    )
+    assert result.structured_content == {"result": "agent answer: hello"}
 
 
 def test_add_tool_and_add_agent_return_registered_tool() -> None:

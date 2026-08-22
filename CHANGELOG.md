@@ -7,6 +7,42 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.24.0] - 2026-08-21
+
+### Changed
+
+- Migrated to `mcp` 2.x -- see
+  [ADR-0025](docs/adr/0025-mcp-2x-migration.md) for the full design.
+  Closes the "Migrate to `mcp` 2.x's API" line in `ROADMAP.md`'s MCP
+  section. **Breaking change for the optional `mcp` extra**: the
+  `mcp>=1.28,<2.0` cap is now `mcp>=2.0,<3.0`, a hard cutover with no
+  dual 1.x/2.x support (confirmed as the intended approach -- `mcp` is
+  an optional extra, not a core dependency, and this project is pre-1.0).
+- `requisite/mcp/client.py`: `CallToolResult.structuredContent`/
+  `.isError` -> `.structured_content`/`.is_error`, `Tool.inputSchema` ->
+  `.input_schema` (renamed to snake_case in `mcp` 2.x). The Streamable
+  HTTP transport call changed from `streamablehttp_client(url,
+  headers=, timeout=)` to `streamable_http_client(url,
+  http_client=<httpx2.AsyncClient>)` -- `client.py` now constructs and
+  owns an `httpx2.AsyncClient` directly for header/timeout configuration.
+- `requisite/mcp/server.py`: `mcp.server.lowlevel.Server`'s handler
+  registration changed from post-construction decorators
+  (`server.list_tools()(handler)`) to constructor keyword arguments
+  (`Server(name, on_list_tools=..., on_call_tool=...)`), with new typed
+  callback signatures. `_handle_call_tool` now builds the full
+  `CallToolResult` itself (content/`structured_content`/`is_error`) --
+  1.x's automatic dict-to-`structuredContent` wrapping and
+  exception-to-`isError` conversion no longer happen inside the SDK, so
+  both are replicated manually, preserving the existing wire contract.
+  `arun_http` is simplified to use the SDK's new
+  `Server.streamable_http_app(...)` convenience method, deleting the
+  hand-rolled `_StreamableHTTPASGIApp` class ADR-0015 originally needed
+  to work around a 405-on-POST issue -- the SDK now solves that itself.
+- Verified against real `mcp==2.0.0`, not just updated mocks: a live
+  stdio round trip and a live Streamable HTTP round trip (tool
+  discovery, a successful call, and a failing call) both passed
+  end-to-end during this migration.
+
 ## [0.23.0] - 2026-08-21
 
 ### Added
