@@ -57,16 +57,6 @@ class OrchestratorRegistry:
         return builder(**kwargs)
 
 
-def _not_yet_implemented(backend: str, install_hint: str) -> OrchestratorBuilder:
-    def _builder(**kwargs: Any) -> BaseOrchestrator:
-        raise ConfigurationException(
-            f"The '{backend}' orchestrator backend is on the roadmap but not yet "
-            f"implemented in this release. {install_hint}",
-        )
-
-    return _builder
-
-
 def _register_builtin_orchestrators(registry: OrchestratorRegistry) -> None:
     def _build_native(**kwargs: Any) -> BaseOrchestrator:
         from requisite.orchestrators.native import NativeOrchestrator
@@ -78,23 +68,20 @@ def _register_builtin_orchestrators(registry: OrchestratorRegistry) -> None:
 
         return LangGraphOrchestrator(**kwargs)
 
+    def _build_crewai(**kwargs: Any) -> BaseOrchestrator:
+        from requisite.orchestrators.crewai_orchestrator import CrewAIOrchestrator
+
+        return CrewAIOrchestrator(**kwargs)
+
+    def _build_autogen(**kwargs: Any) -> BaseOrchestrator:
+        from requisite.orchestrators.autogen_orchestrator import AutoGenOrchestrator
+
+        return AutoGenOrchestrator(**kwargs)
+
     registry.register("native", _build_native)
     registry.register("langgraph", _build_langgraph)
-    # Roadmap backends: registered now with a clear, actionable error so
-    # `workflow.use_crewai()` / `workflow.use_autogen()` fail helpfully
-    # today and can become real integrations later with no API change.
-    registry.register(
-        "crewai",
-        _not_yet_implemented(
-            "crewai", "Track progress or contribute at the project's GitHub repo."
-        ),
-    )
-    registry.register(
-        "autogen",
-        _not_yet_implemented(
-            "autogen", "Track progress or contribute at the project's GitHub repo."
-        ),
-    )
+    registry.register("crewai", _build_crewai)
+    registry.register("autogen", _build_autogen)
 
 
 default_registry = OrchestratorRegistry()

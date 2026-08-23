@@ -7,6 +7,43 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.26.0] - 2026-08-23
+
+### Added
+
+- CrewAI and AutoGen orchestrator backends -- see
+  [ADR-0027](docs/adr/0027-crewai-autogen-orchestrator-backends.md) for
+  the full design. Closes both remaining orchestration-backend lines in
+  `ROADMAP.md`.
+- `workflow.use_crewai()`: delegates coordination to CrewAI
+  (`Process.sequential` -- `"sequential"` strategy only, `"hierarchical"`
+  deferred). Every actual model call still proxies through the wrapped
+  `Agent`'s own configured provider via a new `crewai.llms.base_llm.BaseLLM`
+  adapter, matching the same "third-party package coordinates, Requisite's
+  own Agent calls the model" design the `langgraph` backend already
+  established. New `crewai` optional extra (`pip install
+  requisite-ai[crewai]`) -- deliberately **not** included in the `all`
+  extra, since `crewai` hard-pins `mcp~=1.28.1`, a real, verified conflict
+  with this project's own `mcp>=2.0,<3.0` requirement.
+- `workflow.use_autogen()`: delegates coordination to AutoGen
+  (`autogen-agentchat`/`autogen-core`) -- `"sequential"`
+  (`RoundRobinGroupChat`) and `"supervisor"` (`SelectorGroupChat`,
+  reusing the native backend's exact `_SupervisorDecision` protocol, the
+  same way the `langgraph` backend's own supervisor graph already does).
+  Same proxy-adapter design via a new `autogen_core.models.ChatCompletionClient`
+  adapter. New `autogen` optional extra, included in `all`.
+
+### Fixed
+
+- (Found during this feature's own development, not a regression in
+  released code) `AutoGenOrchestrator`'s `"supervisor"` strategy now
+  re-raises the original `AgentException`/`ConfigurationException` for
+  max-rounds-exceeded/unknown-delegate conditions, instead of the generic
+  `RuntimeError` `autogen-agentchat`'s own runtime wraps handler
+  exceptions in -- restoring the same exception contract
+  `NativeOrchestrator`/`LangGraphOrchestrator` already give callers for
+  identical conditions.
+
 ## [0.25.0] - 2026-08-23
 
 ### Added

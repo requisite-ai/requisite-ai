@@ -104,8 +104,10 @@ class Workflow:
         disguised Python loop; see ``docs/adr/0016-langgraph-branching.md``.
     orchestrator:
         Execution backend: ``"native"`` (default, pure Python, no extra
-        dependency) or ``"langgraph"``. Change via :meth:`use_langgraph` /
-        :meth:`use_native` instead of passing this directly, for
+        dependency), ``"langgraph"``, ``"crewai"``, or ``"autogen"`` --
+        each supports a different strategy subset, see :meth:`use_langgraph`/
+        :meth:`use_crewai`/:meth:`use_autogen`. Change via those methods
+        (or :meth:`use_native`) instead of passing this directly, for
         readability at the call site.
     registry:
         The :class:`~requisite.orchestrators.factory.OrchestratorRegistry`
@@ -343,12 +345,33 @@ class Workflow:
         return self
 
     def use_crewai(self) -> "Workflow":
-        """Delegate execution to CrewAI. On the roadmap; not yet implemented."""
+        """Delegate coordination to `CrewAI <https://github.com/crewAIInc/crewAI>`_.
+
+        Requires ``pip install crewai``. Returns ``self`` for chaining.
+        Supports the ``"sequential"`` strategy only (CrewAI's
+        ``Process.sequential``) -- ``"hierarchical"`` isn't implemented
+        yet, see ``docs/adr/0027-crewai-autogen-orchestrator-backends.md``.
+        Every actual model call still goes through each agent's own
+        configured provider (CrewAI handles coordination only, not LLM
+        calls) -- see the ADR for why.
+        """
         self._orchestrator_name = "crewai"
         return self
 
     def use_autogen(self) -> "Workflow":
-        """Delegate execution to AutoGen. On the roadmap; not yet implemented."""
+        """Delegate coordination to `AutoGen <https://github.com/microsoft/autogen>`_
+        (``autogen-agentchat``/``autogen-core``).
+
+        Requires ``pip install autogen-agentchat autogen-core``. Returns
+        ``self`` for chaining. Supports ``"sequential"``
+        (``RoundRobinGroupChat``) and ``"supervisor"``
+        (``SelectorGroupChat``, reusing the same decision protocol
+        :meth:`use_langgraph`'s supervisor graph already reuses from the
+        native backend) -- see
+        ``docs/adr/0027-crewai-autogen-orchestrator-backends.md``. Every
+        actual model call still goes through each agent's own configured
+        provider (AutoGen handles coordination only, not LLM calls).
+        """
         self._orchestrator_name = "autogen"
         return self
 

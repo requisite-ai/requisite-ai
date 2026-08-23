@@ -442,12 +442,30 @@ async def test_workflow_use_langgraph_arun_supervisor() -> None:
     assert result.strategy == "supervisor"
 
 
-def test_workflow_use_crewai_raises_roadmap_error() -> None:
+def test_workflow_use_crewai_runs_a_real_sequential_pipeline() -> None:
+    pytest.importorskip("crewai")
+
     workflow = Workflow()
-    workflow.add(make_agent("A", "a"))
+    workflow.add(make_agent("Researcher", "research")).add(make_agent("Writer", "write"))
     workflow.use_crewai()
-    with pytest.raises(ConfigurationException, match="not yet implemented"):
-        workflow.run("hello")
+
+    result = workflow.run("AI trends")
+    assert result.orchestrator == "crewai"
+    assert result.strategy == "sequential"
+    assert len(result.steps) == 2
+
+
+def test_workflow_use_autogen_runs_a_real_sequential_pipeline() -> None:
+    pytest.importorskip("autogen_agentchat")
+
+    workflow = Workflow()
+    workflow.add(make_agent("Researcher", "research")).add(make_agent("Writer", "write"))
+    workflow.use_autogen()
+
+    result = workflow.run("AI trends")
+    assert result.orchestrator == "autogen"
+    assert result.strategy == "sequential"
+    assert len(result.steps) == 2
 
 
 def test_workflow_unknown_strategy_raises() -> None:

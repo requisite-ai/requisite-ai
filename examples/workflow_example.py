@@ -358,6 +358,45 @@ def main() -> None:
     except Exception as exc:  # noqa: BLE001
         print(f"\ngraph cycle didn't converge within max_steps this run: {exc}")
 
+    # Same sequential pipeline again, this time coordinated by CrewAI
+    # instead of langgraph -- CrewAI handles task chaining/coordination
+    # only; each step's actual model call still goes through Requisite's
+    # own configured provider (a BaseLLM adapter proxies to Agent.run()).
+    # Requires: pip install crewai
+    try:
+        crewai_workflow = Workflow().sequential().use_crewai()
+        crewai_workflow.add(research).add(writer)
+        crewai_result = crewai_workflow.run("Research AI trends and write a short summary.")
+        print("\n--- sequential (crewai) ---")
+        print(crewai_result.content)
+    except Exception as exc:  # noqa: BLE001
+        print(f"\ncrewai backend not available: {exc}")
+
+    # Same idea on AutoGen: sequential via RoundRobinGroupChat.
+    # Requires: pip install autogen-agentchat autogen-core
+    try:
+        autogen_workflow = Workflow().sequential().use_autogen()
+        autogen_workflow.add(research).add(writer)
+        autogen_result = autogen_workflow.run("Research AI trends and write a short summary.")
+        print("\n--- sequential (autogen) ---")
+        print(autogen_result.content)
+    except Exception as exc:  # noqa: BLE001
+        print(f"\nautogen backend not available: {exc}")
+
+    # AutoGen's supervisor strategy: SelectorGroupChat, reusing the exact
+    # same delegation-decision protocol the native/langgraph supervisor
+    # already use -- just a third execution engine.
+    try:
+        autogen_supervisor_workflow = supervisor_workflow.use_autogen()
+        autogen_supervisor_result = autogen_supervisor_workflow.run(
+            "Research what AutoGen is and write a short summary."
+        )
+        print("\n--- supervisor (autogen) ---")
+        print(autogen_supervisor_result.content)
+        print(f"(delegated to: {[s.agent_name for s in autogen_supervisor_result.steps]})")
+    except Exception as exc:  # noqa: BLE001
+        print(f"\nautogen backend not available: {exc}")
+
 
 if __name__ == "__main__":
     main()

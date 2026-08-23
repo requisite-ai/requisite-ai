@@ -84,8 +84,8 @@ construction (each lives in its own module, imported lazily).
 | Map-reduce strategy | ✅ — `native` orchestrator only; work items via `map_items=`, round-robin across mappers; see [ADR-0012](docs/adr/0012-debate-and-map-reduce-strategies.md) |
 | Tree-of-thoughts strategy | ✅ — `native` orchestrator only; evaluator (`steps[0]`) scores candidates thinkers (`steps[1:]`) generate, branching and pruning a search tree via `breadth`/`beam_width`/`max_depth`; see [ADR-0018](docs/adr/0018-tree-of-thoughts-strategy.md) |
 | General graph execution (arbitrary DAGs, not just linear/parallel) | ✅ — `native` orchestrator only; nodes (`Agent` or named `Workflow`) wired with developer-declared edges via `Workflow.add_edge(from_, to, condition=...)` — routing is deterministic, not LLM-decided like every other strategy; cycles allowed, bounded by `max_steps`; see [ADR-0019](docs/adr/0019-graph-execution-strategy.md) |
-| CrewAI orchestrator backend | 📋 — registered today as a clear "not yet implemented" placeholder |
-| AutoGen orchestrator backend | 📋 — same |
+| CrewAI orchestrator backend | ✅ — `sequential` strategy only; every actual model call still proxies through the wrapped `Agent`'s own configured provider (CrewAI handles coordination only) via a `BaseLLM` adapter. `hierarchical` deferred — depends on CrewAI's own internal delegation-tool protocol, which the proxy adapter deliberately bypasses; see [ADR-0027](docs/adr/0027-crewai-autogen-orchestrator-backends.md) |
+| AutoGen orchestrator backend | ✅ — `sequential` (`RoundRobinGroupChat`) and `supervisor` (`SelectorGroupChat`, reusing the native backend's exact decision protocol, the same way the `langgraph` backend already does) strategies; same proxy-adapter design as CrewAI, via a `ChatCompletionClient` adapter — see [ADR-0027](docs/adr/0027-crewai-autogen-orchestrator-backends.md) |
 
 Each new strategy is a `_run_<strategy>` / `_arun_<strategy>` pair on
 `NativeOrchestrator` (or an equivalent on another backend) — see

@@ -149,8 +149,8 @@ Status legend: ✅ Done · 🚧 Partial · 📋 Not started · N/A Deliberately 
 | Native (no external framework) | ✅ | `NativeOrchestrator` |
 | LangGraph | ✅ | `LangGraphOrchestrator` — sequential (linear chain) and supervisor (real conditional graph, ADR-0016) so far |
 | LangChain | 📋 | Not currently planned as a distinct backend — evaluate if a real need emerges |
-| CrewAI | 📋 | Registered today as a clear "not yet implemented" placeholder (`workflow.use_crewai()`) |
-| AutoGen | 📋 | Same placeholder treatment |
+| CrewAI | ✅ | `workflow.use_crewai()` — `sequential` strategy, coordination only (every model call proxies through the wrapped `Agent`'s own provider) — [ADR-0027](docs/adr/0027-crewai-autogen-orchestrator-backends.md) |
+| AutoGen | ✅ | `workflow.use_autogen()` — `sequential` + `supervisor` strategies, same coordination-only design — [ADR-0027](docs/adr/0027-crewai-autogen-orchestrator-backends.md) |
 | Public API stays identical across backends | ✅ | `Workflow.add()` / `.run()` unchanged regardless of `.use_*()` |
 
 ## Agentic mode
