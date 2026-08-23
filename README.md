@@ -45,6 +45,8 @@ pip install "requisite-ai[azure_openai]"  # Azure OpenAI only (uses the openai p
 pip install "requisite-ai[mcp]"           # MCP client + server integration
 pip install "requisite-ai[rag]"           # RAG (embedding providers; in-memory vector store needs nothing extra)
 pip install "requisite-ai[langgraph]"     # native + langgraph orchestration
+pip install "requisite-ai[crewai]"        # native + CrewAI orchestration (sequential only)
+pip install "requisite-ai[autogen]"       # native + AutoGen orchestration (sequential + supervisor)
 ```
 
 > Quoting the package name (`"requisite-ai[all]"`) avoids shell globbing
@@ -62,6 +64,19 @@ pip install "requisite-ai[langgraph]"     # native + langgraph orchestration
 > **Note on Azure OpenAI:** uses Azure's current **v1 GA API** (the plain
 > `openai` client pointed at your endpoint) — no separate SDK, no dated
 > `api-version` string. See [ADR-0002](docs/adr/0002-provider-kwargs-and-memory-integration.md).
+>
+> **Note on `crewai` + MCP:** `crewai` (verified at 1.15.17) hard-pins
+> `mcp~=1.28.1`, which conflicts with this project's own `mcp>=2.0,<3.0`
+> ([ADR-0025](docs/adr/0025-mcp-2x-migration.md)). Installing both in
+> the same environment can let pip's resolver silently downgrade `mcp`
+> below 2.0, breaking any MCP client/server code with errors like
+> `'Tool' object has no attribute 'input_schema'`. That's why `crewai`
+> is deliberately **not** included in `requisite-ai[all]` — if you need
+> both the `crewai` orchestrator backend and MCP in the same project,
+> install `requisite-ai[crewai]` first, then re-assert
+> `pip install "mcp>=2.0,<3.0"` afterward (and again any time you
+> reinstall/upgrade `crewai`), or keep them in separate environments.
+> See [ADR-0027](docs/adr/0027-crewai-autogen-orchestrator-backends.md).
 
 ## Configuration
 
@@ -228,8 +243,18 @@ Switch the execution engine — the `.add()` / `.run()` API never changes:
 workflow.use_langgraph()   # requires: pip install langgraph
 result = workflow.run("Research AI trends and write a summary.")
 
+workflow.use_crewai()      # requires: pip install crewai -- "sequential" only
+workflow.use_autogen()     # requires: pip install autogen-agentchat autogen-core -- "sequential" + "supervisor"
+
 workflow.use_native()      # back to the built-in, dependency-free engine
 ```
+
+`langgraph`/`crewai`/`autogen` are coordination-only backends — every
+actual model call still goes through each agent's own configured
+provider (rate limiting, tools, everything), never the third-party
+package's own LLM client. See
+[ADR-0027](docs/adr/0027-crewai-autogen-orchestrator-backends.md) for
+which strategy each backend supports and why.
 
 Let a supervisor agent delegate to a team of workers, addressed by name,
 deciding when the task is done:
