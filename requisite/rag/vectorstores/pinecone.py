@@ -150,6 +150,14 @@ class PineconeVectorStore(BaseVectorStore):
         top_k: int = 5,
         filter: Optional[dict[str, Any]] = None,  # noqa: A002
     ) -> list[ScoredChunk]:
+        # Matches InMemoryVectorStore/WeaviateVectorStore's short-circuit
+        # (docs/adr/0022-vector-memory.md) -- without it, top_k<=0 goes
+        # straight to the live Pinecone service, whose behavior for a
+        # non-positive top_k is unspecified here, instead of the
+        # locally-guaranteed [] the other two stores promise uniformly.
+        if top_k <= 0:
+            return []
+
         index = self._get_index()
         try:
             response = index.query(

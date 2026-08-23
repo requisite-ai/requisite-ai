@@ -44,11 +44,27 @@ def _extract_variables(template: str) -> list[str]:
     """Return the named ``{variable}`` fields in ``template``, in order of
     first appearance. Positional (``{}``) and numeric (``{0}``) fields are
     skipped -- named variables only are treated as template inputs.
+
+    For a dotted/indexed field (``{cfg.api_key}``, ``{items[0]}``), the
+    *root* name (``cfg``, ``items``) is what :meth:`PromptTemplate.format`
+    actually needs supplied as a kwarg -- ``str.format`` resolves the
+    attribute/index access against whatever that kwarg is. Capturing only
+    the root (not the full dotted expression, and not skipping it
+    entirely) is what makes :meth:`PromptTemplate.format`'s missing-
+    variable check able to catch a genuinely missing ``cfg`` before ever
+    calling ``str.format`` -- previously such a field was silently
+    excluded from ``input_variables`` altogether, so a missing root
+    surfaced as a raw ``KeyError``/``AttributeError`` instead of
+    :class:`~requisite.core.exceptions.PromptException`. See
+    ``docs/adr/0031-code-review-fixes.md``.
     """
     seen: list[str] = []
     for _literal, field_name, _format_spec, _conversion in string.Formatter().parse(template):
-        if field_name and field_name.isidentifier() and field_name not in seen:
-            seen.append(field_name)
+        if not field_name:
+            continue
+        root = field_name.split(".")[0].split("[")[0]
+        if root.isidentifier() and root not in seen:
+            seen.append(root)
     return seen
 
 
@@ -112,8 +128,24 @@ class PromptTemplate(BaseModel):
         The given variables are substituted into the template text now;
         any remaining ``input_variables`` are left as placeholders in the
         returned template, to be filled in by a later :meth:`format` call.
+
+        A string value containing literal ``{``/``}`` characters is
+        escaped (doubled, ``str.format``'s own literal-brace convention)
+        before substitution, so it can't introduce a *new* placeholder
+        into the returned template's text for a later :meth:`format` call
+        to unexpectedly fill -- e.g. ``template.partial(name="{secret}")``
+        must not make a later ``.format(secret=...)`` interpolate that
+        value into ``name``'s position too. Non-string values are passed
+        through unescaped, so a value with its own ``__format__`` (e.g. a
+        number used with a ``{x:.2f}``-style spec still in the template)
+        keeps working exactly as before. See
+        ``docs/adr/0031-code-review-fixes.md``.
         """
-        rendered = self.template.format_map(_PartialSafeDict(kwargs))
+        escaped_kwargs = {
+            key: value.replace("{", "{{").replace("}", "}}") if isinstance(value, str) else value
+            for key, value in kwargs.items()
+        }
+        rendered = self.template.format_map(_PartialSafeDict(escaped_kwargs))
         remaining = [v for v in self.input_variables if v not in kwargs]
         return PromptTemplate(template=rendered, input_variables=remaining)
 

@@ -268,6 +268,12 @@ class AutoGenOrchestrator(BaseOrchestrator):
         coordinator, workers = NativeOrchestrator._split_coordinator_and_workers(
             steps, role="supervisor"
         )
+        if "__supervisor_finish__" in workers:
+            raise ConfigurationException(
+                "The 'supervisor' strategy on the autogen backend reserves "
+                "'__supervisor_finish__' for its own internal finishing participant -- "
+                "rename the worker '__supervisor_finish__' to something else.",
+            )
 
         worker_clients = {
             name: autogen["RequisiteChatCompletionClient"](worker)

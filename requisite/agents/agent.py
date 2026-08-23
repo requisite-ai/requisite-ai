@@ -32,7 +32,7 @@ from requisite.ai import AI
 from requisite.capabilities.registry import CapabilityRegistry
 from requisite.capabilities import default_registry as default_capability_registry
 from requisite.config.settings import Settings
-from requisite.core.exceptions import AgentException, ConfigurationException
+from requisite.core.exceptions import AgentException, ConfigurationException, ToolException
 from requisite.core.interfaces import ChatResponse, Message
 from requisite.core.rate_limiter import RateLimiter
 from requisite.memory.base import BaseMemory
@@ -369,6 +369,15 @@ class Agent:
             If ``max_iterations`` tool-calling round-trips are exhausted
             without the model returning a final answer.
         """
+        # Discarded, not used here: a Workflow delegating to another
+        # Workflow threads its own delegation-cycle-detection chain
+        # through **kwargs (see Workflow._check_delegation_cycle), which
+        # also flows uniformly to an Agent delegate's run() call. An
+        # Agent has no cycle of its own to detect -- this pop only
+        # exists to stop the internal kwarg from reaching the provider
+        # SDK call below, which would raise on an unrecognized kwarg.
+        kwargs.pop("_delegation_chain", None)
+
         if self._memory is not None:
             user_text = self._require_str_prompt_for_memory(prompt)
             history = self._memory.load(self._session_id)  # type: ignore[arg-type]
@@ -413,12 +422,21 @@ class Agent:
                         Message.assistant_tool_calls(response.tool_calls, content=response.content)
                     )
                     for call in response.tool_calls:
-                        tool_instance = self._tool_registry.get(call.name)
                         tool_attributes = {**run_attributes, "requisite.tool_name": call.name}
                         with _tracer.start_as_current_span(
                             "requisite.agent.tool_call", attributes=tool_attributes
                         ):
-                            result = tool_instance.execute(**call.arguments)
+                            try:
+                                tool_instance = self._tool_registry.get(call.name)
+                                result: Any = tool_instance.execute(**call.arguments)
+                            except ToolException as exc:
+                                # An unknown/hallucinated tool name or a tool's own
+                                # runtime failure is fed back to the model as a
+                                # regular tool_result (not raised) so it can see
+                                # the failure and retry within max_iterations --
+                                # the single most common recoverable tool-calling
+                                # failure mode, per docs/adr/0031-code-review-fixes.md.
+                                result = f"Error: {exc}"
                         _tool_call_counter.add(1, tool_attributes)
                         tools_executed.append(call.name)
                         messages.append(
@@ -435,6 +453,8 @@ class Agent:
 
     async def arun(self, prompt: Union[str, Sequence[Message]], **kwargs: Any) -> AgentResult:
         """Async counterpart to :meth:`run`."""
+        kwargs.pop("_delegation_chain", None)  # see the matching comment in run()
+
         if self._memory is not None:
             user_text = self._require_str_prompt_for_memory(prompt)
             history = await self._memory.aload(self._session_id)  # type: ignore[arg-type]
@@ -484,9 +504,19 @@ class Agent:
                         with _tracer.start_as_current_span(
                             "requisite.agent.tool_call", attributes=tool_attributes
                         ):
-                            result = await self._tool_registry.get(call.name).aexecute(
-                                **call.arguments
-                            )
+                            try:
+                                result = await self._tool_registry.get(call.name).aexecute(
+                                    **call.arguments
+                                )
+                            except ToolException as exc:
+                                # Caught here, not left to propagate out of
+                                # asyncio.gather(...) below: gather() (without
+                                # return_exceptions=True) leaves sibling tasks
+                                # running unattended in the background if one
+                                # raises, instead of cancelling/awaiting them --
+                                # see docs/adr/0031-code-review-fixes.md. Same
+                                # recoverable-failure feedback as the sync loop.
+                                result = f"Error: {exc}"
                         _tool_call_counter.add(1, tool_attributes)
                         return result
 

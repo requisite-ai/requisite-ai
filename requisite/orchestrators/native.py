@@ -36,6 +36,33 @@ if TYPE_CHECKING:
 logger = logging.getLogger("requisite.orchestrators.native")
 
 
+async def _gather_waiting_for_all(*coroutines: Any) -> list[Any]:
+    """Like ``asyncio.gather(*coroutines)``, but guarantees every
+    coroutine actually finishes (success or failure) before this
+    returns or raises.
+
+    Plain ``asyncio.gather(...)`` (the default, ``return_exceptions=False``)
+    raises as soon as the first coroutine fails, leaving the others
+    running as orphaned, unattended background tasks -- real
+    concurrently-running agent/tool calls the caller has no handle on
+    and can't observe if they also fail. Used by every concurrent
+    strategy (``parallel``, ``consensus``, one round of ``debate``,
+    ``map_reduce``, ``tree_of_thoughts``) in place of a bare
+    ``asyncio.gather`` call. See
+    ``docs/adr/0031-code-review-fixes.md``.
+
+    Re-raises the first exception, in submission order (not completion
+    order) -- once every coroutine has completed -- preserving the
+    pre-existing "any single failure fails the whole call" behavior,
+    just without the background leak.
+    """
+    results = await asyncio.gather(*coroutines, return_exceptions=True)
+    for result in results:
+        if isinstance(result, BaseException):
+            raise result
+    return results
+
+
 class _PlanStep(BaseModel):
     """One step of a `planner`-strategy plan: a worker name + its subtask."""
 
@@ -538,7 +565,7 @@ class NativeOrchestrator(BaseOrchestrator):
         input: str,
         **kwargs: Any,  # noqa: A002
     ) -> WorkflowResult:
-        results = list(await asyncio.gather(*(agent.arun(input, **kwargs) for agent in steps)))
+        results = await _gather_waiting_for_all(*(agent.arun(input, **kwargs) for agent in steps))
         combined = "\n\n".join(f"[{r.agent_name}]\n{r.content}" for r in results)
         return WorkflowResult(
             content=combined, steps=results, orchestrator=self.name, strategy="parallel"
@@ -994,10 +1021,8 @@ class NativeOrchestrator(BaseOrchestrator):
             steps, role="consensus synthesizer"
         )
 
-        results = list(
-            await asyncio.gather(
-                *(participant.arun(input, **kwargs) for participant in participants.values())
-            )
+        results = await _gather_waiting_for_all(
+            *(participant.arun(input, **kwargs) for participant in participants.values())
         )
 
         synthesis = await synthesizer.arun(_consensus_prompt(input, results), **kwargs)
@@ -1065,7 +1090,7 @@ class NativeOrchestrator(BaseOrchestrator):
         results: list["AgentResult"] = []
 
         for round_num in range(max_rounds):
-            round_results_list = await asyncio.gather(
+            round_results_list = await _gather_waiting_for_all(
                 *(
                     debaters[name].arun(
                         _debate_prompt(
@@ -1141,12 +1166,10 @@ class NativeOrchestrator(BaseOrchestrator):
         reducer, mappers = self._split_coordinator_and_workers(steps, role="map-reduce reducer")
         mapper_list = list(mappers.values())
 
-        map_results = list(
-            await asyncio.gather(
-                *(
-                    mapper_list[i % len(mapper_list)].arun(_map_prompt(input, item), **kwargs)
-                    for i, item in enumerate(map_items)
-                )
+        map_results = await _gather_waiting_for_all(
+            *(
+                mapper_list[i % len(mapper_list)].arun(_map_prompt(input, item), **kwargs)
+                for i, item in enumerate(map_items)
             )
         )
 
@@ -1239,14 +1262,12 @@ class NativeOrchestrator(BaseOrchestrator):
 
         for _ in range(max_depth):
             tasks = [path for path in paths for _ in range(breadth)]
-            candidate_results = list(
-                await asyncio.gather(
-                    *(
-                        thinker_list[i % len(thinker_list)].arun(
-                            _tot_thinker_prompt(input, path), **kwargs
-                        )
-                        for i, path in enumerate(tasks)
+            candidate_results = await _gather_waiting_for_all(
+                *(
+                    thinker_list[i % len(thinker_list)].arun(
+                        _tot_thinker_prompt(input, path), **kwargs
                     )
+                    for i, path in enumerate(tasks)
                 )
             )
             results.extend(candidate_results)
@@ -1403,6 +1424,13 @@ class NativeOrchestrator(BaseOrchestrator):
                     f"The '{role}' strategy requires every node to have a name -- a "
                     f"Workflow used as a node must be constructed with name=... (got "
                     f"an unnamed {type(node).__name__}).",
+                )
+            if node.name == END:
+                raise ConfigurationException(
+                    f"The '{role}' strategy reserves the name {END!r} for the "
+                    f"terminating-edge sentinel -- a real node cannot be named {END!r}, "
+                    f"since _resolve_next_graph_node would treat any edge routed to it as "
+                    f"'terminate' rather than ever actually running it. Rename the node.",
                 )
         node_names = [node.name for node in steps]
         if len(set(node_names)) != len(node_names):

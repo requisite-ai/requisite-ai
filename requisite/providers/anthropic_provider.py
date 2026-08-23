@@ -52,6 +52,11 @@ def _finalize_streamed_tool_calls(blocks: dict[int, dict[str, Any]]) -> list[Too
         try:
             arguments = json.loads(entry["json_buf"] or "{}")
         except json.JSONDecodeError:
+            logger.warning(
+                "Streamed tool call '%s' had malformed JSON arguments; falling back to {}: %r",
+                entry["name"],
+                entry["json_buf"],
+            )
             arguments = {}
         tool_calls.append(ToolCall(id=entry["id"], name=entry["name"], arguments=arguments))
     return tool_calls

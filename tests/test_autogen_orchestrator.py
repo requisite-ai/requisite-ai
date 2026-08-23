@@ -132,6 +132,28 @@ async def test_autogen_orchestrator_supervisor_unknown_worker_raises() -> None:
         )
 
 
+@pytest.mark.asyncio
+async def test_autogen_orchestrator_supervisor_worker_named_like_reserved_participant_raises() -> (
+    None
+):
+    """A worker literally named '__supervisor_finish__' collides with
+    autogen's own internal no-op finishing participant -- must raise a
+    clean ConfigurationException, not a raw 'participant names must be
+    unique' ValueError from the SelectorGroupChat constructor."""
+    pytest.importorskip("autogen_agentchat")
+
+    supervisor_agent = make_agent_with_provider(
+        "Supervisor", ScriptedSupervisorProvider(decisions=[])
+    )
+    reserved_named_worker = make_agent("__supervisor_finish__", "x")
+
+    orchestrator = AutoGenOrchestrator()
+    with pytest.raises(ConfigurationException, match="reserves"):
+        await orchestrator.arun(
+            [supervisor_agent, reserved_named_worker], "task", strategy="supervisor"
+        )
+
+
 def test_autogen_orchestrator_rejects_unknown_strategy() -> None:
     pytest.importorskip("autogen_agentchat")
 

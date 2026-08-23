@@ -27,6 +27,31 @@ def test_function_to_parameters_schema_marks_required_and_optional() -> None:
     assert schema["properties"]["verbose"] == {"type": "boolean"}
 
 
+def sample_unresolvable_annotation(x: "NotARealTypeAnywhereInScope") -> str:  # noqa: F821
+    """A function with a forward-reference annotation that can never
+    resolve -- e.g. a TYPE_CHECKING-only import, or a typo."""
+    return str(x)
+
+
+def test_function_to_parameters_schema_degrades_gracefully_on_unresolvable_annotation() -> None:
+    """Regression test: get_type_hints() resolves every annotation on a
+    function at once and raises NameError if even one fails -- this must
+    not crash tool registration, matching the module's own documented
+    'never raises on an exotic type' guarantee. See
+    docs/adr/0031-code-review-fixes.md."""
+    schema = function_to_parameters_schema(sample_unresolvable_annotation)
+    assert schema["properties"]["x"] == {"type": "string"}
+    assert schema["required"] == ["x"]
+
+
+def test_tool_decorator_on_function_with_unresolvable_annotation() -> None:
+    @tool
+    def bad_tool(x: "TotallyMissingType") -> str:  # noqa: F821
+        return str(x)
+
+    assert bad_tool.tool.parameters_schema["properties"]["x"] == {"type": "string"}
+
+
 def test_tool_from_function_derives_name_and_description() -> None:
     built = Tool.from_function(sample_search)
     assert built.name == "sample_search"

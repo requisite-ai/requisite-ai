@@ -196,6 +196,27 @@ def test_retriever_add_texts_and_retrieve() -> None:
     assert "Paris" in results[0].chunk.text
 
 
+def test_retriever_retrieve_top_k_zero_returns_empty() -> None:
+    """Regression test: top_k=0 or self.top_k treated 0 as falsy and
+    silently fell back to the instance default -- an explicit 'give me
+    nothing' must actually return nothing. See
+    docs/adr/0031-code-review-fixes.md."""
+    retriever = Retriever(
+        embedding_provider=FakeEmbeddingProvider(), vector_store=InMemoryVectorStore()
+    )
+    retriever.add_texts(["Paris is the capital of France."])
+    assert retriever.retrieve("capital of France", top_k=0) == []
+
+
+@pytest.mark.asyncio
+async def test_retriever_aretrieve_top_k_zero_returns_empty() -> None:
+    retriever = Retriever(
+        embedding_provider=FakeEmbeddingProvider(), vector_store=InMemoryVectorStore()
+    )
+    retriever.add_texts(["Paris is the capital of France."])
+    assert await retriever.aretrieve("capital of France", top_k=0) == []
+
+
 def test_retriever_add_texts_with_metadata() -> None:
     retriever = Retriever(
         embedding_provider=FakeEmbeddingProvider(), vector_store=InMemoryVectorStore()
@@ -340,6 +361,13 @@ def test_bm25_retriever_ranks_keyword_matches_higher() -> None:
     assert "fox" in results[0].chunk.text.lower()
 
 
+def test_bm25_retriever_top_k_zero_returns_empty() -> None:
+    """Regression test, see docs/adr/0031-code-review-fixes.md."""
+    retriever = BM25Retriever()
+    retriever.add_texts(["The quick brown fox jumps over the lazy dog."])
+    assert retriever.retrieve("quick fox", top_k=0) == []
+
+
 def test_bm25_retriever_no_matching_terms_returns_empty() -> None:
     retriever = BM25Retriever()
     retriever.add_texts(["completely unrelated text"])
@@ -428,6 +456,24 @@ def test_hybrid_retriever_fuses_dense_and_bm25_winners() -> None:
     assert "xylophone information about music" in result_texts
     assert "aabbccddee aabbccddee" in result_texts
     assert "zzz qqq www ppp" not in result_texts
+
+
+def test_hybrid_retriever_top_k_zero_returns_empty() -> None:
+    """Regression test, see docs/adr/0031-code-review-fixes.md."""
+    retriever = HybridRetriever(
+        embedding_provider=FakeEmbeddingProvider(), vector_store=InMemoryVectorStore()
+    )
+    retriever.add_texts(["xylophone information about music"])
+    assert retriever.retrieve("xylophone information", top_k=0) == []
+
+
+@pytest.mark.asyncio
+async def test_hybrid_retriever_aretrieve_top_k_zero_returns_empty() -> None:
+    retriever = HybridRetriever(
+        embedding_provider=FakeEmbeddingProvider(), vector_store=InMemoryVectorStore()
+    )
+    retriever.add_texts(["xylophone information about music"])
+    assert await retriever.aretrieve("xylophone information", top_k=0) == []
 
 
 def test_hybrid_retriever_add_texts_shares_chunk_ids_across_both_sides() -> None:
@@ -575,6 +621,20 @@ def test_llm_reranker_top_k_truncates() -> None:
     result = reranker.rerank("query", candidates, top_k=1)
     assert len(result) == 1
     assert result[0].chunk.id == "c2"
+
+
+def test_llm_reranker_top_k_zero_returns_empty() -> None:
+    """Regression test: top_k=0 or len(results) treated 0 as falsy and
+    silently returned every candidate instead of none. See
+    docs/adr/0031-code-review-fixes.md."""
+    reranker = _reranker_with_scores(
+        {"scores": [{"chunk_id": "c1", "relevance": 1.0}, {"chunk_id": "c2", "relevance": 2.0}]}
+    )
+    candidates = [
+        ScoredChunk(chunk=Chunk(id="c1", text="first"), score=0.0),
+        ScoredChunk(chunk=Chunk(id="c2", text="second"), score=0.0),
+    ]
+    assert reranker.rerank("query", candidates, top_k=0) == []
 
 
 def test_llm_reranker_empty_results_returns_empty() -> None:
@@ -913,6 +973,32 @@ def test_pinecone_vector_store_search_filters_by_metadata(
     )
     results = store.search([1.0, 0.0], top_k=5, filter={"session_id": "s1"})
     assert [r.chunk.id for r in results] == ["1"]
+
+
+def test_pinecone_vector_store_search_top_k_non_positive_returns_empty_without_querying(
+    fake_pinecone_module: types.ModuleType,
+) -> None:
+    """Regression test: unlike InMemoryVectorStore/WeaviateVectorStore,
+    PineconeVectorStore.search had no top_k<=0 short-circuit and went
+    straight to the live service. Asserts both that [] comes back AND
+    that the underlying index.query(...) is never even called -- proving
+    the guard fires before reaching the SDK, not just that the fake
+    index happens to slice to empty. See
+    docs/adr/0031-code-review-fixes.md."""
+    from requisite.rag.vectorstores.pinecone import PineconeVectorStore
+
+    store = PineconeVectorStore(api_key="pc-test", index_name="demo", dimension=2)
+    store.add([Chunk(id="1", text="cats", embedding=[1.0, 0.0])])
+
+    index = store._get_index()  # noqa: SLF001
+
+    def _boom(**kwargs: Any) -> Any:
+        raise AssertionError("index.query should not be called for a non-positive top_k")
+
+    index.query = _boom  # type: ignore[method-assign]
+
+    assert store.search([1.0, 0.0], top_k=0) == []
+    assert store.search([1.0, 0.0], top_k=-1) == []
 
 
 def test_pinecone_vector_store_delete(fake_pinecone_module: types.ModuleType) -> None:

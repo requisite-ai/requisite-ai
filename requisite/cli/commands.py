@@ -22,6 +22,7 @@ from requisite.capabilities.registry import CapabilityRegistry
 from requisite.cli.project import DEFAULT_MODULE_NAME, load_agent_registry
 from requisite.cli.scaffold import write_project
 from requisite.config.settings import Settings
+from requisite.core.exceptions import ConfigurationException
 from requisite.plugins import DEFAULT_GROUP, discover
 from requisite.providers.factory import ProviderRegistry
 
@@ -140,6 +141,13 @@ def cmd_chat(
     settings: Optional[Settings] = None,
 ) -> int:
     """Run a quick chat, one-shot or interactive (``requisite chat [PROMPT]``)."""
+    if args.agent and (args.provider or args.model):
+        raise ConfigurationException(
+            "--provider/--model have no effect together with --agent -- a named agent "
+            "already has its own configured provider/model. Drop --agent to use "
+            "--provider/--model directly, or drop --provider/--model to use the "
+            "agent's own configuration.",
+        )
     if args.agent:
         module_path = _resolve_module_path(args.module)
         agent_registry = load_agent_registry(module_path)

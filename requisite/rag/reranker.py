@@ -99,7 +99,8 @@ class LLMReranker(BaseReranker):
         response = self._ai.chat_response(
             _build_prompt(query, results), response_model=_RerankScores
         )
-        return _apply_scores(results, response.parsed, top_k=top_k or len(results))
+        resolved_top_k = top_k if top_k is not None else len(results)
+        return _apply_scores(results, response.parsed, top_k=resolved_top_k)
 
     async def arerank(
         self, query: str, results: Sequence[ScoredChunk], *, top_k: Optional[int] = None
@@ -109,4 +110,5 @@ class LLMReranker(BaseReranker):
         response = await self._ai.achat_response(
             _build_prompt(query, results), response_model=_RerankScores
         )
-        return _apply_scores(results, response.parsed, top_k=top_k or len(results))
+        resolved_top_k = top_k if top_k is not None else len(results)
+        return _apply_scores(results, response.parsed, top_k=resolved_top_k)

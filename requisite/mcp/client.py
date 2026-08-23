@@ -37,7 +37,12 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger("requisite.mcp.client")
 
-_DEFAULT_HTTP_TIMEOUT = 30.0
+# Shared by both transports -- bounds a single request/response round
+# trip (including the initial `session.initialize()` handshake). Without
+# it, a hung/misbehaving subprocess or server leaves a call blocked
+# forever, with nothing in MCPClient's public API able to bound or
+# cancel it. See docs/adr/0031-code-review-fixes.md.
+_DEFAULT_TIMEOUT = 30.0
 
 
 def _unwrap_exception(exc: BaseException) -> BaseException:
@@ -99,6 +104,20 @@ class MCPClient(BaseMCPClient):
     :meth:`~requisite.tools.base.Tool.aexecute` for a discovered tool)
     while connected.
 
+    If the underlying connection dies on its own while persistent
+    (subprocess crash, network drop -- anything other than an explicit
+    :meth:`aclose`), this client does **not** auto-detect or
+    auto-reconnect: every call through the dead session keeps failing
+    with the same :class:`~requisite.core.exceptions.MCPException` until
+    you notice and recover manually. To recover, call :meth:`aclose`
+    (even though it may itself raise, surfacing the underlying
+    connection's own teardown failure -- this is expected, not a bug in
+    ``aclose`` itself) followed by a fresh :meth:`aconnect`:
+    :meth:`aclose` always clears this client's internal connected-state
+    *before* attempting the underlying teardown, so it leaves the client
+    cleanly reconnectable even when that teardown fails. See
+    ``docs/adr/0031-code-review-fixes.md``.
+
     Examples
     --------
     >>> client = MCPClient.stdio(name="filesystem", command="npx", args=["-y", "@modelcontextprotocol/server-filesystem", "/tmp"])  # doctest: +SKIP
@@ -122,7 +141,7 @@ class MCPClient(BaseMCPClient):
         cwd: Optional[str] = None,
         url: Optional[str] = None,
         headers: Optional[dict[str, str]] = None,
-        timeout: float = _DEFAULT_HTTP_TIMEOUT,
+        timeout: float = _DEFAULT_TIMEOUT,
     ) -> None:
         if transport not in ("stdio", "http"):
             raise ConfigurationException(
@@ -156,6 +175,7 @@ class MCPClient(BaseMCPClient):
         args: Optional[list[str]] = None,
         env: Optional[dict[str, str]] = None,
         cwd: Optional[str] = None,
+        timeout: float = _DEFAULT_TIMEOUT,
     ) -> "MCPClient":
         """Connect to a local MCP server run as a subprocess over stdio.
 
@@ -171,8 +191,21 @@ class MCPClient(BaseMCPClient):
             Extra environment variables for the subprocess.
         cwd:
             Working directory for the subprocess.
+        timeout:
+            Per-request timeout, in seconds (including the initial
+            connection handshake) -- bounds how long a call waits on a
+            hung/misbehaving subprocess before raising, rather than
+            blocking forever.
         """
-        return cls(name=name, transport="stdio", command=command, args=args, env=env, cwd=cwd)
+        return cls(
+            name=name,
+            transport="stdio",
+            command=command,
+            args=args,
+            env=env,
+            cwd=cwd,
+            timeout=timeout,
+        )
 
     @classmethod
     def http(
@@ -181,7 +214,7 @@ class MCPClient(BaseMCPClient):
         name: str,
         url: str,
         headers: Optional[dict[str, str]] = None,
-        timeout: float = _DEFAULT_HTTP_TIMEOUT,
+        timeout: float = _DEFAULT_TIMEOUT,
     ) -> "MCPClient":
         """Connect to a remote MCP server over Streamable HTTP.
 
@@ -225,7 +258,9 @@ class MCPClient(BaseMCPClient):
                 cwd=self._cwd,
             )
             async with stdio_client(server_params) as (read_stream, write_stream):
-                async with ClientSession(read_stream, write_stream) as session:
+                async with ClientSession(
+                    read_stream, write_stream, read_timeout_seconds=self._timeout
+                ) as session:
                     await session.initialize()
                     yield session
         else:
@@ -245,7 +280,9 @@ class MCPClient(BaseMCPClient):
                     read_stream,
                     write_stream,
                 ):
-                    async with ClientSession(read_stream, write_stream) as session:
+                    async with ClientSession(
+                        read_stream, write_stream, read_timeout_seconds=self._timeout
+                    ) as session:
                         await session.initialize()
                         yield session
 

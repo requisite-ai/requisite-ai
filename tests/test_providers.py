@@ -202,6 +202,63 @@ def test_openai_provider_parses_tool_calls(fake_openai_module: types.ModuleType)
     assert response.tool_calls[0].arguments == {"city": "Paris"}
 
 
+def test_openai_provider_empty_choices_raises_provider_exception(
+    fake_openai_module: types.ModuleType,
+) -> None:
+    """Regression test: an empty choices list (e.g. a content-filtered
+    completion, or a broken/adversarial OpenAI-compatible proxy) must
+    raise a clean ProviderException, not a raw IndexError."""
+
+    class _EmptyChoicesCompletion:
+        choices: list[Any] = []
+        model = "gpt-4o-mini"
+        usage = None
+
+    fake_openai_module.OpenAI = lambda **kwargs: types.SimpleNamespace(  # type: ignore[attr-defined]
+        chat=types.SimpleNamespace(
+            completions=types.SimpleNamespace(create=lambda **kw: _EmptyChoicesCompletion())
+        )
+    )
+
+    from requisite.providers.openai_provider import OpenAIProvider
+
+    provider = OpenAIProvider(api_key="sk-test", model="gpt-4o-mini")
+    with pytest.raises(ProviderException, match="no choices"):
+        provider.chat([Message.user("hi")])
+
+
+def test_openai_provider_malformed_tool_call_json_logs_warning_and_falls_back(
+    fake_openai_module: types.ModuleType, caplog: pytest.LogCaptureFixture
+) -> None:
+    """Regression test: malformed tool-call argument JSON must not be
+    silently swallowed with no trace -- a warning is logged so a tool
+    with all-optional parameters silently running with defaults instead
+    of the model's real arguments is at least diagnosable."""
+
+    def _create_with_malformed_tool_call(**kwargs: Any) -> _FakeCompletion:
+        completion = _FakeCompletion("")
+        completion.choices[0].message.tool_calls = [
+            _FakeToolCall("call_1", "get_weather", '{"city": "Paris"'),  # truncated/invalid JSON
+        ]
+        return completion
+
+    fake_openai_module.OpenAI = lambda **kwargs: types.SimpleNamespace(  # type: ignore[attr-defined]
+        chat=types.SimpleNamespace(
+            completions=types.SimpleNamespace(create=_create_with_malformed_tool_call)
+        )
+    )
+
+    from requisite.providers.openai_provider import OpenAIProvider
+
+    provider = OpenAIProvider(api_key="sk-test", model="gpt-4o-mini")
+    with caplog.at_level("WARNING", logger="requisite.providers.openai"):
+        response = provider.chat([Message.user("weather?")])
+
+    assert response.tool_calls[0].arguments == {}
+    assert "malformed JSON" in caplog.text
+    assert "get_weather" in caplog.text
+
+
 class _FakeStreamDeltaFunction:
     def __init__(self, *, name: Optional[str] = None, arguments: Optional[str] = None) -> None:
         self.name = name
@@ -775,6 +832,50 @@ def test_anthropic_provider_stream_assembles_tool_call_deltas(
         ToolCall(id="call_1", name="get_weather", arguments={"city": "Paris"})
     ]
     assert all(not c.has_tool_calls for c in chunks[:-1])
+
+
+def test_anthropic_provider_stream_malformed_tool_call_json_logs_warning(
+    monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    """Regression test: truncated/malformed streamed JSON arguments must
+    not be silently swallowed with no trace -- see the matching OpenAI
+    regression test and docs/adr/0031-code-review-fixes.md."""
+    import anthropic
+
+    events = [
+        _FakeAnthropicStreamEvent(
+            "content_block_start",
+            index=0,
+            content_block=_FakeAnthropicToolUseBlock("call_1", "get_weather", {}),
+        ),
+        _FakeAnthropicStreamEvent(
+            "content_block_delta", index=0, delta=_FakeAnthropicInputJSONDelta('{"city": "Paris"')
+        ),
+        _FakeAnthropicStreamEvent("content_block_stop", index=0),
+    ]
+
+    class _StreamingClient(_FakeAnthropicClient):
+        def _stream(self, **kwargs: Any) -> Any:
+            return _FakeAnthropicStream(events)
+
+    monkeypatch.setattr(anthropic, "Anthropic", _StreamingClient)
+    from requisite.providers.anthropic_provider import AnthropicProvider
+    from requisite.tools.base import Tool
+
+    def get_weather(city: str) -> str:
+        return f"sunny in {city}"
+
+    provider = AnthropicProvider(api_key="sk-ant-test")
+    with caplog.at_level("WARNING", logger="requisite.providers.anthropic"):
+        chunks = list(
+            provider.stream(
+                [Message.user("weather in Paris?")], tools=[Tool.from_function(get_weather)]
+            )
+        )
+
+    assert chunks[-1].tool_calls == [ToolCall(id="call_1", name="get_weather", arguments={})]
+    assert "malformed JSON" in caplog.text
+    assert "get_weather" in caplog.text
 
 
 def test_anthropic_provider_structured_output(monkeypatch: pytest.MonkeyPatch) -> None:

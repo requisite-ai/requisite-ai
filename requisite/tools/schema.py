@@ -83,7 +83,23 @@ def function_to_parameters_schema(func: Callable[..., Any]) -> dict[str, Any]:
     ['city']
     """
     signature = inspect.signature(func)
-    type_hints = typing.get_type_hints(func)
+    try:
+        type_hints = typing.get_type_hints(func)
+    except Exception:  # noqa: BLE001
+        # get_type_hints() resolves every annotation on the function at
+        # once and raises (e.g. NameError) if even one fails -- a
+        # TYPE_CHECKING-only import, a typo, or any other unresolvable
+        # forward reference anywhere on the function would otherwise
+        # crash tool registration entirely, contradicting this module's
+        # own "never raises" guarantee (see module docstring). Falling
+        # back to the raw, unresolved annotations lets each parameter be
+        # handled independently below -- an annotation _json_type_for
+        # doesn't recognize (including a bare string, if it's still
+        # unresolved) already degrades to a permissive "string" schema,
+        # exactly the existing per-parameter fallback this restores for
+        # the whole-function-failed case too. See
+        # docs/adr/0031-code-review-fixes.md.
+        type_hints = dict(getattr(func, "__annotations__", {}))
 
     properties: dict[str, Any] = {}
     required: list[str] = []

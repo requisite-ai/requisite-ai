@@ -186,7 +186,7 @@ class HybridRetriever(BaseRetriever):
         return chunk_ids
 
     def retrieve(self, query: str, *, top_k: Optional[int] = None) -> list[ScoredChunk]:
-        resolved_top_k = top_k or self.top_k
+        resolved_top_k = top_k if top_k is not None else self.top_k
         pool = max(self.candidate_pool_size, resolved_top_k)
         query_embedding = self.embedding_provider.embed_one(query)
         dense_results = self.vector_store.search(query_embedding, top_k=pool)
@@ -197,7 +197,7 @@ class HybridRetriever(BaseRetriever):
 
     async def aretrieve(self, query: str, *, top_k: Optional[int] = None) -> list[ScoredChunk]:
         """Async counterpart to :meth:`retrieve`."""
-        resolved_top_k = top_k or self.top_k
+        resolved_top_k = top_k if top_k is not None else self.top_k
         pool = max(self.candidate_pool_size, resolved_top_k)
         query_embedding = await self.embedding_provider.aembed_one(query)
         dense_results = await self.vector_store.asearch(query_embedding, top_k=pool)
@@ -214,7 +214,7 @@ class HybridRetriever(BaseRetriever):
         top_k: Optional[int] = None,
     ) -> Tool:
         """Expose this retriever as a :class:`~requisite.tools.base.Tool`."""
-        resolved_top_k = top_k or self.top_k
+        resolved_top_k = top_k if top_k is not None else self.top_k
 
         def _search(query: str) -> str:
             """Search the knowledge base for information relevant to a query."""

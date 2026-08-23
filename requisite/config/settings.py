@@ -36,6 +36,18 @@ class Settings(BaseSettings):
     arguments (which always take precedence). See ``.env.example`` in
     the project root for the full list of supported variables.
 
+    An application that constructs ``Settings(...)`` with fully explicit
+    kwargs and never intends any filesystem access at all (e.g. a
+    multi-tenant service building one ``Settings`` per tenant) can
+    disable ``.env`` discovery entirely with ``Settings(_env_file=None,
+    ...)`` -- a real, standard ``pydantic-settings`` constructor
+    parameter (not a ``requisite``-specific one), applying only to that
+    one instance. Explicit kwargs already override any conflicting
+    ``.env``/environment value regardless; ``_env_file=None`` additionally
+    stops fields you *didn't* pass from being silently filled from
+    whatever ``.env`` happens to sit in the process's current working
+    directory. See ``docs/adr/0031-code-review-fixes.md``.
+
     Attributes
     ----------
     openai_api_key:

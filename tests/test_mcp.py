@@ -247,6 +247,21 @@ def test_stdio_factory_builds_client() -> None:
     assert client.name == "fs"
 
 
+def test_stdio_factory_accepts_timeout() -> None:
+    """Regression test: the stdio transport previously had no timeout
+    anywhere, so a hung/misbehaving subprocess could block a call
+    forever -- .stdio() now accepts timeout= the same way .http() always
+    has. See docs/adr/0031-code-review-fixes.md."""
+    client = MCPClient.stdio(name="fs", command="npx", args=["-y", "server"], timeout=5.0)
+    assert client._timeout == 5.0  # noqa: SLF001
+
+
+def test_stdio_factory_default_timeout_matches_http() -> None:
+    stdio_client = MCPClient.stdio(name="fs", command="npx", args=["-y", "server"])
+    http_client = MCPClient.http(name="gh", url="https://example.com/mcp")
+    assert stdio_client._timeout == http_client._timeout  # noqa: SLF001
+
+
 def test_http_factory_builds_client() -> None:
     client = MCPClient.http(name="gh", url="https://example.com/mcp")
     assert client.name == "gh"
@@ -483,6 +498,43 @@ def test_aclose_when_not_connected_is_noop() -> None:
 
     async def scenario() -> None:
         await client.aclose()
+
+    asyncio.run(scenario())
+
+
+def test_aclose_leaves_client_reconnectable_even_when_teardown_raises(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Regression test: if the underlying connection is already dead
+    (e.g. a subprocess crash), _connect()'s own teardown may itself
+    raise on aclose(). This must not leave the client permanently stuck
+    -- internal state is cleared before the teardown is even attempted,
+    so a subsequent aconnect() must succeed cleanly. See
+    docs/adr/0031-code-review-fixes.md."""
+    client = MCPClient.stdio(name="fs", command="python", args=["server.py"])
+
+    @asynccontextmanager
+    async def _dying_connect():
+        try:
+            yield _FakeSession([], {})
+        finally:
+            raise ConnectionError("underlying transport already closed")
+
+    async def scenario() -> None:
+        monkeypatch.setattr(client, "_connect", _dying_connect)
+        await client.aconnect()
+
+        with pytest.raises(ConnectionError):
+            await client.aclose()
+
+        assert client._persistent_session is None
+        assert client._persistent_loop is None
+
+        # Reconnecting afterward must work cleanly -- the dead connection's
+        # failed teardown must not have left any stale state behind.
+        monkeypatch.setattr(client, "_connect", _dying_connect)
+        await client.aconnect()
+        assert client._persistent_session is not None
 
     asyncio.run(scenario())
 

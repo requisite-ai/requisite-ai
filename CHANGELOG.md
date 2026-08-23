@@ -7,6 +7,60 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.30.0] - 2026-08-23
+
+### Fixed
+
+Complete code review and adversarial testing pass across the whole
+codebase (85 files, ~14.7k lines) -- 18 real, independently-verified
+findings fixed, each with a regression test. See
+[ADR-0031](docs/adr/0031-code-review-fixes.md) for full details on every
+finding, its live reproduction, and its fix. Highlights:
+
+- **Critical**: a `Workflow` that delegates to itself (directly, or via
+  a cycle of other `Workflow`s) under `hierarchical`/`graph`, on both
+  `native` and `langgraph` backends, escaped `max_rounds`/`max_steps`
+  entirely and crashed with an uncatchable `RecursionError` -- now
+  raises a clean `ConfigurationException` naming the exact cycle.
+- A single hallucinated/unknown tool call no longer aborts an entire
+  `Agent.run()`/`.arun()` -- the failure is now fed back to the model as
+  a normal tool-result error, letting it retry within `max_iterations`
+  (previously defeated on the very first bad call).
+- Concurrent `asyncio.gather` calls (5 native-orchestrator strategies +
+  `Agent.arun()`'s tool execution) no longer leak orphaned background
+  agent/tool calls when one sibling fails.
+- `@tool` no longer crashes with a raw `NameError` on an unresolvable
+  type hint (e.g. a `TYPE_CHECKING`-only import).
+- An empty `choices` list from an OpenAI-wire-compatible provider (5 of
+  8 shipped providers) now raises a clean `ProviderException` instead of
+  a raw `IndexError`.
+- A worker/delegate named like a reserved internal node name
+  (`"__coordinator__"`, `"__supervisor_finish__"`) no longer crashes the
+  langgraph/autogen backends with a raw third-party `ValueError` while
+  silently succeeding on `native`.
+- A `graph` node named `"__end__"` is now rejected at build time instead
+  of silently never running.
+- `top_k=0` is no longer silently replaced by the instance default
+  across `Retriever`/`BM25Retriever`/`HybridRetriever`/`LLMReranker`;
+  `PineconeVectorStore.search` now short-circuits `top_k<=0` like the
+  other two vector stores.
+- `VectorMemory` no longer reopens the append-vs-clear race ADR-0022
+  originally closed.
+- `PromptTemplate` no longer silently excludes dotted/indexed fields
+  (`{cfg.api_key}`) from validation, and `.partial()` no longer lets a
+  substituted string value inject a new placeholder for a later
+  `.format()` call to unexpectedly fill.
+- `InProcessMemory.load()` no longer leaks storage for session ids that
+  are only ever probed, never appended to.
+- The stdio MCP transport now has a configurable timeout
+  (`MCPClient.stdio(..., timeout=...)`), matching the HTTP transport --
+  a hung subprocess/server no longer blocks a call forever.
+- `requisite chat --agent X --provider Y` now raises a clear error
+  instead of silently discarding `--provider`/`--model`.
+- Documentation fixes: `Workflow`'s class docstring, `Settings`'
+  `.env`-opt-out escape hatch, `MCPClient`'s dead-persistent-session
+  recovery behavior.
+
 ## [0.29.0] - 2026-08-23
 
 ### Added

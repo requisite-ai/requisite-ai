@@ -52,7 +52,12 @@ class InProcessMemory(BaseMemory):
 
     def load(self, session_id: str) -> list[Message]:
         with self._lock:
-            return list(self._sessions[session_id])
+            # .get(...), not self._sessions[session_id] -- indexing a
+            # defaultdict auto-vivifies an empty-list entry for any
+            # session id merely probed (never appended to), leaking one
+            # dict entry per distinct id for the process's lifetime. See
+            # docs/adr/0031-code-review-fixes.md.
+            return list(self._sessions.get(session_id, []))
 
     def append(self, session_id: str, message: Message) -> None:
         with self._lock:

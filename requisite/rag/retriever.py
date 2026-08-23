@@ -151,11 +151,13 @@ class Retriever(BaseRetriever):
 
     def retrieve(self, query: str, *, top_k: Optional[int] = None) -> list[ScoredChunk]:
         query_embedding = self.embedding_provider.embed_one(query)
-        return self.vector_store.search(query_embedding, top_k=top_k or self.top_k)
+        resolved_top_k = top_k if top_k is not None else self.top_k
+        return self.vector_store.search(query_embedding, top_k=resolved_top_k)
 
     async def aretrieve(self, query: str, *, top_k: Optional[int] = None) -> list[ScoredChunk]:
         query_embedding = await self.embedding_provider.aembed_one(query)
-        return await self.vector_store.asearch(query_embedding, top_k=top_k or self.top_k)
+        resolved_top_k = top_k if top_k is not None else self.top_k
+        return await self.vector_store.asearch(query_embedding, top_k=resolved_top_k)
 
     def as_tool(
         self,
@@ -170,7 +172,7 @@ class Retriever(BaseRetriever):
         capability (``capabilities.register("knowledge_base", retriever.as_tool())``)
         so ``agent.requires("knowledge_base")`` resolves to it.
         """
-        resolved_top_k = top_k or self.top_k
+        resolved_top_k = top_k if top_k is not None else self.top_k
 
         def _search(query: str) -> str:
             """Search the knowledge base for information relevant to a query."""

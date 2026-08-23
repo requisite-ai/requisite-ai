@@ -293,6 +293,29 @@ def test_chat_with_agent(
     assert "stub agent reply" in out
 
 
+def test_chat_with_agent_and_provider_reports_error(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """Regression test: --agent together with --provider/--model
+    previously silently discarded --provider/--model with no warning
+    (a named agent already has its own configured provider). See
+    docs/adr/0031-code-review-fixes.md."""
+
+    class _StubRegistry:
+        def get(self, name: str) -> None:  # pragma: no cover - must not be reached
+            raise AssertionError("agent registry should not be consulted")
+
+    monkeypatch.setattr(
+        "requisite.cli.commands.load_agent_registry", lambda module_path: _StubRegistry()
+    )
+    monkeypatch.chdir(tmp_path)
+
+    exit_code = main(["chat", "hello", "--agent", "assistant", "--provider", "anthropic"])
+    assert exit_code == 1
+    err = capsys.readouterr().err
+    assert "--agent" in err
+
+
 def test_chat_with_unknown_agent_reports_error(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

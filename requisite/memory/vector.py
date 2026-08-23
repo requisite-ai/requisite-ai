@@ -97,6 +97,13 @@ class VectorMemory(BaseMemory):
         self._history = history_backend or InProcessMemory()
         self.top_k = top_k
         self._counts: dict[str, int] = {}
+        # Bumped by clear()/aclear() for a session -- lets a concurrent,
+        # already-in-flight append()/aappend() for that same session detect
+        # (after its slow embed call returns) that a clear happened while
+        # it was embedding, and discard its own write instead of
+        # resurrecting a session the caller just cleared. See
+        # docs/adr/0031-code-review-fixes.md.
+        self._generations: dict[str, int] = {}
         self._lock = threading.Lock()
         self._alock = asyncio.Lock()
 
@@ -127,16 +134,30 @@ class VectorMemory(BaseMemory):
             if turn_index is None:
                 turn_index = len(self._history.load(session_id))
             self._counts[session_id] = turn_index + 1
-        # Embed + store *before* committing to chronological history -- a
-        # failed embedding call then leaves no partial state (nothing
-        # appended anywhere) instead of a message that's durably logged
-        # but permanently unreachable via load_relevant. The allocated
-        # turn_index is simply skipped on failure, which is harmless: ids
-        # only need to be unique, not contiguous.
+            generation = self._generations.get(session_id, 0)
+        # Embed *before* committing anything -- a failed embedding call
+        # then leaves no partial state (nothing appended anywhere) instead
+        # of a message that's durably logged but permanently unreachable
+        # via load_relevant. The allocated turn_index is simply skipped on
+        # failure, which is harmless: ids only need to be unique, not
+        # contiguous.
+        chunk = None
         if message.content:
             embedding = self.embedding_provider.embed_one(message.content)
-            self.vector_store.add([self._chunk(session_id, turn_index, message, embedding)])
-        self._history.append(session_id, message)
+            chunk = self._chunk(session_id, turn_index, message, embedding)
+        with self._lock:
+            # A concurrent clear() may have run while the embed call above
+            # was in flight -- if so, this append happened-before that
+            # clear from the caller's perspective and must not resurrect
+            # the session clear() just emptied. Discarded, not retried:
+            # the caller's append() call already returned/is returning
+            # normally either way, matching clear()'s own "last write
+            # wins" semantics for concurrent access to one session.
+            if self._generations.get(session_id, 0) != generation:
+                return
+            if chunk is not None:
+                self.vector_store.add([chunk])
+            self._history.append(session_id, message)
 
     def clear(self, session_id: str) -> None:
         with self._lock:
@@ -146,6 +167,7 @@ class VectorMemory(BaseMemory):
             self.vector_store.delete([self._chunk_id(session_id, i) for i in range(count)])
             self._history.clear(session_id)
             self._counts[session_id] = 0
+            self._generations[session_id] = self._generations.get(session_id, 0) + 1
 
     async def aload(self, session_id: str) -> list[Message]:
         return await self._history.aload(session_id)
@@ -156,10 +178,20 @@ class VectorMemory(BaseMemory):
             if turn_index is None:
                 turn_index = len(await self._history.aload(session_id))
             self._counts[session_id] = turn_index + 1
+            generation = self._generations.get(session_id, 0)
+        chunk = None
         if message.content:
             embedding = await self.embedding_provider.aembed_one(message.content)
-            await self.vector_store.aadd([self._chunk(session_id, turn_index, message, embedding)])
-        await self._history.aappend(session_id, message)
+            chunk = self._chunk(session_id, turn_index, message, embedding)
+        async with self._alock:
+            # See the matching comment in append() -- discards this
+            # append's effect if a concurrent aclear() ran while the
+            # embed call above was in flight.
+            if self._generations.get(session_id, 0) != generation:
+                return
+            if chunk is not None:
+                await self.vector_store.aadd([chunk])
+            await self._history.aappend(session_id, message)
 
     async def aclear(self, session_id: str) -> None:
         async with self._alock:
@@ -169,6 +201,7 @@ class VectorMemory(BaseMemory):
             await self.vector_store.adelete([self._chunk_id(session_id, i) for i in range(count)])
             await self._history.aclear(session_id)
             self._counts[session_id] = 0
+            self._generations[session_id] = self._generations.get(session_id, 0) + 1
 
     def load_relevant(
         self, session_id: str, query: str, *, top_k: Optional[int] = None

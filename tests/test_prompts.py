@@ -44,6 +44,52 @@ def test_partial_can_be_chained() -> None:
     assert result == "1-2-3"
 
 
+def test_from_template_captures_root_of_dotted_field() -> None:
+    """Regression test: a dotted/indexed field (str.format's own
+    attribute/index-access syntax) was previously excluded from
+    input_variables entirely, so a missing root object surfaced as a raw
+    KeyError/AttributeError instead of PromptException. The root name is
+    what a caller must actually supply as a kwarg. See
+    docs/adr/0031-code-review-fixes.md."""
+    template = PromptTemplate.from_template("Config: {cfg.api_key}, item: {items[0]}")
+    assert template.input_variables == ["cfg", "items"]
+
+
+def test_format_raises_on_missing_root_of_dotted_field() -> None:
+    template = PromptTemplate.from_template("Config: {cfg.api_key}")
+    with pytest.raises(PromptException, match="cfg"):
+        template.format()
+
+
+def test_format_resolves_dotted_field_when_root_is_supplied() -> None:
+    class Cfg:
+        api_key = "sk-test"
+
+    template = PromptTemplate.from_template("Config: {cfg.api_key}")
+    assert template.format(cfg=Cfg()) == "Config: sk-test"
+
+
+def test_partial_escapes_braces_in_substituted_string_value() -> None:
+    """Regression test: a value containing literal '{'/'}' characters
+    must not introduce a new placeholder into the returned template's
+    text for a later .format() call to unexpectedly fill. See
+    docs/adr/0031-code-review-fixes.md."""
+    template = PromptTemplate.from_template("Hello {name}, secret is {secret}.")
+    partially_filled = template.partial(name="{secret}")
+
+    result = partially_filled.format(secret="TOP-SECRET-VALUE")
+
+    assert result == "Hello {secret}, secret is TOP-SECRET-VALUE."
+
+
+def test_partial_still_applies_format_spec_to_non_string_value() -> None:
+    """The brace-escaping fix must not break format specs on non-string
+    values substituted via partial() -- only string values are escaped."""
+    template = PromptTemplate.from_template("Total: {amount:.2f}")
+    partially_filled = template.partial(amount=3.14159)
+    assert partially_filled.format() == "Total: 3.14"
+
+
 def test_prompt_template_is_frozen() -> None:
     template = PromptTemplate.from_template("hi {name}")
     with pytest.raises(Exception):  # noqa: B017 - pydantic frozen model raises its own error type

@@ -56,6 +56,11 @@ def _finalize_tool_calls(accumulator: dict[int, dict[str, Any]]) -> list[ToolCal
         try:
             arguments = json.loads(entry["arguments"] or "{}")
         except json.JSONDecodeError:
+            logger.warning(
+                "Streamed tool call '%s' had malformed JSON arguments; falling back to {}: %r",
+                entry["name"],
+                entry["arguments"],
+            )
             arguments = {}
         tool_calls.append(
             ToolCall(id=entry["id"] or "", name=entry["name"] or "", arguments=arguments)
@@ -342,7 +347,22 @@ class OpenAIProvider(BaseProvider):
             ) from exc
 
     def _to_chat_response(self, completion: Any, model: str) -> ChatResponse:
-        """Convert an OpenAI SDK completion object into a :class:`ChatResponse`."""
+        """Convert an OpenAI SDK completion object into a :class:`ChatResponse`.
+
+        Raises
+        ------
+        requisite.core.exceptions.ProviderException
+            If ``completion.choices`` is empty -- a real, documented
+            possibility (e.g. a content-filtered/safety-blocked
+            completion, or a broken/adversarial OpenAI-compatible
+            proxy), rather than letting a bare ``IndexError`` escape.
+        """
+        if not completion.choices:
+            raise ProviderException(
+                "OpenAI chat completion returned no choices (the response may have been "
+                "content-filtered, or the completion is otherwise empty).",
+                provider=self.name,
+            )
         choice = completion.choices[0]
         usage_obj = getattr(completion, "usage", None)
         usage = Usage(
@@ -357,6 +377,17 @@ class OpenAIProvider(BaseProvider):
             try:
                 arguments = json.loads(raw_call.function.arguments or "{}")
             except json.JSONDecodeError:
+                # Not raised: a single malformed tool call shouldn't fail the
+                # whole response when other choices/content may still be
+                # usable. Logged (not silent) so a tool with all-optional
+                # parameters silently running with defaults instead of the
+                # model's real intended arguments is at least diagnosable --
+                # see docs/adr/0031-code-review-fixes.md.
+                logger.warning(
+                    "Tool call '%s' had malformed JSON arguments; falling back to {}: %r",
+                    raw_call.function.name,
+                    raw_call.function.arguments,
+                )
                 arguments = {}
             tool_calls.append(
                 ToolCall(id=raw_call.id, name=raw_call.function.name, arguments=arguments)

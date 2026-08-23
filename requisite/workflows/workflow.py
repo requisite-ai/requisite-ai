@@ -94,14 +94,18 @@ class Workflow:
           decided by an LLM at run time; the graph's shape is fixed when
           you build it.
 
-        ``"reflection"``, ``"planner"``, ``"critic"``, ``"consensus"``,
-        ``"debate"``, ``"map_reduce"``, ``"hierarchical"``,
-        ``"tree_of_thoughts"``, and ``"graph"`` are currently only
+        ``"planner"``, ``"critic"``, ``"consensus"``, ``"debate"``, and
+        ``"map_reduce"``, and ``"tree_of_thoughts"`` are currently only
         implemented on the ``"native"`` orchestrator backend.
-        ``"supervisor"`` is implemented on both ``"native"`` and
-        ``"langgraph"`` -- on langgraph it's a real conditional graph
-        (``add_conditional_edges`` plus a loop-back cycle), not a
-        disguised Python loop; see ``docs/adr/0016-langgraph-branching.md``.
+        ``"sequential"``, ``"supervisor"``, ``"reflection"``,
+        ``"hierarchical"``, and ``"graph"`` are also implemented on
+        ``"langgraph"`` -- on langgraph, ``"supervisor"``/``"hierarchical"``
+        are a real conditional graph (``add_conditional_edges`` plus a
+        loop-back cycle) and ``"graph"`` builds the identical developer-
+        declared graph natively, not a disguised Python loop; see
+        ``docs/adr/0016-langgraph-branching.md``,
+        ``docs/adr/0028-langgraph-reflection-strategy.md``, and
+        ``docs/adr/0029-langgraph-hierarchical-graph-strategies.md``.
     orchestrator:
         Execution backend: ``"native"`` (default, pure Python, no extra
         dependency), ``"langgraph"``, ``"crewai"``, or ``"autogen"`` --
@@ -404,6 +408,15 @@ class Workflow:
         Returns
         -------
         WorkflowResult
+
+        Raises
+        ------
+        requisite.core.exceptions.ConfigurationException
+            If this ``Workflow`` already appears in the current
+            delegation chain (a ``hierarchical`` delegate or ``graph``
+            node that is this same ``Workflow``, directly or through a
+            cycle of other ``Workflow``\\ s) -- see
+            ``docs/adr/0031-code-review-fixes.md``.
         """
         if self._strategy not in _KNOWN_STRATEGIES:
             raise ConfigurationException(
@@ -411,6 +424,9 @@ class Workflow:
             )
         if self._strategy == "graph":
             kwargs.setdefault("edges", self._edges)
+        chain = kwargs.pop("_delegation_chain", ())
+        self._check_delegation_cycle(chain)
+        kwargs["_delegation_chain"] = (*chain, (id(self), self.name))
         orchestrator_instance = self._registry.create(self._orchestrator_name)
         return orchestrator_instance.run(self._steps, input, strategy=self._strategy, **kwargs)
 
@@ -422,9 +438,38 @@ class Workflow:
             )
         if self._strategy == "graph":
             kwargs.setdefault("edges", self._edges)
+        chain = kwargs.pop("_delegation_chain", ())
+        self._check_delegation_cycle(chain)
+        kwargs["_delegation_chain"] = (*chain, (id(self), self.name))
         orchestrator_instance = self._registry.create(self._orchestrator_name)
         return await orchestrator_instance.arun(
             self._steps, input, strategy=self._strategy, **kwargs
+        )
+
+    def _check_delegation_cycle(self, chain: tuple[tuple[int, Optional[str]], ...]) -> None:
+        """Raise if this ``Workflow`` is already an ancestor in ``chain``.
+
+        ``chain`` is threaded through ``**kwargs`` on every nested
+        ``delegate.run(...)``/``node.run(...)`` call under the
+        ``hierarchical``/``graph`` strategies (both backends) -- see
+        ``docs/adr/0031-code-review-fixes.md``. Without this check, a
+        Workflow that (directly or via a cycle of other Workflows)
+        delegates back into itself recurses through the real Python
+        call stack -- each nested call gets its own independent, fresh
+        ``max_rounds``/``max_steps`` budget, so neither bound ever
+        catches it -- and eventually crashes with an uncatchable
+        ``RecursionError`` instead of this clean, immediate error.
+        """
+        if not any(workflow_id == id(self) for workflow_id, _ in chain):
+            return
+        chain_names = " -> ".join(name or "<unnamed>" for _, name in chain)
+        this_name = self.name or "<unnamed>"
+        raise ConfigurationException(
+            f"Workflow delegation cycle detected: {chain_names} -> {this_name}. A Workflow "
+            "cannot delegate back into itself, directly or through a chain of other "
+            "Workflows, under the 'hierarchical' or 'graph' strategies -- max_rounds/"
+            "max_steps cannot bound this, since each nested delegation starts a fresh, "
+            "independent budget rather than sharing one across the chain.",
         )
 
     def __repr__(self) -> str:  # pragma: no cover - trivial

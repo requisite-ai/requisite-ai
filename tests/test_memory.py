@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import sys
+import threading
 import types
 from collections.abc import AsyncIterator, Iterator, Sequence
 from pathlib import Path
@@ -62,6 +63,18 @@ def test_in_process_memory_sessions_are_isolated() -> None:
     memory.append("s2", Message.user("for session 2"))
     assert [m.content for m in memory.load("s1")] == ["for session 1"]
     assert [m.content for m in memory.load("s2")] == ["for session 2"]
+
+
+def test_in_process_memory_load_does_not_leak_storage_for_probed_sessions() -> None:
+    """Regression test: load() on a session id that was never appended to
+    must not permanently allocate storage for it -- indexing a
+    defaultdict auto-vivifies an entry, unboundedly leaking one dict
+    entry per distinct probed id over a long-running process. See
+    docs/adr/0031-code-review-fixes.md."""
+    memory = InProcessMemory()
+    for i in range(5):
+        assert memory.load(f"probe-session-{i}") == []
+    assert len(memory._sessions) == 0  # noqa: SLF001
 
 
 def test_in_process_memory_name() -> None:
@@ -330,6 +343,56 @@ def test_vector_memory_concurrent_appends_produce_unique_chunk_ids() -> None:
     assert len(history) == thread_count
     # No chunk id collisions -- every concurrently-allocated turn_index was unique.
     assert len(memory.vector_store._chunks) == thread_count  # noqa: SLF001
+
+
+class SlowEmbeddingProvider(BaseEmbeddingProvider):
+    """A fake embedding provider whose embed() blocks until explicitly
+    released -- lets a test park an append() call mid-flight (past its
+    counter allocation, before its write commits) to exercise races
+    against a concurrent clear()."""
+
+    def __init__(self, release_event: threading.Event) -> None:
+        self._release_event = release_event
+
+    @property
+    def name(self) -> str:
+        return "slow"
+
+    def embed(self, texts: Sequence[str]) -> list[list[float]]:
+        self._release_event.wait(timeout=5.0)
+        return [[0.1, 0.2, 0.3] for _ in texts]
+
+
+def test_vector_memory_clear_wins_over_concurrent_in_flight_append() -> None:
+    """Regression test for the append-vs-clear race: an append() parked
+    mid-embed (its turn_index already allocated, but its write not yet
+    committed) when a concurrent clear() runs to completion must not
+    resurrect the cleared session once its embed call finally returns.
+    See docs/adr/0031-code-review-fixes.md."""
+    release_event = threading.Event()
+    memory = VectorMemory(
+        embedding_provider=SlowEmbeddingProvider(release_event), vector_store=InMemoryVectorStore()
+    )
+    append_done = threading.Event()
+
+    def do_append() -> None:
+        memory.append("s1", Message.user("racy message"))
+        append_done.set()
+
+    t = threading.Thread(target=do_append)
+    t.start()
+    try:
+        # Give the append time to allocate its turn_index and start
+        # blocking inside embed() before clear() runs.
+        assert not append_done.wait(timeout=0.2)
+
+        memory.clear("s1")
+    finally:
+        release_event.set()
+        t.join(timeout=5.0)
+
+    assert memory.load("s1") == []
+    assert dict(memory.vector_store._chunks) == {}  # noqa: SLF001
 
 
 class FailingEmbeddingProvider(BaseEmbeddingProvider):

@@ -102,6 +102,31 @@ class _ArbitraryGraphState(TypedDict):
     step_count: int
 
 
+def _reject_reserved_node_names(
+    named: dict[str, Any], *, role: str, reserved: Sequence[str]
+) -> None:
+    """Raise a clean ``ConfigurationException`` if any key in ``named``
+    (a delegate/worker name -> object mapping) collides with one of this
+    backend's own internal node names.
+
+    Without this check, a delegate/worker literally named e.g.
+    ``"__coordinator__"`` reaches ``StateGraph.add_node`` and collides
+    with the coordinator node this method already added under that same
+    name, raising a raw, backend-specific ``ValueError`` instead of a
+    clean, actionable error -- and the identical ``Workflow`` succeeds
+    unchanged on the ``native`` backend, breaking the cross-backend
+    parity these strategies otherwise guarantee. See
+    ``docs/adr/0031-code-review-fixes.md``.
+    """
+    collisions = sorted(set(named) & set(reserved))
+    if collisions:
+        raise ConfigurationException(
+            f"The '{role}' strategy on the langgraph backend reserves "
+            f"{sorted(reserved)!r} for its own internal graph nodes -- rename the "
+            f"delegate/worker(s) {collisions!r} to something else.",
+        )
+
+
 class LangGraphOrchestrator(BaseOrchestrator):
     """Runs agents as a ``langgraph`` ``StateGraph`` -- linear for
     ``"sequential"``, real conditional graphs with loop-back cycles for
@@ -188,6 +213,9 @@ class LangGraphOrchestrator(BaseOrchestrator):
         """
         StateGraph, START, END = self._require_langgraph()  # noqa: N806
         coordinator, delegates = split_fn(steps, role=role)
+        _reject_reserved_node_names(
+            delegates, role=role, reserved=(_COORDINATOR_NODE, _FINISH_ROUTE)
+        )
 
         def _coordinator_node(state: _DelegationGraphState) -> dict[str, Any]:
             if state["rounds"] >= max_rounds:

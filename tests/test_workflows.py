@@ -4,6 +4,7 @@ native orchestrator's sequential/parallel execution strategies.
 
 from __future__ import annotations
 
+import asyncio
 import sys
 from collections.abc import AsyncIterator, Iterator, Sequence
 from typing import Any
@@ -1059,6 +1060,75 @@ def test_workflow_consensus_requires_at_least_two_agents() -> None:
         workflow.run("task")
 
 
+@pytest.mark.asyncio
+async def test_workflow_consensus_arun_waits_for_slow_participant_before_raising() -> None:
+    """Regression test for the asyncio.gather orphaned-task leak: when one
+    concurrent participant fails instantly and another is still running,
+    arun() must not return control to the caller until the slow one has
+    actually finished -- not leave it running unattended in the
+    background. See docs/adr/0031-code-review-fixes.md."""
+    finished = {"slow": False}
+
+    class FailFastProvider(BaseProvider):
+        def __init__(self, **kwargs: Any) -> None:
+            super().__init__(api_key="fake-key", model="fake-model")
+
+        @property
+        def name(self) -> str:
+            return "failfast"
+
+        def chat(self, messages, **kwargs) -> ChatResponse:
+            raise RuntimeError("boom")
+
+        async def achat(self, messages, **kwargs) -> ChatResponse:
+            raise RuntimeError("boom")
+
+        def stream(self, messages, **kwargs):  # pragma: no cover
+            raise NotImplementedError
+
+        async def astream(self, messages, **kwargs):  # pragma: no cover
+            raise NotImplementedError
+            yield  # pragma: no cover
+
+    class SlowProvider(BaseProvider):
+        def __init__(self, **kwargs: Any) -> None:
+            super().__init__(api_key="fake-key", model="fake-model")
+
+        @property
+        def name(self) -> str:
+            return "slow"
+
+        def chat(self, messages, **kwargs) -> ChatResponse:  # pragma: no cover
+            raise NotImplementedError
+
+        async def achat(self, messages, **kwargs) -> ChatResponse:
+            await asyncio.sleep(0.2)
+            finished["slow"] = True
+            return ChatResponse(content="done", model=self._model, provider=self.name)
+
+        def stream(self, messages, **kwargs):  # pragma: no cover
+            raise NotImplementedError
+
+        async def astream(self, messages, **kwargs):  # pragma: no cover
+            raise NotImplementedError
+            yield  # pragma: no cover
+
+    synthesizer = make_agent_with_provider("Synth", FailFastProvider())
+    fast_fail = make_agent_with_provider("FastFail", FailFastProvider())
+    slow = make_agent_with_provider("Slow", SlowProvider())
+
+    workflow = Workflow().consensus()
+    workflow.add(synthesizer).add(fast_fail).add(slow)
+
+    with pytest.raises(RuntimeError, match="boom"):
+        await workflow.arun("go")
+
+    # If arun() leaked the slow task, this would still be False here --
+    # asyncio.gather(..., return_exceptions=True) means arun() only
+    # returns once every participant has actually completed.
+    assert finished["slow"] is True
+
+
 def test_workflow_consensus_duplicate_participant_names_raises() -> None:
     workflow = Workflow().consensus()
     workflow.add(make_agent("Synth", "synth"))
@@ -1599,6 +1669,188 @@ async def test_workflow_arun_graph() -> None:
 
     assert [s.agent_name for s in result.steps] == ["A", "B"]
     assert result.content == "b:a:start"
+
+
+# ---------------------------------------------------------------------------
+# Delegation cycle detection (hierarchical/graph, native + langgraph)
+# ---------------------------------------------------------------------------
+
+
+def test_workflow_hierarchical_self_reference_raises_cleanly() -> None:
+    """A Workflow that delegates to itself under hierarchical must raise a
+    clean ConfigurationException, not recurse through the real call stack
+    and crash with RecursionError -- max_rounds cannot bound this, since
+    each nested delegate.run() call gets its own independent budget."""
+    decisions = [
+        _SupervisorDecision(action="delegate", worker="Team", task="keep going")
+        for _ in range(1000)
+    ]
+    coordinator = make_agent_with_provider(
+        "Coordinator", ScriptedSupervisorProvider(decisions=decisions)
+    )
+
+    team = Workflow(name="Team").hierarchical()
+    team.add(coordinator).add(team)
+
+    with pytest.raises(ConfigurationException, match="delegation cycle detected"):
+        team.run("go", max_rounds=1_000_000)
+
+
+def test_workflow_hierarchical_mutual_cycle_raises_cleanly() -> None:
+    """Two Workflows that delegate back and forth (A -> B -> A) must also
+    be caught, not just direct self-reference."""
+    decisions_a = [
+        _SupervisorDecision(action="delegate", worker="B", task="go") for _ in range(1000)
+    ]
+    decisions_b = [
+        _SupervisorDecision(action="delegate", worker="A", task="go") for _ in range(1000)
+    ]
+    coord_a = make_agent_with_provider("CoordA", ScriptedSupervisorProvider(decisions=decisions_a))
+    coord_b = make_agent_with_provider("CoordB", ScriptedSupervisorProvider(decisions=decisions_b))
+
+    workflow_a = Workflow(name="A").hierarchical()
+    workflow_b = Workflow(name="B").hierarchical()
+    workflow_a.add(coord_a).add(workflow_b)
+    workflow_b.add(coord_b).add(workflow_a)
+
+    with pytest.raises(ConfigurationException, match="delegation cycle detected"):
+        workflow_a.run("go", max_rounds=1_000_000)
+
+
+def test_workflow_graph_self_reference_raises_cleanly() -> None:
+    """The 'graph' strategy has the identical vulnerability -- a graph
+    node that is the currently-running Workflow itself must also raise
+    cleanly rather than recurse via max_steps=1_000_000."""
+    team = Workflow(name="Team").graph()
+    team.add(make_agent("A", "a"))
+    team.add(team)
+    team.add_edge("A", "Team")
+    team.add_edge("Team", "A")
+
+    with pytest.raises(ConfigurationException, match="delegation cycle detected"):
+        team.run("go", max_steps=1_000_000)
+
+
+def test_workflow_hierarchical_self_reference_raises_cleanly_on_langgraph() -> None:
+    """Same self-reference guard applies to the langgraph backend -- the
+    fix lives in Workflow.run()/arun() itself, so it's backend-agnostic."""
+    decisions = [
+        _SupervisorDecision(action="delegate", worker="Team", task="keep going")
+        for _ in range(1000)
+    ]
+    coordinator = make_agent_with_provider(
+        "Coordinator", ScriptedSupervisorProvider(decisions=decisions)
+    )
+
+    team = Workflow(name="Team").hierarchical()
+    team.add(coordinator).add(team)
+    team.use_langgraph()
+
+    with pytest.raises(ConfigurationException, match="delegation cycle detected"):
+        team.run("go", max_rounds=1_000_000)
+
+
+def test_workflow_hierarchical_no_cycle_when_delegates_are_distinct() -> None:
+    """Sanity check: delegating to a genuinely different, non-cyclic named
+    Workflow must still work -- the cycle guard shouldn't false-positive."""
+    decisions = [
+        _SupervisorDecision(action="delegate", worker="ResearchTeam", task="Find facts"),
+        _SupervisorDecision(action="finish", final_answer="done"),
+    ]
+    coordinator = make_agent_with_provider(
+        "Coordinator", ScriptedSupervisorProvider(decisions=decisions)
+    )
+    research_team = Workflow(name="ResearchTeam")
+    research_team.add(make_agent("SubResearcher", "research"))
+
+    workflow = Workflow().hierarchical()
+    workflow.add(coordinator).add(research_team)
+    result = workflow.run("Explain RAG")
+
+    assert result.content == "done"
+
+
+@pytest.mark.asyncio
+async def test_workflow_arun_hierarchical_self_reference_raises_cleanly() -> None:
+    decisions = [
+        _SupervisorDecision(action="delegate", worker="Team", task="keep going")
+        for _ in range(1000)
+    ]
+    coordinator = make_agent_with_provider(
+        "Coordinator", ScriptedSupervisorProvider(decisions=decisions)
+    )
+
+    team = Workflow(name="Team").hierarchical()
+    team.add(coordinator).add(team)
+
+    with pytest.raises(ConfigurationException, match="delegation cycle detected"):
+        await team.arun("go", max_rounds=1_000_000)
+
+
+def test_agent_run_pops_internal_delegation_chain_kwarg_before_provider_call() -> None:
+    """_delegation_chain must never reach a provider's chat() call --
+    confirms Agent.run()/arun() strip it, not just Workflow.run()."""
+    seen_kwargs: dict[str, object] = {}
+
+    class RecordingProvider(EchoProvider):
+        def chat(self, messages, **kwargs):  # type: ignore[override]
+            seen_kwargs.update(kwargs)
+            return super().chat(messages, **kwargs)
+
+    agent = make_agent_with_provider("A", RecordingProvider(prefix="echo"))
+    agent.run("hello", _delegation_chain=((1, "Fake"),))
+
+    assert "_delegation_chain" not in seen_kwargs
+
+
+def test_workflow_use_langgraph_supervisor_worker_named_like_reserved_node_raises_cleanly() -> None:
+    """A worker literally named '__coordinator__' collides with
+    langgraph's own internal coordinator node -- must raise a clean
+    ConfigurationException, not a raw library ValueError, and the
+    identical Workflow must still succeed on native (parity)."""
+    pytest.importorskip("langgraph")
+
+    decisions = [_SupervisorDecision(action="finish", final_answer="done")]
+    coordinator = make_agent_with_provider(
+        "Coordinator", ScriptedSupervisorProvider(decisions=decisions)
+    )
+    reserved_named_worker = make_agent("__coordinator__", "x")
+
+    workflow = Workflow().supervisor()
+    workflow.add(coordinator).add(reserved_named_worker)
+    workflow.use_langgraph()
+    with pytest.raises(ConfigurationException, match="reserves"):
+        workflow.run("task")
+
+    # The identical workflow on native must not be affected -- native has
+    # no such reserved-name concept for worker names.
+    workflow.use_native()
+    result = workflow.run("task")
+    assert result.content == "done"
+
+
+def test_workflow_graph_node_named_end_raises_cleanly() -> None:
+    """A node literally named END ('__end__') can never be reached as a
+    routing target -- must raise at build time, not silently terminate
+    early with no error at all."""
+    workflow = Workflow().graph()
+    workflow.add(make_agent("A", "a")).add(make_agent(END, "unreachable"))
+    workflow.add_edge("A", END)
+
+    with pytest.raises(ConfigurationException, match="reserves"):
+        workflow.run("go")
+
+
+def test_workflow_use_langgraph_graph_node_named_end_raises_cleanly() -> None:
+    pytest.importorskip("langgraph")
+
+    workflow = Workflow().graph()
+    workflow.add(make_agent("A", "a")).add(make_agent(END, "unreachable"))
+    workflow.add_edge("A", END)
+    workflow.use_langgraph()
+
+    with pytest.raises(ConfigurationException, match="reserves"):
+        workflow.run("go")
 
 
 def test_default_orchestrator_registry_has_native_and_langgraph() -> None:

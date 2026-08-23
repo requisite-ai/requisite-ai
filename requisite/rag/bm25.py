@@ -75,6 +75,9 @@ class BM25Index:
                 self._tokens.pop(chunk_id, None)
 
     def search(self, query: str, *, top_k: int = 5) -> list[ScoredChunk]:
+        if top_k <= 0:
+            return []
+
         with self._lock:
             chunk_ids = list(self._tokens)
             doc_tokens = {cid: self._tokens[cid] for cid in chunk_ids}
@@ -194,7 +197,8 @@ class BM25Retriever(BaseRetriever):
         )
 
     def retrieve(self, query: str, *, top_k: Optional[int] = None) -> list[ScoredChunk]:
-        return self._index.search(query, top_k=top_k or self.top_k)
+        resolved_top_k = top_k if top_k is not None else self.top_k
+        return self._index.search(query, top_k=resolved_top_k)
 
     async def aretrieve(self, query: str, *, top_k: Optional[int] = None) -> list[ScoredChunk]:
         """Async counterpart to :meth:`retrieve`. Pure CPU work, no I/O to offload."""
@@ -212,7 +216,7 @@ class BM25Retriever(BaseRetriever):
         top_k: Optional[int] = None,
     ) -> Tool:
         """Expose this retriever as a :class:`~requisite.tools.base.Tool`."""
-        resolved_top_k = top_k or self.top_k
+        resolved_top_k = top_k if top_k is not None else self.top_k
 
         def _search(query: str) -> str:
             """Search the knowledge base for information relevant to a query."""
