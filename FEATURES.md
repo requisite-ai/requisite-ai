@@ -169,6 +169,7 @@ Status legend: ✅ Done · 🚧 Partial · 📋 Not started · N/A Deliberately 
 |---|---|---|
 | `BaseMCPClient` interface | ✅ | ADR-0001 (spec) / ADR-0004 (implementation) |
 | MCP client integration | ✅ | `MCPClient` — both stdio and Streamable HTTP transports, verified against real MCP servers |
+| MCP client: persistent session mode | ✅ | `await client.aconnect()` / `.aclose()`, or `async with client:` — every async method reuses one open session instead of reconnecting per call. Measured live: ~1000x faster for stdio, ~15x for HTTP. Async-only by design — ADR-0030 |
 | MCP server integration | ✅ | `MCPServer` — reverse direction (exposing Requisite tools/agents as an MCP server), stdio + Streamable HTTP, verified against Requisite's own `MCPClient` — ADR-0015 |
 | Tool discovery | ✅ | `BaseMCPClient.discover_tools()` / `.adiscover_tools()` |
 | Resource / prompt discovery | ✅ | `BaseMCPClient.discover_resources()`/`read_resource()`/`discover_prompts()`/`get_prompt()` (client), `MCPServer.add_resource()`/`add_prompt()` (server) — ADR-0026 |

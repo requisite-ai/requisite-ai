@@ -454,11 +454,26 @@ agent = Agent(name="Assistant", provider="openai", tools=tools)
 ```
 
 Both transports were verified against real MCP servers during
-development; each tool call re-connects, calls, and disconnects rather
-than holding a persistent session — see
-[ADR-0004](docs/adr/0004-mcp-integration.md) for why, and the plan for an
-optional persistent-session mode if reconnect latency becomes a problem
-for your use case.
+development. By default, each tool call re-connects, calls, and
+disconnects rather than holding a persistent session — see
+[ADR-0004](docs/adr/0004-mcp-integration.md) for why. For repeated calls
+to the same server in a tight loop, an opt-in persistent-session mode
+avoids that reconnect cost — measured live: ~1000x faster for stdio,
+~15x for HTTP:
+
+```python
+async with MCPClient.stdio(name="filesystem", command="npx", args=["-y", "@modelcontextprotocol/server-filesystem", "/tmp"]) as filesystem:
+    tools = await filesystem.adiscover_tools()
+    result = await tools[0].aexecute(path="/tmp")
+    # ... as many more calls as you like, all reusing the same session ...
+```
+
+Persistent mode is async-only (`aconnect`/`aclose`/`async with`, plus the
+existing `a`-prefixed methods) — the sync methods raise immediately if
+called while connected, rather than risk a hang crossing an
+`asyncio.run()` boundary. See
+[ADR-0030](docs/adr/0030-mcp-persistent-session-mode.md) for the full
+design and the real deadlock risk it was built to avoid.
 
 ### Expose Requisite as an MCP server
 

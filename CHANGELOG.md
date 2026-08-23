@@ -7,6 +7,33 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.29.0] - 2026-08-23
+
+### Added
+
+- Opt-in persistent-session mode for `MCPClient` -- `await
+  client.aconnect()` / `await client.aclose()`, or `async with
+  MCPClient.stdio(...) as client:` -- see
+  [ADR-0030](docs/adr/0030-mcp-persistent-session-mode.md) for the full
+  design. Every existing async method (`adiscover_tools`, tool calls,
+  `adiscover_resources`, `aread_resource`, `adiscover_prompts`,
+  `aget_prompt`) transparently reuses one open session instead of
+  reconnecting per call, with zero code changes to any of them.
+- Measured live against a real local MCP server, 20 sequential tool
+  calls: ~1000x faster for stdio (1381.6ms -> 1.4ms mean/call), ~15x
+  faster for HTTP (37.8ms -> 2.6ms mean/call) -- clearing the "measured
+  problem" bar ADR-0004 set when it originally deferred this feature.
+- Persistent mode is deliberately async-only: a real cross-event-loop
+  reuse deadlock was found and verified live during design (holding a
+  session open across two separate `asyncio.run()` calls hangs at
+  event-loop shutdown), so a loop-identity guard now converts that into
+  an immediate `ConfigurationException` instead. The 5 existing sync
+  methods (`discover_tools`, `discover_resources`, `read_resource`,
+  `discover_prompts`, `get_prompt`) and a discovered tool's sync
+  `execute()` raise immediately if called while a persistent session is
+  connected, rather than risk it.
+- Closes the last open line in `ROADMAP.md`'s MCP section.
+
 ## [0.28.0] - 2026-08-23
 
 ### Added

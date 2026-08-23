@@ -22,6 +22,7 @@ actually reads -- no real SDK request object needs faking.
 
 from __future__ import annotations
 
+import asyncio
 from contextlib import asynccontextmanager
 from types import SimpleNamespace
 from typing import Any
@@ -31,7 +32,7 @@ import pytest
 from requisite.agents.agent import Agent
 from requisite.capabilities.registry import CapabilityRegistry
 from requisite.capabilities.resolvers import register_default_capabilities
-from requisite.core.exceptions import ConfigurationException, MCPException
+from requisite.core.exceptions import ConfigurationException, MCPException, ToolException
 from requisite.core.interfaces import ChatResponse, Message, Role, Usage
 from requisite.mcp.base import MCPPromptArgument
 from requisite.mcp.client import MCPClient
@@ -213,6 +214,27 @@ def _patch_session(
         yield fake_session
 
     monkeypatch.setattr(client, "_session", _fake_session_cm)
+
+
+def _patch_connect(
+    monkeypatch: pytest.MonkeyPatch,
+    client: MCPClient,
+    fake_session: _FakeSession,
+    *,
+    track_calls: list[int] | None = None,
+) -> None:
+    """Replace MCPClient._connect with a fake async context manager yielding
+    fake_session, for testing the real _session()/aconnect()/aclose() reuse
+    and cross-loop guard logic -- unlike _patch_session, which replaces
+    _session directly and bypasses that logic entirely."""
+
+    @asynccontextmanager
+    async def _fake_connect():
+        if track_calls is not None:
+            track_calls.append(1)
+        yield fake_session
+
+    monkeypatch.setattr(client, "_connect", _fake_connect)
 
 
 # ---------------------------------------------------------------------------
@@ -415,6 +437,148 @@ def test_get_prompt_non_text_content_raises(monkeypatch: pytest.MonkeyPatch) -> 
 
     with pytest.raises(MCPException, match="non-text message"):
         client.get_prompt("greet")
+
+
+# ---------------------------------------------------------------------------
+# Persistent session mode (aconnect/aclose/async with)
+# ---------------------------------------------------------------------------
+
+
+def test_aconnect_reuses_session_across_calls(monkeypatch: pytest.MonkeyPatch) -> None:
+    """_connect is invoked only once even though two calls go through
+    _session() -- proof the persistent session is genuinely reused, not
+    reconnected per call."""
+    client = MCPClient.stdio(name="fs", command="python", args=["server.py"])
+    call_results = {"add": _FakeCallToolResult(structured={"result": 3})}
+    fake_session = _FakeSession([_FakeMCPTool("add", "Add", {})], call_results)
+    track_calls: list[int] = []
+    _patch_connect(monkeypatch, client, fake_session, track_calls=track_calls)
+
+    async def scenario() -> None:
+        await client.aconnect()
+        tools1 = await client.adiscover_tools()
+        tools2 = await client.adiscover_tools()
+        assert tools1[0].name == tools2[0].name == "add"
+        await client.aclose()
+
+    asyncio.run(scenario())
+    assert track_calls == [1]
+
+
+def test_aconnect_twice_raises_configuration_exception(monkeypatch: pytest.MonkeyPatch) -> None:
+    client = MCPClient.stdio(name="fs", command="python", args=["server.py"])
+    _patch_connect(monkeypatch, client, _FakeSession([], {}))
+
+    async def scenario() -> None:
+        await client.aconnect()
+        with pytest.raises(ConfigurationException, match="already connected"):
+            await client.aconnect()
+        await client.aclose()
+
+    asyncio.run(scenario())
+
+
+def test_aclose_when_not_connected_is_noop() -> None:
+    client = MCPClient.stdio(name="fs", command="python", args=["server.py"])
+
+    async def scenario() -> None:
+        await client.aclose()
+
+    asyncio.run(scenario())
+
+
+def test_async_context_manager_connects_and_closes(monkeypatch: pytest.MonkeyPatch) -> None:
+    client = MCPClient.stdio(name="fs", command="python", args=["server.py"])
+    _patch_connect(monkeypatch, client, _FakeSession([], {}))
+
+    async def scenario() -> None:
+        assert client._persistent_session is None
+        async with client as ctx:
+            assert ctx is client
+            assert client._persistent_session is not None
+        assert client._persistent_session is None
+
+    asyncio.run(scenario())
+
+
+def test_async_context_manager_closes_on_exception(monkeypatch: pytest.MonkeyPatch) -> None:
+    client = MCPClient.stdio(name="fs", command="python", args=["server.py"])
+    _patch_connect(monkeypatch, client, _FakeSession([], {}))
+
+    async def scenario() -> None:
+        with pytest.raises(RuntimeError, match="boom"):
+            async with client:
+                assert client._persistent_session is not None
+                raise RuntimeError("boom")
+        assert client._persistent_session is None
+
+    asyncio.run(scenario())
+
+
+def test_cross_loop_reuse_raises_configuration_exception_cleanly(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The key regression test for the verified deadlock: reusing a
+    persistent session from a different event loop than the one it was
+    opened on must raise cleanly, not hang. _connect is faked (no real
+    subprocess/anyio task groups), so this cannot actually deadlock --
+    it specifically tests the guard logic, not the underlying SDK."""
+    client = MCPClient.stdio(name="fs", command="python", args=["server.py"])
+    _patch_connect(monkeypatch, client, _FakeSession([], {}))
+
+    asyncio.run(client.aconnect())
+
+    with pytest.raises(ConfigurationException, match="different event loop"):
+        asyncio.run(client.adiscover_tools())
+
+    with pytest.raises(ConfigurationException, match="different event loop"):
+        asyncio.run(client.aclose())
+
+
+def test_sync_methods_raise_when_persistent_connected(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Sync methods must fail fast -- before ever calling asyncio.run --
+    when a persistent session is open, rather than risk a hang."""
+    client = MCPClient.stdio(name="fs", command="python", args=["server.py"])
+    _patch_connect(monkeypatch, client, _FakeSession([], {}))
+    asyncio.run(client.aconnect())
+
+    def _fail_if_called(*args: Any, **kwargs: Any) -> Any:
+        raise AssertionError("asyncio.run should not be called by a rejected sync method")
+
+    monkeypatch.setattr(asyncio, "run", _fail_if_called)
+
+    with pytest.raises(ConfigurationException, match="adiscover_tools"):
+        client.discover_tools()
+    with pytest.raises(ConfigurationException, match="adiscover_resources"):
+        client.discover_resources()
+    with pytest.raises(ConfigurationException, match="aread_resource"):
+        client.read_resource("memo://x")
+    with pytest.raises(ConfigurationException, match="adiscover_prompts"):
+        client.discover_prompts()
+    with pytest.raises(ConfigurationException, match="aget_prompt"):
+        client.get_prompt("greet")
+
+
+def test_discovered_tool_execute_wraps_configuration_exception_when_persistent(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A discovered tool's sync execute() (not just the 5 discover_*/
+    read_*/get_* wrappers) also hits the _session() cross-loop guard when
+    persistent mode is connected -- Tool.execute()'s existing, unmodified
+    exception handling wraps it as ToolException, the same as any other
+    exception from a tool's underlying function."""
+    client = MCPClient.stdio(name="fs", command="python", args=["server.py"])
+    mcp_tool = _FakeMCPTool("add", "Add two numbers", {"type": "object", "properties": {}})
+    fake_session = _FakeSession([mcp_tool], {"add": _FakeCallToolResult(structured={"result": 3})})
+    _patch_connect(monkeypatch, client, fake_session)
+    requisite_tool = client._to_tool(mcp_tool)
+
+    asyncio.run(client.aconnect())
+
+    with pytest.raises(ToolException) as exc_info:
+        requisite_tool.execute(a=1, b=2)
+
+    assert isinstance(exc_info.value.__cause__, ConfigurationException)
 
 
 # ---------------------------------------------------------------------------
