@@ -22,7 +22,8 @@ from contextlib import asynccontextmanager
 from typing import TYPE_CHECKING, Any, Optional
 
 from requisite.core.exceptions import ConfigurationException, MCPException
-from requisite.mcp.base import BaseMCPClient
+from requisite.core.interfaces import Message, Role
+from requisite.mcp.base import BaseMCPClient, MCPPrompt, MCPPromptArgument, MCPResource
 from requisite.tools.base import Tool
 
 if TYPE_CHECKING:
@@ -31,6 +32,29 @@ if TYPE_CHECKING:
 logger = logging.getLogger("requisite.mcp.client")
 
 _DEFAULT_HTTP_TIMEOUT = 30.0
+
+
+def _unwrap_exception(exc: BaseException) -> BaseException:
+    """Unwrap nested (Base)ExceptionGroups down to the first real
+    underlying exception.
+
+    anyio's task groups (used internally by ``stdio_client``/
+    ``ClientSession``) wrap a request-level exception -- e.g. a real
+    protocol-level ``MCPError`` the server raised, like "unknown resource
+    URI" -- in a ``BaseExceptionGroup`` during connection cleanup. Without
+    this, ``str(exc)`` on the outer group is a useless generic
+    "unhandled errors in a TaskGroup" instead of the actual error message
+    -- caught live via a real round-trip test, not theoretical. Duck-typed
+    on ``.exceptions`` rather than importing ``BaseExceptionGroup``
+    directly, so this works whether it's the Python 3.11+ builtin or a
+    backport.
+    """
+    current = exc
+    while True:
+        sub_exceptions = getattr(current, "exceptions", None)
+        if not sub_exceptions:
+            return current
+        current = sub_exceptions[0]
 
 
 class MCPClient(BaseMCPClient):
@@ -197,7 +221,7 @@ class MCPClient(BaseMCPClient):
             raise
         except Exception as exc:  # noqa: BLE001
             raise MCPException(
-                f"Failed to discover tools from MCP server '{self.name}': {exc}",
+                f"Failed to discover tools from MCP server '{self.name}': {_unwrap_exception(exc)}",
                 details={"server": self.name},
             ) from exc
 
@@ -237,7 +261,8 @@ class MCPClient(BaseMCPClient):
             raise
         except Exception as exc:  # noqa: BLE001
             raise MCPException(
-                f"Failed to call MCP tool '{tool_name}' on server '{self.name}': {exc}",
+                f"Failed to call MCP tool '{tool_name}' on server '{self.name}': "
+                f"{_unwrap_exception(exc)}",
                 details={"server": self.name, "tool": tool_name},
             ) from exc
 
@@ -256,3 +281,116 @@ class MCPClient(BaseMCPClient):
     def _extract_text(result: Any) -> str:
         parts = [block.text for block in result.content if getattr(block, "type", None) == "text"]
         return "\n".join(parts)
+
+    async def adiscover_resources(self) -> list[MCPResource]:
+        try:
+            async with self._session() as session:
+                result = await session.list_resources()
+        except ConfigurationException:
+            raise
+        except Exception as exc:  # noqa: BLE001
+            raise MCPException(
+                f"Failed to discover resources from MCP server '{self.name}': "
+                f"{_unwrap_exception(exc)}",
+                details={"server": self.name},
+            ) from exc
+
+        return [
+            MCPResource(
+                uri=resource.uri,
+                name=resource.name,
+                description=resource.description or "",
+                mime_type=resource.mime_type,
+            )
+            for resource in result.resources
+        ]
+
+    def discover_resources(self) -> list[MCPResource]:
+        return asyncio.run(self.adiscover_resources())
+
+    async def aread_resource(self, uri: str) -> str:
+        try:
+            async with self._session() as session:
+                result = await session.read_resource(uri)
+        except ConfigurationException:
+            raise
+        except Exception as exc:  # noqa: BLE001
+            raise MCPException(
+                f"Failed to read resource '{uri}' from MCP server '{self.name}': "
+                f"{_unwrap_exception(exc)}",
+                details={"server": self.name, "uri": uri},
+            ) from exc
+
+        parts = [text for c in result.contents if (text := getattr(c, "text", None)) is not None]
+        if not parts:
+            raise MCPException(
+                f"Resource '{uri}' on server '{self.name}' returned no text content "
+                "(binary-only resources aren't supported yet).",
+                details={"server": self.name, "uri": uri},
+            )
+        return "\n".join(parts)
+
+    def read_resource(self, uri: str) -> str:
+        return asyncio.run(self.aread_resource(uri))
+
+    async def adiscover_prompts(self) -> list[MCPPrompt]:
+        try:
+            async with self._session() as session:
+                result = await session.list_prompts()
+        except ConfigurationException:
+            raise
+        except Exception as exc:  # noqa: BLE001
+            raise MCPException(
+                f"Failed to discover prompts from MCP server '{self.name}': "
+                f"{_unwrap_exception(exc)}",
+                details={"server": self.name},
+            ) from exc
+
+        return [
+            MCPPrompt(
+                name=prompt.name,
+                description=prompt.description or "",
+                arguments=[
+                    MCPPromptArgument(
+                        name=arg.name,
+                        description=arg.description or "",
+                        required=bool(arg.required),
+                    )
+                    for arg in (prompt.arguments or [])
+                ],
+            )
+            for prompt in result.prompts
+        ]
+
+    def discover_prompts(self) -> list[MCPPrompt]:
+        return asyncio.run(self.adiscover_prompts())
+
+    async def aget_prompt(
+        self, name: str, arguments: Optional[dict[str, str]] = None
+    ) -> list[Message]:
+        try:
+            async with self._session() as session:
+                result = await session.get_prompt(name, arguments)
+        except ConfigurationException:
+            raise
+        except Exception as exc:  # noqa: BLE001
+            raise MCPException(
+                f"Failed to get prompt '{name}' from MCP server '{self.name}': "
+                f"{_unwrap_exception(exc)}",
+                details={"server": self.name, "prompt": name},
+            ) from exc
+
+        messages: list[Message] = []
+        for prompt_message in result.messages:
+            text = getattr(prompt_message.content, "text", None)
+            if text is None:
+                raise MCPException(
+                    f"Prompt '{name}' on server '{self.name}' returned a non-text message "
+                    "(not supported yet).",
+                    details={"server": self.name, "prompt": name},
+                )
+            messages.append(Message(role=Role(prompt_message.role), content=text))
+        return messages
+
+    def get_prompt(self, name: str, arguments: Optional[dict[str, str]] = None) -> list[Message]:
+        return asyncio.run(self.aget_prompt(name, arguments))

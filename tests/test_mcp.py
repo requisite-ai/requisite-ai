@@ -32,7 +32,8 @@ from requisite.agents.agent import Agent
 from requisite.capabilities.registry import CapabilityRegistry
 from requisite.capabilities.resolvers import register_default_capabilities
 from requisite.core.exceptions import ConfigurationException, MCPException
-from requisite.core.interfaces import ChatResponse, Usage
+from requisite.core.interfaces import ChatResponse, Message, Role, Usage
+from requisite.mcp.base import MCPPromptArgument
 from requisite.mcp.client import MCPClient
 from requisite.mcp.defaults import register_github_mcp_capability, register_mcp_capability
 from requisite.mcp.registry import MCPClientRegistry
@@ -68,14 +69,108 @@ class _FakeCallToolResult:
         self.is_error = is_error
 
 
+class _FakeResource:
+    def __init__(
+        self, uri: str, name: str, description: str = "", mime_type: str | None = None
+    ) -> None:
+        self.uri = uri
+        self.name = name
+        self.description = description
+        self.mime_type = mime_type
+
+
+class _FakeListResourcesResult:
+    def __init__(self, resources: list[_FakeResource]) -> None:
+        self.resources = resources
+
+
+class _FakeResourceContents:
+    """A fake TextResourceContents/BlobResourceContents -- only carries
+    whichever of .text/.blob is given, matching how the real SDK's union
+    has no shared discriminator field."""
+
+    def __init__(
+        self,
+        *,
+        text: str | None = None,
+        blob: str | None = None,
+        uri: str = "",
+        mime_type: str | None = None,
+    ) -> None:
+        self.uri = uri
+        self.mime_type = mime_type
+        if text is not None:
+            self.text = text
+        if blob is not None:
+            self.blob = blob
+
+
+class _FakeReadResourceResult:
+    def __init__(self, contents: list[_FakeResourceContents]) -> None:
+        self.contents = contents
+
+
+class _FakePromptArgument:
+    def __init__(self, name: str, description: str = "", required: bool = False) -> None:
+        self.name = name
+        self.description = description
+        self.required = required
+
+
+class _FakePrompt:
+    def __init__(
+        self, name: str, description: str = "", arguments: list[_FakePromptArgument] | None = None
+    ) -> None:
+        self.name = name
+        self.description = description
+        self.arguments = arguments or []
+
+
+class _FakeListPromptsResult:
+    def __init__(self, prompts: list[_FakePrompt]) -> None:
+        self.prompts = prompts
+
+
+class _FakePromptMessageContent:
+    """A fake ContentBlock -- only carries .text when it represents text
+    content, matching how a real non-text block has no .text attribute."""
+
+    def __init__(self, *, text: str | None = None) -> None:
+        if text is not None:
+            self.text = text
+
+
+class _FakePromptMessage:
+    def __init__(self, role: str, content: _FakePromptMessageContent) -> None:
+        self.role = role
+        self.content = content
+
+
+class _FakeGetPromptResult:
+    def __init__(self, messages: list[_FakePromptMessage], description: str = "") -> None:
+        self.messages = messages
+        self.description = description
+
+
 class _FakeSession:
     """Fakes mcp.ClientSession's async API for the calls MCPClient makes."""
 
     def __init__(
-        self, tools: list[_FakeMCPTool], call_results: dict[str, _FakeCallToolResult]
+        self,
+        tools: list[_FakeMCPTool],
+        call_results: dict[str, _FakeCallToolResult],
+        *,
+        resources: list[_FakeResource] | None = None,
+        resource_contents: dict[str, _FakeReadResourceResult] | None = None,
+        prompts: list[_FakePrompt] | None = None,
+        prompt_results: dict[str, _FakeGetPromptResult] | None = None,
     ) -> None:
         self._tools = tools
         self._call_results = call_results
+        self._resources = resources or []
+        self._resource_contents = resource_contents or {}
+        self._prompts = prompts or []
+        self._prompt_results = prompt_results or {}
         self.initialized = False
 
     async def initialize(self) -> None:
@@ -88,6 +183,24 @@ class _FakeSession:
         if name not in self._call_results:
             raise KeyError(f"no fake result configured for tool '{name}'")
         return self._call_results[name]
+
+    async def list_resources(self) -> _FakeListResourcesResult:
+        return _FakeListResourcesResult(self._resources)
+
+    async def read_resource(self, uri: str) -> _FakeReadResourceResult:
+        if uri not in self._resource_contents:
+            raise KeyError(f"no fake resource contents configured for '{uri}'")
+        return self._resource_contents[uri]
+
+    async def list_prompts(self) -> _FakeListPromptsResult:
+        return _FakeListPromptsResult(self._prompts)
+
+    async def get_prompt(
+        self, name: str, arguments: dict[str, str] | None = None
+    ) -> _FakeGetPromptResult:
+        if name not in self._prompt_results:
+            raise KeyError(f"no fake prompt result configured for '{name}'")
+        return self._prompt_results[name]
 
 
 def _patch_session(
@@ -223,6 +336,85 @@ def test_missing_sdk_raises_configuration_exception(monkeypatch: pytest.MonkeyPa
     client = MCPClient.stdio(name="fs", command="python", args=["server.py"])
     with pytest.raises(ConfigurationException):
         client.discover_tools()
+
+
+# ---------------------------------------------------------------------------
+# resource / prompt discovery (client side)
+# ---------------------------------------------------------------------------
+
+
+def test_discover_resources_returns_mcp_resources(monkeypatch: pytest.MonkeyPatch) -> None:
+    client = MCPClient.stdio(name="fs", command="python", args=["server.py"])
+    fake_resources = [_FakeResource("file:///a.txt", "a.txt", "First file", "text/plain")]
+    _patch_session(monkeypatch, client, _FakeSession([], {}, resources=fake_resources))
+
+    resources = client.discover_resources()
+    assert len(resources) == 1
+    assert resources[0].uri == "file:///a.txt"
+    assert resources[0].name == "a.txt"
+    assert resources[0].description == "First file"
+    assert resources[0].mime_type == "text/plain"
+
+
+def test_read_resource_returns_text(monkeypatch: pytest.MonkeyPatch) -> None:
+    client = MCPClient.stdio(name="fs", command="python", args=["server.py"])
+    contents = {
+        "file:///a.txt": _FakeReadResourceResult([_FakeResourceContents(text="hello world")])
+    }
+    _patch_session(monkeypatch, client, _FakeSession([], {}, resource_contents=contents))
+
+    assert client.read_resource("file:///a.txt") == "hello world"
+
+
+def test_read_resource_binary_only_raises(monkeypatch: pytest.MonkeyPatch) -> None:
+    client = MCPClient.stdio(name="fs", command="python", args=["server.py"])
+    contents = {"file:///a.bin": _FakeReadResourceResult([_FakeResourceContents(blob="ZmFrZQ==")])}
+    _patch_session(monkeypatch, client, _FakeSession([], {}, resource_contents=contents))
+
+    with pytest.raises(MCPException, match="no text content"):
+        client.read_resource("file:///a.bin")
+
+
+def test_discover_prompts_returns_mcp_prompts(monkeypatch: pytest.MonkeyPatch) -> None:
+    client = MCPClient.stdio(name="fs", command="python", args=["server.py"])
+    fake_prompts = [
+        _FakePrompt(
+            "greet", "Greet someone", [_FakePromptArgument("name", "Who to greet", required=True)]
+        )
+    ]
+    _patch_session(monkeypatch, client, _FakeSession([], {}, prompts=fake_prompts))
+
+    prompts = client.discover_prompts()
+    assert len(prompts) == 1
+    assert prompts[0].name == "greet"
+    assert prompts[0].description == "Greet someone"
+    assert len(prompts[0].arguments) == 1
+    assert prompts[0].arguments[0].name == "name"
+    assert prompts[0].arguments[0].required is True
+
+
+def test_get_prompt_returns_messages(monkeypatch: pytest.MonkeyPatch) -> None:
+    client = MCPClient.stdio(name="fs", command="python", args=["server.py"])
+    prompt_results = {
+        "greet": _FakeGetPromptResult(
+            [_FakePromptMessage("user", _FakePromptMessageContent(text="Hello, Ada!"))]
+        )
+    }
+    _patch_session(monkeypatch, client, _FakeSession([], {}, prompt_results=prompt_results))
+
+    messages = client.get_prompt("greet", {"name": "Ada"})
+    assert messages == [Message(role=Role.USER, content="Hello, Ada!")]
+
+
+def test_get_prompt_non_text_content_raises(monkeypatch: pytest.MonkeyPatch) -> None:
+    client = MCPClient.stdio(name="fs", command="python", args=["server.py"])
+    prompt_results = {
+        "greet": _FakeGetPromptResult([_FakePromptMessage("user", _FakePromptMessageContent())])
+    }
+    _patch_session(monkeypatch, client, _FakeSession([], {}, prompt_results=prompt_results))
+
+    with pytest.raises(MCPException, match="non-text message"):
+        client.get_prompt("greet")
 
 
 # ---------------------------------------------------------------------------
@@ -546,6 +738,95 @@ async def test_handle_call_tool_agent_round_trip() -> None:
         None, _call_tool_params("assistant", {"prompt": "hello"})
     )
     assert result.structured_content == {"result": "agent answer: hello"}
+
+
+# ---------------------------------------------------------------------------
+# resource / prompt discovery (server side)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_handle_list_resources_returns_registered_resources() -> None:
+    server = MCPServer(name="demo")
+    server.add_resource(
+        "file:///a.txt", name="a.txt", content="hello", description="A file", mime_type="text/plain"
+    )
+
+    result = await server._handle_list_resources(None, None)
+    assert len(result.resources) == 1
+    assert result.resources[0].uri == "file:///a.txt"
+    assert result.resources[0].name == "a.txt"
+    assert result.resources[0].mime_type == "text/plain"
+
+
+@pytest.mark.asyncio
+async def test_handle_read_resource_returns_static_content() -> None:
+    server = MCPServer(name="demo")
+    server.add_resource("file:///a.txt", name="a.txt", content="hello")
+
+    result = await server._handle_read_resource(None, SimpleNamespace(uri="file:///a.txt"))
+    assert result.contents[0].text == "hello"
+
+
+@pytest.mark.asyncio
+async def test_handle_read_resource_calls_dynamic_content() -> None:
+    server = MCPServer(name="demo")
+    server.add_resource("file:///counter", name="counter", content=lambda: "dynamic value")
+
+    result = await server._handle_read_resource(None, SimpleNamespace(uri="file:///counter"))
+    assert result.contents[0].text == "dynamic value"
+
+
+@pytest.mark.asyncio
+async def test_handle_read_resource_unknown_uri_raises_mcp_error() -> None:
+    from mcp import MCPError
+
+    server = MCPServer(name="demo")
+
+    with pytest.raises(MCPError, match="Unknown resource URI"):
+        await server._handle_read_resource(None, SimpleNamespace(uri="file:///missing"))
+
+
+@pytest.mark.asyncio
+async def test_handle_list_prompts_returns_registered_prompts() -> None:
+    server = MCPServer(name="demo")
+    server.add_prompt(
+        "greet",
+        render=lambda args: [Message(role=Role.USER, content=f"Hello, {args['name']}!")],
+        description="Greet someone",
+        arguments=[MCPPromptArgument(name="name", description="Who to greet", required=True)],
+    )
+
+    result = await server._handle_list_prompts(None, None)
+    assert len(result.prompts) == 1
+    assert result.prompts[0].name == "greet"
+    assert result.prompts[0].description == "Greet someone"
+    assert result.prompts[0].arguments[0].name == "name"
+
+
+@pytest.mark.asyncio
+async def test_handle_get_prompt_renders_messages() -> None:
+    server = MCPServer(name="demo")
+    server.add_prompt(
+        "greet", render=lambda args: [Message(role=Role.USER, content=f"Hello, {args['name']}!")]
+    )
+
+    result = await server._handle_get_prompt(
+        None, SimpleNamespace(name="greet", arguments={"name": "Ada"})
+    )
+    assert len(result.messages) == 1
+    assert result.messages[0].role == "user"
+    assert result.messages[0].content.text == "Hello, Ada!"
+
+
+@pytest.mark.asyncio
+async def test_handle_get_prompt_unknown_name_raises_mcp_error() -> None:
+    from mcp import MCPError
+
+    server = MCPServer(name="demo")
+
+    with pytest.raises(MCPError, match="Unknown prompt"):
+        await server._handle_get_prompt(None, SimpleNamespace(name="missing", arguments=None))
 
 
 def test_add_tool_and_add_agent_return_registered_tool() -> None:

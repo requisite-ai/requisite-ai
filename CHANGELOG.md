@@ -7,6 +7,54 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.25.0] - 2026-08-23
+
+### Added
+
+- MCP resource / prompt discovery, both client and server -- see
+  [ADR-0026](docs/adr/0026-mcp-resource-prompt-discovery.md) for the
+  full design. Closes the last remaining line in `ROADMAP.md`'s MCP
+  section.
+- `requisite.mcp.MCPResource`, `requisite.mcp.MCPPrompt`,
+  `requisite.mcp.MCPPromptArgument`: new Requisite-native types for
+  discovered resources/prompts.
+- `BaseMCPClient`/`MCPClient` gain 8 new methods (sync + async each):
+  `discover_resources()`, `read_resource(uri)`, `discover_prompts()`,
+  `get_prompt(name, arguments=None)`. `get_prompt()` returns
+  `requisite.core.interfaces.Message` objects directly, so
+  `agent.run(client.get_prompt(...))` composes with the chat surface
+  with zero translation code. Text-only for now -- a binary-only
+  resource or a non-text prompt message raises `MCPException` rather
+  than silently mishandling it.
+- `MCPServer` gains `add_resource(uri, *, name, content, ...)` and
+  `add_prompt(name, *, render, ...)`, plus the four handlers
+  (`on_list_resources`/`on_read_resource`/`on_list_prompts`/
+  `on_get_prompt`) wired into `_build_server()`. An unknown URI/name
+  raises `mcp.MCPError` directly (there's no `is_error`-style field on
+  `ReadResourceResult`/`GetPromptResult` the way there is on
+  `CallToolResult`, confirmed by reading `mcp.server.runner`'s dispatch
+  loop directly -- any handler exception is already caught centrally
+  and converted to a proper JSON-RPC error response).
+- `examples/mcp_server_example.py` registers a demo resource and
+  prompt; `examples/mcp_example.py` extended with a resource/prompt
+  discovery demo, connecting to Requisite's own MCP server for a
+  self-contained round trip.
+
+### Fixed
+
+- `MCPClient`: a real protocol-level error (e.g. a server-raised
+  `MCPError` for an unknown resource/prompt) propagating up through
+  anyio's nested task groups during connection cleanup was masked to a
+  useless generic "unhandled errors in a TaskGroup" message instead of
+  the actual error text -- found via this feature's real round-trip
+  smoke test, not a mocked one. Fixed with a new `_unwrap_exception()`
+  helper that walks nested `(Base)ExceptionGroup`s down to the real
+  underlying exception before building the `MCPException` message,
+  applied consistently across every method that wraps a `_session()`
+  call (`adiscover_tools`, `_call_tool`, and the four new resource/
+  prompt methods) -- not just the new ones, since the bug was
+  pre-existing and just hadn't been exercised by a prior test.
+
 ## [0.24.0] - 2026-08-21
 
 ### Changed

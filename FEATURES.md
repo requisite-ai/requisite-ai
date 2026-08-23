@@ -171,6 +171,7 @@ Status legend: ✅ Done · 🚧 Partial · 📋 Not started · N/A Deliberately 
 | MCP client integration | ✅ | `MCPClient` — both stdio and Streamable HTTP transports, verified against real MCP servers |
 | MCP server integration | ✅ | `MCPServer` — reverse direction (exposing Requisite tools/agents as an MCP server), stdio + Streamable HTTP, verified against Requisite's own `MCPClient` — ADR-0015 |
 | Tool discovery | ✅ | `BaseMCPClient.discover_tools()` / `.adiscover_tools()` |
+| Resource / prompt discovery | ✅ | `BaseMCPClient.discover_resources()`/`read_resource()`/`discover_prompts()`/`get_prompt()` (client), `MCPServer.add_resource()`/`add_prompt()` (server) — ADR-0026 |
 | Remote tools | ✅ | Streamable HTTP transport |
 | Local tools | ✅ | stdio transport |
 | Filesystem MCP server | 📋 | A native (non-MCP) `"filesystem"` capability already ships — see Capabilities below; an MCP-based one is a config away (`MCPClient.stdio(...)` pointed at any filesystem MCP server) but not shipped as a default |

@@ -8,18 +8,55 @@ another* :class:`~requisite.capabilities.registry.CapabilityProvider` --
 constrains :class:`BaseMCPClient` to one job: discover an MCP server's
 tools and hand back :class:`~requisite.tools.base.Tool` objects, so the
 rest of the framework never has to special-case "MCP-ness."
+
+Resource and prompt discovery (see ``docs/adr/0026-mcp-resource-prompt-discovery.md``)
+follow the same shape, deliberately mapped onto other framework-native
+types rather than raw MCP objects: :meth:`~BaseMCPClient.get_prompt`
+returns :class:`~requisite.core.interfaces.Message` objects, so
+``agent.run(client.get_prompt(...))`` composes directly with
+the rest of the chat surface, the same way discovered tools compose
+directly with ``Agent.requires``/``ToolRegistry``.
 """
 
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Optional
+
+from pydantic import BaseModel, Field
 
 from requisite.core.exceptions import MCPException
 
 if TYPE_CHECKING:
     from requisite.capabilities.registry import CapabilityRegistry
+    from requisite.core.interfaces import Message
     from requisite.tools.base import Tool
+
+
+class MCPResource(BaseModel):
+    """A resource exposed by an MCP server -- discovered, then fetched by URI."""
+
+    uri: str
+    name: str
+    description: str = ""
+    mime_type: Optional[str] = None
+
+
+class MCPPromptArgument(BaseModel):
+    """One templated argument a prompt accepts."""
+
+    name: str
+    description: str = ""
+    required: bool = False
+
+
+class MCPPrompt(BaseModel):
+    """A prompt (template) exposed by an MCP server -- discovered, then
+    expanded into messages by name via :meth:`BaseMCPClient.get_prompt`."""
+
+    name: str
+    description: str = ""
+    arguments: list[MCPPromptArgument] = Field(default_factory=list)
 
 
 class BaseMCPClient(ABC):
@@ -61,6 +98,59 @@ class BaseMCPClient(ABC):
     @abstractmethod
     async def adiscover_tools(self) -> list["Tool"]:
         """Async counterpart to :meth:`discover_tools`."""
+
+    @abstractmethod
+    def discover_resources(self) -> list["MCPResource"]:
+        """Connect to the MCP server and return its exposed resources."""
+
+    @abstractmethod
+    async def adiscover_resources(self) -> list["MCPResource"]:
+        """Async counterpart to :meth:`discover_resources`."""
+
+    @abstractmethod
+    def read_resource(self, uri: str) -> str:
+        """Fetch a resource's text content by URI.
+
+        Raises
+        ------
+        requisite.core.exceptions.MCPException
+            If the resource has no text content (binary-only resources
+            aren't supported yet -- see
+            ``docs/adr/0026-mcp-resource-prompt-discovery.md``).
+        """
+
+    @abstractmethod
+    async def aread_resource(self, uri: str) -> str:
+        """Async counterpart to :meth:`read_resource`."""
+
+    @abstractmethod
+    def discover_prompts(self) -> list["MCPPrompt"]:
+        """Connect to the MCP server and return its exposed prompts."""
+
+    @abstractmethod
+    async def adiscover_prompts(self) -> list["MCPPrompt"]:
+        """Async counterpart to :meth:`discover_prompts`."""
+
+    @abstractmethod
+    def get_prompt(self, name: str, arguments: Optional[dict[str, str]] = None) -> list["Message"]:
+        """Expand a named prompt into the messages it renders to.
+
+        Returns :class:`~requisite.core.interfaces.Message` objects, not
+        raw MCP content -- usable directly as
+        ``agent.run(client.get_prompt(...))``.
+
+        Raises
+        ------
+        requisite.core.exceptions.MCPException
+            If any rendered message has non-text content (not supported
+            yet -- see ``docs/adr/0026-mcp-resource-prompt-discovery.md``).
+        """
+
+    @abstractmethod
+    async def aget_prompt(
+        self, name: str, arguments: Optional[dict[str, str]] = None
+    ) -> list["Message"]:
+        """Async counterpart to :meth:`get_prompt`."""
 
     def register_as_capability(
         self, registry: "CapabilityRegistry", *, capability: str, priority: int = 0

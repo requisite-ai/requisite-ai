@@ -14,9 +14,11 @@ schema-agnostic -- it validates incoming calls with plain
 ``jsonschema.validate()`` against whatever ``input_schema`` dict you give
 it -- so it maps onto an existing ``Tool`` directly, with no second,
 independent schema-derivation system to keep in sync. See
-``docs/adr/0015-mcp-server-integration.md`` (original design) and
+``docs/adr/0015-mcp-server-integration.md`` (original design),
 ``docs/adr/0025-mcp-2x-migration.md`` (the ``mcp`` 2.x rewrite of how
-handlers are registered).
+handlers are registered), and
+``docs/adr/0026-mcp-resource-prompt-discovery.md`` (resources/prompts,
+alongside tools).
 
 Install with: ``pip install mcp``
 """
@@ -26,22 +28,53 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
-from typing import TYPE_CHECKING, Any, Optional
+from collections.abc import Callable
+from dataclasses import dataclass
+from typing import TYPE_CHECKING, Any, Optional, Union
 
 from requisite.agents.agent import Agent
 from requisite.core.exceptions import ConfigurationException
+from requisite.core.interfaces import Message
+from requisite.mcp.base import MCPPromptArgument
 from requisite.tools.base import Tool
 from requisite.tools.registry import ToolLike, ToolRegistry
 
 if TYPE_CHECKING:
     from mcp.server.lowlevel import Server as MCPLowLevelServer
-    from mcp.types import CallToolRequestParams, CallToolResult, ListToolsResult
+    from mcp.types import (
+        CallToolRequestParams,
+        CallToolResult,
+        GetPromptRequestParams,
+        GetPromptResult,
+        ListPromptsResult,
+        ListResourcesResult,
+        ListToolsResult,
+        ReadResourceRequestParams,
+        ReadResourceResult,
+    )
 
 logger = logging.getLogger("requisite.mcp.server")
 
 _DEFAULT_HTTP_HOST = "127.0.0.1"
 _DEFAULT_HTTP_PORT = 8000
 _DEFAULT_HTTP_PATH = "/mcp"
+
+
+@dataclass
+class _RegisteredResource:
+    uri: str
+    name: str
+    description: str
+    mime_type: Optional[str]
+    content: Union[str, Callable[[], str]]
+
+
+@dataclass
+class _RegisteredPrompt:
+    name: str
+    description: str
+    arguments: list[MCPPromptArgument]
+    render: Callable[[dict[str, str]], list[Message]]
 
 
 class MCPServer:
@@ -89,6 +122,8 @@ class MCPServer:
     ) -> None:
         self._name = name
         self._tool_registry = ToolRegistry()
+        self._resources: dict[str, _RegisteredResource] = {}
+        self._prompts: dict[str, _RegisteredPrompt] = {}
         for tool_like in tools or []:
             self._tool_registry.register(tool_like)
         for agent in agents or []:
@@ -109,6 +144,49 @@ class MCPServer:
         """
         return self._tool_registry.register(agent.as_tool())
 
+    def add_resource(
+        self,
+        uri: str,
+        *,
+        name: str,
+        content: Union[str, Callable[[], str]],
+        description: str = "",
+        mime_type: Optional[str] = None,
+    ) -> None:
+        """Register a resource under ``uri``.
+
+        Parameters
+        ----------
+        content:
+            Either static text, or a zero-argument callable producing the
+            current text each time the resource is read (e.g. re-reading
+            a file) -- so a resource's content can be dynamic.
+        """
+        self._resources[uri] = _RegisteredResource(
+            uri=uri, name=name, description=description, mime_type=mime_type, content=content
+        )
+
+    def add_prompt(
+        self,
+        name: str,
+        *,
+        render: Callable[[dict[str, str]], list[Message]],
+        description: str = "",
+        arguments: Optional[list[MCPPromptArgument]] = None,
+    ) -> None:
+        """Register a prompt under ``name``.
+
+        Parameters
+        ----------
+        render:
+            Takes the filled-in arguments dict and returns the list of
+            :class:`~requisite.core.interfaces.Message` this prompt
+            expands to.
+        """
+        self._prompts[name] = _RegisteredPrompt(
+            name=name, description=description, arguments=arguments or [], render=render
+        )
+
     def _build_server(self) -> "MCPLowLevelServer":
         try:
             from mcp.server.lowlevel import Server
@@ -124,6 +202,10 @@ class MCPServer:
             self._name,
             on_list_tools=self._handle_list_tools,
             on_call_tool=self._handle_call_tool,
+            on_list_resources=self._handle_list_resources,
+            on_read_resource=self._handle_read_resource,
+            on_list_prompts=self._handle_list_prompts,
+            on_get_prompt=self._handle_get_prompt,
         )
 
     async def _handle_list_tools(self, ctx: Any, params: Any) -> "ListToolsResult":
@@ -169,6 +251,109 @@ class MCPServer:
         return CallToolResult(
             content=[TextContent(type="text", text=json.dumps(structured, default=str))],
             structured_content=structured,
+        )
+
+    async def _handle_list_resources(self, ctx: Any, params: Any) -> "ListResourcesResult":
+        from mcp.types import ListResourcesResult
+        from mcp.types import Resource as MCPResourceType
+
+        return ListResourcesResult(
+            resources=[
+                MCPResourceType(
+                    uri=resource.uri,
+                    name=resource.name,
+                    description=resource.description,
+                    mime_type=resource.mime_type,
+                )
+                for resource in self._resources.values()
+            ]
+        )
+
+    async def _handle_read_resource(
+        self, ctx: Any, params: "ReadResourceRequestParams"
+    ) -> "ReadResourceResult":
+        """Fetch a registered resource's content by URI.
+
+        Unlike ``on_call_tool``, ``ReadResourceResult`` has no ``is_error``
+        -like field to report a failure "successfully" -- there is no
+        in-result error channel for this operation. Read
+        ``mcp.server.runner``'s dispatch loop directly to confirm: any
+        exception raised from a handler is already caught centrally and
+        converted into a proper JSON-RPC error response, so an unknown
+        URI is signaled by simply raising ``MCPError``, not by building a
+        result -- see ``docs/adr/0026-mcp-resource-prompt-discovery.md``.
+        """
+        from mcp import MCPError
+        from mcp.types import INVALID_PARAMS, ReadResourceResult, TextResourceContents
+
+        resource = self._resources.get(params.uri)
+        if resource is None:
+            raise MCPError(code=INVALID_PARAMS, message=f"Unknown resource URI: {params.uri!r}")
+
+        text = resource.content() if callable(resource.content) else resource.content
+        return ReadResourceResult(
+            contents=[
+                TextResourceContents(uri=resource.uri, mime_type=resource.mime_type, text=text)
+            ]
+        )
+
+    async def _handle_list_prompts(self, ctx: Any, params: Any) -> "ListPromptsResult":
+        from mcp.types import ListPromptsResult
+        from mcp.types import Prompt as MCPPromptType
+        from mcp.types import PromptArgument as MCPPromptArgumentType
+
+        return ListPromptsResult(
+            prompts=[
+                MCPPromptType(
+                    name=prompt.name,
+                    description=prompt.description,
+                    arguments=[
+                        MCPPromptArgumentType(
+                            name=arg.name, description=arg.description, required=arg.required
+                        )
+                        for arg in prompt.arguments
+                    ]
+                    or None,
+                )
+                for prompt in self._prompts.values()
+            ]
+        )
+
+    async def _handle_get_prompt(
+        self, ctx: Any, params: "GetPromptRequestParams"
+    ) -> "GetPromptResult":
+        """Render a registered prompt into its messages.
+
+        Same error-handling contract as :meth:`_handle_read_resource`:
+        ``GetPromptResult`` has no ``is_error``-like field, so an unknown
+        prompt name is signaled by raising ``MCPError``. A rendered
+        :class:`~requisite.core.interfaces.Message` with a ``SYSTEM``/
+        ``TOOL`` role isn't validated up front -- it fails naturally at
+        ``PromptMessage`` construction below, since MCP's own role type is
+        ``Literal["user", "assistant"]`` only (verified live). This is a
+        known v1 limitation, not silently handled -- see
+        ``docs/adr/0026-mcp-resource-prompt-discovery.md``.
+        """
+        from mcp import MCPError
+        from mcp.types import INVALID_PARAMS, GetPromptResult, PromptMessage, TextContent
+
+        prompt = self._prompts.get(params.name)
+        if prompt is None:
+            raise MCPError(code=INVALID_PARAMS, message=f"Unknown prompt: {params.name!r}")
+
+        messages = prompt.render(params.arguments or {})
+        return GetPromptResult(
+            description=prompt.description,
+            messages=[
+                # Requisite's Role is broader (system/tool too) than MCP's
+                # user/assistant-only role -- a SYSTEM/TOOL message fails
+                # here at pydantic validation, not statically provable.
+                PromptMessage(
+                    role=message.role.value,  # type: ignore[arg-type]
+                    content=TextContent(type="text", text=message.content),
+                )
+                for message in messages
+            ],
         )
 
     async def arun_stdio(self) -> None:

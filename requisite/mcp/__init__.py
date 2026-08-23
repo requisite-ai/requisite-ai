@@ -12,13 +12,22 @@ Streamable HTTP) and expose its tools to Requisite in two ways:
   ``agent.requires("github")`` can resolve to an MCP server exactly like
   it resolves to a native tool -- see ADR-0001 and ADR-0004.
 
+Resources and prompts are discoverable too, beyond tools:
+:meth:`~requisite.mcp.base.BaseMCPClient.discover_resources`/
+:meth:`~requisite.mcp.base.BaseMCPClient.read_resource` and
+:meth:`~requisite.mcp.base.BaseMCPClient.discover_prompts`/
+:meth:`~requisite.mcp.base.BaseMCPClient.get_prompt` -- the latter
+returns :class:`~requisite.core.interfaces.Message` objects, so
+``agent.run(client.get_prompt(...))`` composes directly with
+the chat surface. See ADR-0026.
+
 ``default_registry`` is empty by default -- unlike provider/orchestrator
 registries, there's no universal default MCP server; register the ones
 your application actually uses.
 
-**Server**: expose Requisite's own tools/agents *as* an MCP server via
-:class:`~requisite.mcp.server.MCPServer` -- the reverse direction. See
-ADR-0015.
+**Server**: expose Requisite's own tools/agents/resources/prompts *as*
+an MCP server via :class:`~requisite.mcp.server.MCPServer` -- the
+reverse direction. See ADR-0015 (tools) and ADR-0026 (resources/prompts).
 
 **First-party default capability providers**:
 :func:`~requisite.mcp.defaults.register_github_mcp_capability` wires
@@ -30,7 +39,7 @@ mechanism for wiring up any other first-party or third-party MCP server
 see ``docs/adr/0023-mcp-default-capability-providers.md``.
 """
 
-from requisite.mcp.base import BaseMCPClient
+from requisite.mcp.base import BaseMCPClient, MCPPrompt, MCPPromptArgument, MCPResource
 from requisite.mcp.client import MCPClient
 from requisite.mcp.defaults import register_github_mcp_capability, register_mcp_capability
 from requisite.mcp.registry import MCPClientRegistry
@@ -41,6 +50,9 @@ __all__ = [
     "BaseMCPClient",
     "MCPClient",
     "MCPClientRegistry",
+    "MCPPrompt",
+    "MCPPromptArgument",
+    "MCPResource",
     "MCPServer",
     "default_mcp_registry",
     "register_github_mcp_capability",
