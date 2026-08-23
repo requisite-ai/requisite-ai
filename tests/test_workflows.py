@@ -442,6 +442,114 @@ async def test_workflow_use_langgraph_arun_supervisor() -> None:
     assert result.strategy == "supervisor"
 
 
+def test_workflow_use_langgraph_hierarchical_delegates_to_nested_workflow() -> None:
+    """Proof that the duck-typed delegate split genuinely works for a
+    Workflow, not just an Agent -- the one behavior that differs from
+    supervisor -- on the langgraph backend specifically."""
+    pytest.importorskip("langgraph")
+
+    decisions = [
+        _SupervisorDecision(action="delegate", worker="ResearchTeam", task="Find facts about RAG"),
+        _SupervisorDecision(action="finish", final_answer="done"),
+    ]
+    coordinator = make_agent_with_provider(
+        "Coordinator", ScriptedSupervisorProvider(decisions=decisions)
+    )
+    research_team = Workflow(name="ResearchTeam")
+    research_team.add(make_agent("SubResearcher", "research"))
+
+    workflow = Workflow().hierarchical()
+    workflow.add(coordinator).add(research_team)
+    workflow.use_langgraph()
+    result = workflow.run("Explain RAG")
+
+    assert result.strategy == "hierarchical"
+    assert result.orchestrator == "langgraph"
+    assert result.content == "done"
+    assert len(result.steps) == 1
+    assert isinstance(result.steps[0], WorkflowResult)
+    assert result.steps[0].content == "research:Find facts about RAG"
+
+
+def test_workflow_use_langgraph_hierarchical_delegates_to_both_agents_then_finishes() -> None:
+    """Proof of real conditional routing across two different Agent
+    delegates -- only possible if add_conditional_edges is genuinely
+    re-evaluated each time the graph returns to the coordinator node."""
+    pytest.importorskip("langgraph")
+
+    decisions = [
+        _SupervisorDecision(action="delegate", worker="Researcher", task="Find facts about RAG"),
+        _SupervisorDecision(action="delegate", worker="Writer", task="Draft a summary"),
+        _SupervisorDecision(
+            action="finish", final_answer="RAG combines retrieval with generation."
+        ),
+    ]
+    coordinator = make_agent_with_provider(
+        "Coordinator", ScriptedSupervisorProvider(decisions=decisions)
+    )
+    researcher = make_agent("Researcher", "research")
+    writer = make_agent("Writer", "write")
+
+    workflow = Workflow().hierarchical()
+    workflow.add(coordinator).add(researcher).add(writer)
+    workflow.use_langgraph()
+    result = workflow.run("Explain RAG")
+
+    assert result.content == "RAG combines retrieval with generation."
+    assert [step.agent_name for step in result.steps] == ["Researcher", "Writer"]
+
+
+def test_workflow_use_langgraph_hierarchical_exceeds_max_rounds_raises() -> None:
+    pytest.importorskip("langgraph")
+
+    decisions = [
+        _SupervisorDecision(action="delegate", worker="Researcher", task="Find facts")
+        for _ in range(3)
+    ]
+    coordinator = make_agent_with_provider(
+        "Coordinator", ScriptedSupervisorProvider(decisions=decisions)
+    )
+    researcher = make_agent("Researcher", "research")
+
+    workflow = Workflow().hierarchical()
+    workflow.add(coordinator).add(researcher)
+    workflow.use_langgraph()
+    with pytest.raises(AgentException, match="max_rounds"):
+        workflow.run("task", max_rounds=3)
+
+
+def test_workflow_use_langgraph_hierarchical_unknown_delegate_raises() -> None:
+    pytest.importorskip("langgraph")
+
+    decisions = [_SupervisorDecision(action="delegate", worker="Nonexistent", task="do X")]
+    coordinator = make_agent_with_provider(
+        "Coordinator", ScriptedSupervisorProvider(decisions=decisions)
+    )
+    workflow = Workflow().hierarchical()
+    workflow.add(coordinator).add(make_agent("Researcher", "research"))
+    workflow.use_langgraph()
+    with pytest.raises(ConfigurationException, match="unknown"):
+        workflow.run("task")
+
+
+@pytest.mark.asyncio
+async def test_workflow_use_langgraph_arun_hierarchical() -> None:
+    pytest.importorskip("langgraph")
+
+    decisions = [_SupervisorDecision(action="finish", final_answer="done")]
+    coordinator = make_agent_with_provider(
+        "Coordinator", ScriptedSupervisorProvider(decisions=decisions)
+    )
+    workflow = Workflow().hierarchical()
+    workflow.add(coordinator).add(make_agent("Worker", "w"))
+    workflow.use_langgraph()
+    result = await workflow.arun("task")
+
+    assert result.content == "done"
+    assert result.orchestrator == "langgraph"
+    assert result.strategy == "hierarchical"
+
+
 def test_workflow_use_langgraph_reflection_revises_then_stops() -> None:
     """Proof of a real conditional cycle, not a disguised fixed chain:
     two full critique/revise rounds happen before NO_CHANGES_NEEDED --
@@ -523,6 +631,83 @@ async def test_workflow_use_langgraph_arun_reflection() -> None:
     assert result.orchestrator == "langgraph"
     assert result.strategy == "reflection"
     assert len(result.steps) == 4
+
+
+def test_workflow_use_langgraph_graph_conditional_branch_takes_yes_edge() -> None:
+    """Proof of real branching, not a disguised chain: two different
+    paths are reachable depending on the router's own output content."""
+    pytest.importorskip("langgraph")
+
+    workflow = Workflow().graph()
+    workflow.add(make_agent("Router", "router"))
+    workflow.add(make_agent("BranchYes", "yes-branch"))
+    workflow.add(make_agent("BranchNo", "no-branch"))
+    workflow.add_edge("Router", "BranchYes", condition=lambda c: "yes" in c)
+    workflow.add_edge("Router", "BranchNo", condition=lambda c: "no" in c)
+    workflow.use_langgraph()
+
+    result = workflow.run("please say yes")
+
+    assert result.strategy == "graph"
+    assert result.orchestrator == "langgraph"
+    assert [s.agent_name for s in result.steps] == ["Router", "BranchYes"]
+
+
+def test_workflow_use_langgraph_graph_conditional_branch_takes_no_edge() -> None:
+    pytest.importorskip("langgraph")
+
+    workflow = Workflow().graph()
+    workflow.add(make_agent("Router", "router"))
+    workflow.add(make_agent("BranchYes", "yes-branch"))
+    workflow.add(make_agent("BranchNo", "no-branch"))
+    workflow.add_edge("Router", "BranchYes", condition=lambda c: "yes" in c)
+    workflow.add_edge("Router", "BranchNo", condition=lambda c: "no" in c)
+    workflow.use_langgraph()
+
+    result = workflow.run("please say no")
+
+    assert [s.agent_name for s in result.steps] == ["Router", "BranchNo"]
+
+
+def test_workflow_use_langgraph_graph_unconditional_fallback_edge() -> None:
+    pytest.importorskip("langgraph")
+
+    workflow = Workflow().graph()
+    workflow.add(make_agent("A", "a")).add(make_agent("Fallback", "fallback"))
+    workflow.add_edge("A", "Fallback")
+    workflow.use_langgraph()
+
+    result = workflow.run("task")
+
+    assert [s.agent_name for s in result.steps] == ["A", "Fallback"]
+    assert result.content == "fallback:a:task"
+
+
+def test_workflow_use_langgraph_graph_cycle_exceeds_max_steps_raises() -> None:
+    pytest.importorskip("langgraph")
+
+    workflow = Workflow().graph()
+    workflow.add(make_agent("Looper", "loop"))
+    workflow.add_edge("Looper", "Looper")
+    workflow.use_langgraph()
+
+    with pytest.raises(AgentException, match="max_steps"):
+        workflow.run("task", max_steps=2)
+
+
+@pytest.mark.asyncio
+async def test_workflow_use_langgraph_arun_graph() -> None:
+    pytest.importorskip("langgraph")
+
+    workflow = Workflow().graph()
+    workflow.add(make_agent("A", "a")).add(make_agent("B", "b"))
+    workflow.add_edge("A", "B")
+    workflow.use_langgraph()
+
+    result = await workflow.arun("start")
+
+    assert [s.agent_name for s in result.steps] == ["A", "B"]
+    assert result.content == "b:a:start"
 
 
 def test_workflow_use_crewai_runs_a_real_sequential_pipeline() -> None:

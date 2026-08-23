@@ -12,29 +12,35 @@ Install with: ``pip install langgraph``
 
 Notes
 -----
-Three strategies are supported: ``"sequential"`` (a linear chain -- each
-agent is a node, wired node-to-node in the order added), ``"supervisor"``
-(a real conditional graph: one coordinator node routes, via
-``add_conditional_edges``, to whichever worker node it delegates to
-next, each worker looping back to the coordinator for another round,
-until it decides to finish), and ``"reflection"`` (a 3-node cycle --
-draft, critique, revise -- with a conditional exit on the
-``NO_CHANGES_NEEDED`` sentinel; see
-``docs/adr/0028-langgraph-reflection-strategy.md``). See
-``docs/adr/0016-langgraph-branching.md`` for why ``supervisor``
-specifically was first -- it's the strategy whose shape is genuinely
-conditional routing, not a disguised loop. Further strategies
-(``hierarchical``, ``graph``) are natural extensions: build another
-graph-building method and add a branch in
-:meth:`LangGraphOrchestrator.run` / :meth:`.arun`; this class's public
-surface does not need to change.
+Five strategies are supported: ``"sequential"`` (a linear chain -- each
+agent is a node, wired node-to-node in the order added); ``"supervisor"``
+and ``"hierarchical"`` (both a real conditional graph built by the same
+:meth:`LangGraphOrchestrator._build_delegation_graph` -- one coordinator
+node routes, via ``add_conditional_edges``, to whichever delegate node
+it delegates to next, each delegate looping back to the coordinator for
+another round, until it decides to finish; the only difference between
+the two strategies is which split-helper validates ``steps`` --
+Agent-only for ``supervisor``, Agent-or-named-``Workflow`` for
+``hierarchical`` -- mirroring how
+:class:`~requisite.orchestrators.native.NativeOrchestrator` itself
+shares one ``_run_delegation_loop`` between both); ``"reflection"`` (a
+3-node cycle -- draft, critique, revise -- with a conditional exit on
+the ``NO_CHANGES_NEEDED`` sentinel); and ``"graph"`` (an arbitrary,
+developer-declared graph -- one node per step, routed by
+``Workflow.add_edge(...)``'s own conditions, reusing
+:class:`NativeOrchestrator`'s validation/routing helpers directly rather
+than reimplementing them). See ``docs/adr/0016-langgraph-branching.md``
+(``supervisor``), ``docs/adr/0028-langgraph-reflection-strategy.md``
+(``reflection``), and
+``docs/adr/0029-langgraph-hierarchical-graph-strategies.md``
+(``hierarchical``, ``graph``) for the full design of each.
 """
 
 from __future__ import annotations
 
 import logging
 from collections.abc import Sequence
-from typing import TYPE_CHECKING, Any, Optional, TypedDict
+from typing import TYPE_CHECKING, Any, Callable, Optional, TypedDict
 
 from requisite.core.exceptions import AgentException, ConfigurationException
 from requisite.orchestrators.base import BaseOrchestrator, WorkflowResult
@@ -51,7 +57,11 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger("requisite.orchestrators.langgraph")
 
-_SUPERVISOR_NODE = "__supervisor__"
+# Shared by both "supervisor" and "hierarchical" -- see
+# _build_delegation_graph. Not renamed to something strategy-neutral
+# beyond this: a coordinator node + finish sentinel is the same shape
+# either strategy needs, and neither name implies Agent-only semantics.
+_COORDINATOR_NODE = "__coordinator__"
 _FINISH_ROUTE = "__finish__"
 _DRAFT_NODE = "__draft__"
 _CRITIQUE_NODE = "__critique__"
@@ -65,7 +75,9 @@ class _GraphState(TypedDict):
     steps: list[Any]
 
 
-class _SupervisorGraphState(TypedDict):
+class _DelegationGraphState(TypedDict):
+    """Shared by "supervisor" and "hierarchical" -- see _build_delegation_graph."""
+
     task: str
     transcript: list[tuple[str, str, str]]
     steps: list[Any]
@@ -83,10 +95,19 @@ class _ReflectionGraphState(TypedDict):
     rounds: int
 
 
+class _ArbitraryGraphState(TypedDict):
+    input: str
+    output: str
+    steps: list[Any]
+    step_count: int
+
+
 class LangGraphOrchestrator(BaseOrchestrator):
     """Runs agents as a ``langgraph`` ``StateGraph`` -- linear for
-    ``"sequential"``, a real conditional graph with a loop-back cycle for
-    ``"supervisor"``. See module docstring.
+    ``"sequential"``, real conditional graphs with loop-back cycles for
+    ``"supervisor"``/``"hierarchical"``/``"reflection"``, and an
+    arbitrary developer-declared graph for ``"graph"``. See module
+    docstring.
     """
 
     @property
@@ -134,33 +155,48 @@ class LangGraphOrchestrator(BaseOrchestrator):
 
         return graph.compile()
 
-    def _build_supervisor_graph(
-        self, steps: Sequence["Agent"], *, max_rounds: int, **kwargs: Any
+    def _build_delegation_graph(
+        self,
+        steps: Sequence[Any],
+        *,
+        split_fn: Callable[..., tuple["Agent", dict[str, Any]]],
+        role: str,
+        max_rounds: int,
+        **kwargs: Any,
     ) -> Any:
-        """Build a real conditional graph for the ``supervisor`` strategy.
+        """Build a real conditional graph shared by ``supervisor`` and ``hierarchical``.
 
-        One node per worker (named after ``worker.name`` -- already
-        guaranteed unique by ``_split_coordinator_and_workers``) plus one
-        ``_SUPERVISOR_NODE``. The supervisor node makes the same
-        structured decision :class:`~requisite.orchestrators.native.NativeOrchestrator`
-        makes (reused, not duplicated -- see module docstring) and writes
-        it to ``state["route"]``; ``add_conditional_edges`` reads that to
-        pick the next worker node or ``END``. Each worker node routes
-        back to the supervisor node -- the loop.
+        One node per delegate (named after ``delegate.name`` -- already
+        guaranteed unique by ``split_fn``) plus one ``_COORDINATOR_NODE``.
+        The coordinator node makes the same structured decision
+        :class:`~requisite.orchestrators.native.NativeOrchestrator` makes
+        (reused, not duplicated -- see module docstring) and writes it to
+        ``state["route"]``; ``add_conditional_edges`` reads that to pick
+        the next delegate node or ``END``. Each delegate node routes back
+        to the coordinator node -- the loop.
+
+        ``split_fn`` is the only thing that differs between the two
+        strategies: ``NativeOrchestrator._split_coordinator_and_workers``
+        (Agent-only) for ``supervisor``, or
+        ``NativeOrchestrator._split_coordinator_and_delegates``
+        (Agent-or-named-``Workflow``) for ``hierarchical`` -- mirroring
+        how ``NativeOrchestrator`` itself shares one
+        ``_run_delegation_loop`` between both. A delegate node's own body
+        only ever calls ``delegate.run(...)``, which both ``Agent`` and
+        ``Workflow`` support identically, so nothing else here needs to
+        change per strategy.
         """
         StateGraph, START, END = self._require_langgraph()  # noqa: N806
-        coordinator, workers = NativeOrchestrator._split_coordinator_and_workers(
-            steps, role="supervisor"
-        )
+        coordinator, delegates = split_fn(steps, role=role)
 
-        def _supervisor_node(state: _SupervisorGraphState) -> dict[str, Any]:
+        def _coordinator_node(state: _DelegationGraphState) -> dict[str, Any]:
             if state["rounds"] >= max_rounds:
                 raise AgentException(
-                    f"Workflow supervisor '{coordinator.name}' exceeded max_rounds={max_rounds} "
+                    f"Workflow {role} '{coordinator.name}' exceeded max_rounds={max_rounds} "
                     f"without reaching a final answer.",
                 )
             decision = coordinator.ai.chat(
-                _supervisor_prompt(state["task"], list(workers), state["transcript"]),
+                _supervisor_prompt(state["task"], list(delegates), state["transcript"]),
                 response_model=_SupervisorDecision,
             )
             if decision.action == "finish":
@@ -171,7 +207,7 @@ class LangGraphOrchestrator(BaseOrchestrator):
                 }
 
             delegate = NativeOrchestrator._resolve_delegate(
-                decision, supervisor_name=coordinator.name, workers=workers
+                decision, supervisor_name=coordinator.name, workers=delegates
             )
             return {
                 "route": delegate.name,
@@ -179,32 +215,96 @@ class LangGraphOrchestrator(BaseOrchestrator):
                 "rounds": state["rounds"] + 1,
             }
 
-        def _make_worker_node(worker: "Agent") -> Any:
-            def _node(state: _SupervisorGraphState) -> dict[str, Any]:
-                result = worker.run(state["pending_task"], **kwargs)
+        def _make_delegate_node(delegate: Any) -> Any:
+            def _node(state: _DelegationGraphState) -> dict[str, Any]:
+                result = delegate.run(state["pending_task"], **kwargs)
                 return {
                     "steps": [*state["steps"], result],
                     "transcript": [
                         *state["transcript"],
-                        (worker.name, state["pending_task"], result.content),
+                        (delegate.name, state["pending_task"], result.content),
                     ],
                 }
 
             return _node
 
-        def _route(state: _SupervisorGraphState) -> str:
+        def _route(state: _DelegationGraphState) -> str:
             return state["route"]
 
-        graph = StateGraph(_SupervisorGraphState)
-        graph.add_node(_SUPERVISOR_NODE, _supervisor_node)
-        for worker_name, worker in workers.items():
-            graph.add_node(worker_name, _make_worker_node(worker))
-            graph.add_edge(worker_name, _SUPERVISOR_NODE)
+        graph = StateGraph(_DelegationGraphState)
+        graph.add_node(_COORDINATOR_NODE, _coordinator_node)
+        for delegate_name, delegate in delegates.items():
+            graph.add_node(delegate_name, _make_delegate_node(delegate))
+            graph.add_edge(delegate_name, _COORDINATOR_NODE)
 
-        path_map = {worker_name: worker_name for worker_name in workers}
+        path_map = {delegate_name: delegate_name for delegate_name in delegates}
         path_map[_FINISH_ROUTE] = END
-        graph.add_conditional_edges(_SUPERVISOR_NODE, _route, path_map)
-        graph.add_edge(START, _SUPERVISOR_NODE)
+        graph.add_conditional_edges(_COORDINATOR_NODE, _route, path_map)
+        graph.add_edge(START, _COORDINATOR_NODE)
+
+        return graph.compile()
+
+    def _build_arbitrary_graph(
+        self, steps: Sequence[Any], *, edges: Sequence[Any], max_steps: int, **kwargs: Any
+    ) -> Any:
+        """Build a real conditional graph for the ``graph`` strategy.
+
+        One node per step (named after ``step.name``), routed by the
+        developer-declared ``edges`` -- exactly the ``(from_, to,
+        condition)`` triples :class:`~requisite.orchestrators.native.NativeOrchestrator`
+        already validates and resolves for its own ``graph`` strategy.
+        Reused verbatim here (``_index_graph_nodes``,
+        ``_validate_graph_edges``, ``_resolve_next_graph_node``) since
+        none of that logic is LLM-decided or backend-specific -- it's
+        plain name-indexing and condition-matching over developer-
+        supplied callables (see module docstring, ADR-0019).
+
+        ``max_steps`` is checked inside each node function, before it
+        runs -- not inside the router -- mirroring
+        :meth:`_build_delegation_graph`'s ``_coordinator_node`` check-
+        then-raise pattern, and reproducing Native's own ``for _ in
+        range(max_steps)`` loop semantics exactly: up to ``max_steps``
+        node executions are allowed, and the raise fires only when a
+        ``(max_steps + 1)``-th execution is attempted.
+        """
+        StateGraph, START, END = self._require_langgraph()  # noqa: N806
+        if max_steps < 1:
+            raise ConfigurationException(
+                f"The 'graph' strategy requires max_steps >= 1. Got {max_steps}.",
+            )
+        nodes = NativeOrchestrator._index_graph_nodes(steps, role="graph")
+        edges_by_source = NativeOrchestrator._validate_graph_edges(edges, nodes)
+
+        def _make_node(name: str, node: Any) -> Any:
+            def _node_fn(state: _ArbitraryGraphState) -> dict[str, Any]:
+                if state["step_count"] >= max_steps:
+                    raise AgentException(
+                        f"Workflow graph exceeded max_steps={max_steps} without reaching an end.",
+                    )
+                result = node.run(state["input"], **kwargs)
+                return {
+                    "input": result.content,
+                    "output": result.content,
+                    "steps": [*state["steps"], result],
+                    "step_count": state["step_count"] + 1,
+                }
+
+            return _node_fn
+
+        def _make_router(name: str) -> Any:
+            def _router(state: _ArbitraryGraphState) -> Any:
+                next_name = NativeOrchestrator._resolve_next_graph_node(
+                    name, state["output"], edges_by_source
+                )
+                return next_name if next_name is not None else END
+
+            return _router
+
+        graph = StateGraph(_ArbitraryGraphState)
+        for name, node in nodes.items():
+            graph.add_node(name, _make_node(name, node))
+            graph.add_conditional_edges(name, _make_router(name))
+        graph.add_edge(START, steps[0].name)
 
         return graph.compile()
 
@@ -299,9 +399,16 @@ class LangGraphOrchestrator(BaseOrchestrator):
                 orchestrator=self.name,
                 strategy=strategy,
             )
-        if strategy == "supervisor":
+        if strategy in ("supervisor", "hierarchical"):
+            split_fn = (
+                NativeOrchestrator._split_coordinator_and_workers
+                if strategy == "supervisor"
+                else NativeOrchestrator._split_coordinator_and_delegates
+            )
             max_rounds = kwargs.pop("max_rounds", 6)
-            compiled_graph = self._build_supervisor_graph(steps, max_rounds=max_rounds, **kwargs)
+            compiled_graph = self._build_delegation_graph(
+                steps, split_fn=split_fn, role=strategy, max_rounds=max_rounds, **kwargs
+            )
             final_state = compiled_graph.invoke(
                 {
                     "task": input,
@@ -331,9 +438,24 @@ class LangGraphOrchestrator(BaseOrchestrator):
                 orchestrator=self.name,
                 strategy=strategy,
             )
+        if strategy == "graph":
+            edges = kwargs.pop("edges", ())
+            max_steps = kwargs.pop("max_steps", 25)
+            compiled_graph = self._build_arbitrary_graph(
+                steps, edges=edges, max_steps=max_steps, **kwargs
+            )
+            final_state = compiled_graph.invoke(
+                {"input": input, "output": "", "steps": [], "step_count": 0},
+            )
+            return WorkflowResult(
+                content=final_state["output"],
+                steps=final_state["steps"],
+                orchestrator=self.name,
+                strategy=strategy,
+            )
         raise ConfigurationException(
-            f"The langgraph orchestrator supports the 'sequential', 'supervisor', and "
-            f"'reflection' strategies (got '{strategy}').",
+            f"The langgraph orchestrator supports the 'sequential', 'supervisor', "
+            f"'hierarchical', 'reflection', and 'graph' strategies (got '{strategy}').",
         )
 
     async def arun(
@@ -358,9 +480,16 @@ class LangGraphOrchestrator(BaseOrchestrator):
                 orchestrator=self.name,
                 strategy=strategy,
             )
-        if strategy == "supervisor":
+        if strategy in ("supervisor", "hierarchical"):
+            split_fn = (
+                NativeOrchestrator._split_coordinator_and_workers
+                if strategy == "supervisor"
+                else NativeOrchestrator._split_coordinator_and_delegates
+            )
             max_rounds = kwargs.pop("max_rounds", 6)
-            compiled_graph = self._build_supervisor_graph(steps, max_rounds=max_rounds, **kwargs)
+            compiled_graph = self._build_delegation_graph(
+                steps, split_fn=split_fn, role=strategy, max_rounds=max_rounds, **kwargs
+            )
             final_state = await compiled_graph.ainvoke(
                 {
                     "task": input,
@@ -390,7 +519,22 @@ class LangGraphOrchestrator(BaseOrchestrator):
                 orchestrator=self.name,
                 strategy=strategy,
             )
+        if strategy == "graph":
+            edges = kwargs.pop("edges", ())
+            max_steps = kwargs.pop("max_steps", 25)
+            compiled_graph = self._build_arbitrary_graph(
+                steps, edges=edges, max_steps=max_steps, **kwargs
+            )
+            final_state = await compiled_graph.ainvoke(
+                {"input": input, "output": "", "steps": [], "step_count": 0},
+            )
+            return WorkflowResult(
+                content=final_state["output"],
+                steps=final_state["steps"],
+                orchestrator=self.name,
+                strategy=strategy,
+            )
         raise ConfigurationException(
-            f"The langgraph orchestrator supports the 'sequential', 'supervisor', and "
-            f"'reflection' strategies (got '{strategy}').",
+            f"The langgraph orchestrator supports the 'sequential', 'supervisor', "
+            f"'hierarchical', 'reflection', and 'graph' strategies (got '{strategy}').",
         )

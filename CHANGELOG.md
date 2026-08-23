@@ -7,6 +7,40 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.28.0] - 2026-08-23
+
+### Added
+
+- `hierarchical` and `graph` strategies on the `langgraph` orchestrator
+  backend -- see
+  [ADR-0029](docs/adr/0029-langgraph-hierarchical-graph-strategies.md)
+  for the full design. Closes `ROADMAP.md`'s last open langgraph-branching
+  line: `sequential`/`supervisor`/`reflection`/`hierarchical`/`graph`
+  are now all shipped on both the `native` and `langgraph` backends.
+- `hierarchical` generalizes `LangGraphOrchestrator`'s existing
+  `supervisor` graph builder (renamed `_build_supervisor_graph` ->
+  `_build_delegation_graph`, parameterized by which split-helper to
+  use) rather than duplicating it -- mirroring how
+  `NativeOrchestrator` itself already shares one
+  `_run_delegation_loop` between both strategies. A delegate may be an
+  `Agent` or a named `Workflow` (nested "team"), exactly as on the
+  native backend.
+- `graph` builds a real conditional `StateGraph` for an arbitrary,
+  developer-declared graph (`Workflow.add_edge(from_, to,
+  condition=...)`), reusing `NativeOrchestrator`'s own
+  `_index_graph_nodes`/`_validate_graph_edges`/`_resolve_next_graph_node`
+  static helpers verbatim -- routing is deterministic and
+  developer-declared, not LLM-decided, so no new decision logic was
+  needed, only the langgraph node/router glue around Native's existing
+  validation.
+- `workflow.hierarchical()` and `workflow.graph()` now work unmodified
+  on both `use_native()` and `use_langgraph()`.
+- Verified against real Gemini calls: `hierarchical` with a genuinely
+  nested `Workflow` delegate (coordinator -> sub-team -> `Agent` ->
+  finish) round-tripped fully; `graph` with a real conditional branch
+  confirmed the router's own live model output correctly selected the
+  `DirectAnswer` node over `NeedsResearch`.
+
 ## [0.27.0] - 2026-08-23
 
 ### Added

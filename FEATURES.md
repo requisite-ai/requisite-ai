@@ -133,21 +133,21 @@ Status legend: ✅ Done · 🚧 Partial · 📋 Not started · N/A Deliberately 
 | Parallel | ✅ | `NativeOrchestrator` only so far |
 | Supervisor | ✅ | `native` and `langgraph` orchestrators — coordinator (`steps[0]`) delegates to named workers (`steps[1:]`) via structured decisions, up to `max_rounds`; ADR-0007, ADR-0016 (langgraph: a real conditional graph, not a Python loop) |
 | Planner | ✅ | `native` orchestrator only — coordinator (`steps[0]`) decomposes the task into a plan executed by named workers (`steps[1:]`); ADR-0007 |
-| Reflection | ✅ | `native` orchestrator only — single agent critiques and revises its own output, up to `max_rounds`; ADR-0007 |
+| Reflection | ✅ | `native` and `langgraph` orchestrators — single agent critiques and revises its own output, up to `max_rounds`; ADR-0007, ADR-0028 (langgraph: a real 3-node conditional cycle) |
 | Debate | ✅ | `native` orchestrator only — moderator (`steps[0]`) judges debaters (`steps[1:]`) after `max_rounds` of each seeing the others' prior-round arguments; ADR-0012 |
 | Critic | ✅ | `native` orchestrator only — generator (`steps[0]`) and a separate critic (`steps[1]`) iterate on a draft, up to `max_rounds`; ADR-0011 |
 | Consensus | ✅ | `native` orchestrator only — synthesizer (`steps[0]`) combines the independent, concurrently-run answers of `steps[1:]`; ADR-0011 |
-| Hierarchical | ✅ | `native` orchestrator only — same shape as Supervisor, except a delegate may be an `Agent` or a named `Workflow` (nested "team"); ADR-0013 |
+| Hierarchical | ✅ | `native` and `langgraph` orchestrators — same shape as Supervisor, except a delegate may be an `Agent` or a named `Workflow` (nested "team"); ADR-0013, ADR-0029 (langgraph: shares its graph builder with Supervisor) |
 | Map-reduce | ✅ | `native` orchestrator only — reducer (`steps[0]`) combines mapper (`steps[1:]`) results for `map_items=`, assigned round-robin; ADR-0012 |
 | Tree of thoughts | ✅ | `native` orchestrator only — evaluator (`steps[0]`) scores candidate reasoning steps thinkers (`steps[1:]`) generate; `breadth`/`beam_width`/`max_depth` control the search; ADR-0018 |
-| Graph execution (arbitrary DAGs) | ✅ | `native` orchestrator only — nodes (`Agent` or named `Workflow`) wired with developer-declared edges via `Workflow.add_edge(from_, to, condition=...)`; routing is deterministic (checked against a node's output), not LLM-decided like every strategy above; cycles allowed, bounded by `max_steps`; ADR-0019. `LangGraphOrchestrator` still only builds two specific graph shapes (linear for sequential, conditional+cycle for supervisor — ADR-0016); a generic langgraph graph-builder remains 📋 |
+| Graph execution (arbitrary DAGs) | ✅ | `native` and `langgraph` orchestrators — nodes (`Agent` or named `Workflow`) wired with developer-declared edges via `Workflow.add_edge(from_, to, condition=...)`; routing is deterministic (checked against a node's output), not LLM-decided like every strategy above; cycles allowed, bounded by `max_steps`; ADR-0019, ADR-0029 (langgraph: reuses the native backend's own node-indexing/edge-validation/routing helpers verbatim) |
 
 ## Orchestration
 
 | Backend | Status | Notes |
 |---|---|---|
 | Native (no external framework) | ✅ | `NativeOrchestrator` |
-| LangGraph | ✅ | `LangGraphOrchestrator` — sequential (linear chain) and supervisor (real conditional graph, ADR-0016) so far |
+| LangGraph | ✅ | `LangGraphOrchestrator` — sequential (linear chain), supervisor/hierarchical (real conditional graph, ADR-0016/ADR-0029), reflection (3-node cycle, ADR-0028), and graph (arbitrary developer-declared graph, ADR-0029) |
 | LangChain | 📋 | Not currently planned as a distinct backend — evaluate if a real need emerges |
 | CrewAI | ✅ | `workflow.use_crewai()` — `sequential` strategy, coordination only (every model call proxies through the wrapped `Agent`'s own provider) — [ADR-0027](docs/adr/0027-crewai-autogen-orchestrator-backends.md) |
 | AutoGen | ✅ | `workflow.use_autogen()` — `sequential` + `supervisor` strategies, same coordination-only design — [ADR-0027](docs/adr/0027-crewai-autogen-orchestrator-backends.md) |

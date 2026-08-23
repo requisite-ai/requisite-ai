@@ -279,7 +279,11 @@ class Workflow:
         real recursive delegation. A ``Workflow`` used this way must be
         constructed with ``name=...``. Requires at least 2 steps. Pass
         ``max_rounds=`` to :meth:`run`/:meth:`arun` to bound how many
-        delegation rounds it gets before giving up (default 6).
+        delegation rounds it gets before giving up (default 6). Works on
+        both :meth:`use_native` (the default) and :meth:`use_langgraph`
+        -- the langgraph backend builds a real conditional graph rather
+        than a Python loop, see
+        ``docs/adr/0029-langgraph-hierarchical-graph-strategies.md``.
         """
         self._strategy = "hierarchical"
         return self
@@ -330,7 +334,11 @@ class Workflow:
         content is checked against its outgoing edges (in the order they
         were added) to pick the next node. Cycles are allowed -- pass
         ``max_steps=`` to :meth:`run`/:meth:`arun` to bound them (default
-        25). See ``docs/adr/0019-graph-execution-strategy.md``.
+        25). See ``docs/adr/0019-graph-execution-strategy.md``. Works on
+        both :meth:`use_native` (the default) and :meth:`use_langgraph`
+        -- the langgraph backend builds a real conditional graph reusing
+        the exact same edge-validation/routing logic, see
+        ``docs/adr/0029-langgraph-hierarchical-graph-strategies.md``.
         """
         self._strategy = "graph"
         return self
