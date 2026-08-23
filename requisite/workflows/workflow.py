@@ -194,7 +194,11 @@ class Workflow:
         Requires exactly one agent (added via :meth:`add`), which
         critiques and revises its own output. Pass ``max_rounds=`` to
         :meth:`run`/:meth:`arun` to control how many rounds it gets
-        (default 3); it may also stop earlier on its own.
+        (default 3); it may also stop earlier on its own. Works on both
+        :meth:`use_native` (the default) and :meth:`use_langgraph` -- the
+        langgraph backend builds a real conditional graph (a 3-node
+        draft/critique/revise cycle) rather than a Python loop, see
+        ``docs/adr/0028-langgraph-reflection-strategy.md``.
         """
         self._strategy = "reflection"
         return self

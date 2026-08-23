@@ -12,16 +12,20 @@ Install with: ``pip install langgraph``
 
 Notes
 -----
-Two strategies are supported: ``"sequential"`` (a linear chain -- each
-agent is a node, wired node-to-node in the order added) and
-``"supervisor"`` (a real conditional graph: one coordinator node routes,
-via ``add_conditional_edges``, to whichever worker node it delegates to
+Three strategies are supported: ``"sequential"`` (a linear chain -- each
+agent is a node, wired node-to-node in the order added), ``"supervisor"``
+(a real conditional graph: one coordinator node routes, via
+``add_conditional_edges``, to whichever worker node it delegates to
 next, each worker looping back to the coordinator for another round,
-until it decides to finish). See ``docs/adr/0016-langgraph-branching.md``
-for why ``supervisor`` specifically -- it's the one existing strategy
-whose shape is genuinely conditional routing, not a disguised loop.
-Further strategies (``reflection``, ``hierarchical``) are natural
-extensions: build another graph-building method and add a branch in
+until it decides to finish), and ``"reflection"`` (a 3-node cycle --
+draft, critique, revise -- with a conditional exit on the
+``NO_CHANGES_NEEDED`` sentinel; see
+``docs/adr/0028-langgraph-reflection-strategy.md``). See
+``docs/adr/0016-langgraph-branching.md`` for why ``supervisor``
+specifically was first -- it's the strategy whose shape is genuinely
+conditional routing, not a disguised loop. Further strategies
+(``hierarchical``, ``graph``) are natural extensions: build another
+graph-building method and add a branch in
 :meth:`LangGraphOrchestrator.run` / :meth:`.arun`; this class's public
 surface does not need to change.
 """
@@ -37,6 +41,8 @@ from requisite.orchestrators.base import BaseOrchestrator, WorkflowResult
 from requisite.orchestrators.native import (
     NativeOrchestrator,
     _SupervisorDecision,
+    _reflection_critique_prompt,
+    _reflection_revise_prompt,
     _supervisor_prompt,
 )
 
@@ -47,6 +53,10 @@ logger = logging.getLogger("requisite.orchestrators.langgraph")
 
 _SUPERVISOR_NODE = "__supervisor__"
 _FINISH_ROUTE = "__finish__"
+_DRAFT_NODE = "__draft__"
+_CRITIQUE_NODE = "__critique__"
+_REVISE_NODE = "__revise__"
+_NO_CHANGES_NEEDED = "NO_CHANGES_NEEDED"
 
 
 class _GraphState(TypedDict):
@@ -62,6 +72,14 @@ class _SupervisorGraphState(TypedDict):
     route: str
     pending_task: str
     output: str
+    rounds: int
+
+
+class _ReflectionGraphState(TypedDict):
+    input: str
+    draft: str
+    critique: str
+    steps: list[Any]
     rounds: int
 
 
@@ -190,6 +208,75 @@ class LangGraphOrchestrator(BaseOrchestrator):
 
         return graph.compile()
 
+    def _build_reflection_graph(
+        self, steps: Sequence["Agent"], *, max_rounds: int, **kwargs: Any
+    ) -> Any:
+        """Build a real conditional graph for the ``reflection`` strategy.
+
+        Mirrors :meth:`~requisite.orchestrators.native.NativeOrchestrator._run_reflection`
+        exactly: draft, then up to ``max_rounds - 1`` rounds of
+        critique-then-maybe-revise. Revise always follows a non-sentinel
+        critique regardless of remaining budget -- only whether the loop
+        goes around *again* (another critique) is budget-gated -- so
+        ``rounds`` (critique count) is checked after revise, not before
+        it. ``max_rounds`` is a closure variable baked in at graph-build
+        time, the same way :meth:`_build_supervisor_graph` closes over it
+        rather than storing it in graph state.
+        """
+        StateGraph, START, END = self._require_langgraph()  # noqa: N806
+        if len(steps) != 1:
+            raise ConfigurationException(
+                f"The 'reflection' strategy requires exactly one agent (it critiques "
+                f"and revises its own output). Got {len(steps)}.",
+            )
+        worker = steps[0]
+
+        def _draft_node(state: _ReflectionGraphState) -> dict[str, Any]:
+            result = worker.run(state["input"], **kwargs)
+            return {"draft": result.content, "steps": [*state["steps"], result], "rounds": 0}
+
+        def _critique_node(state: _ReflectionGraphState) -> dict[str, Any]:
+            result = worker.run(
+                _reflection_critique_prompt(state["input"], state["draft"]), **kwargs
+            )
+            return {
+                "critique": result.content,
+                "steps": [*state["steps"], result],
+                "rounds": state["rounds"] + 1,
+            }
+
+        def _revise_node(state: _ReflectionGraphState) -> dict[str, Any]:
+            result = worker.run(
+                _reflection_revise_prompt(state["input"], state["draft"], state["critique"]),
+                **kwargs,
+            )
+            return {"draft": result.content, "steps": [*state["steps"], result]}
+
+        # Return type Any, not str: END is a langgraph sentinel object
+        # (loosely typed here since it's obtained via the lazy
+        # _require_langgraph() import), not a plain string.
+        def _route_after_draft(state: _ReflectionGraphState) -> Any:
+            return _CRITIQUE_NODE if max_rounds > 1 else END
+
+        def _route_after_critique(state: _ReflectionGraphState) -> Any:
+            if state["critique"].strip() == _NO_CHANGES_NEEDED:
+                return END
+            return _REVISE_NODE
+
+        def _route_after_revise(state: _ReflectionGraphState) -> Any:
+            return _CRITIQUE_NODE if state["rounds"] < max_rounds - 1 else END
+
+        graph = StateGraph(_ReflectionGraphState)
+        graph.add_node(_DRAFT_NODE, _draft_node)
+        graph.add_node(_CRITIQUE_NODE, _critique_node)
+        graph.add_node(_REVISE_NODE, _revise_node)
+        graph.add_edge(START, _DRAFT_NODE)
+        graph.add_conditional_edges(_DRAFT_NODE, _route_after_draft)
+        graph.add_conditional_edges(_CRITIQUE_NODE, _route_after_critique)
+        graph.add_conditional_edges(_REVISE_NODE, _route_after_revise)
+
+        return graph.compile()
+
     def run(
         self,
         steps: Sequence[Any],
@@ -232,9 +319,21 @@ class LangGraphOrchestrator(BaseOrchestrator):
                 orchestrator=self.name,
                 strategy=strategy,
             )
+        if strategy == "reflection":
+            max_rounds = kwargs.pop("max_rounds", 3)
+            compiled_graph = self._build_reflection_graph(steps, max_rounds=max_rounds, **kwargs)
+            final_state = compiled_graph.invoke(
+                {"input": input, "draft": "", "critique": "", "steps": [], "rounds": 0},
+            )
+            return WorkflowResult(
+                content=final_state["draft"],
+                steps=final_state["steps"],
+                orchestrator=self.name,
+                strategy=strategy,
+            )
         raise ConfigurationException(
-            f"The langgraph orchestrator supports the 'sequential' and 'supervisor' "
-            f"strategies (got '{strategy}').",
+            f"The langgraph orchestrator supports the 'sequential', 'supervisor', and "
+            f"'reflection' strategies (got '{strategy}').",
         )
 
     async def arun(
@@ -279,7 +378,19 @@ class LangGraphOrchestrator(BaseOrchestrator):
                 orchestrator=self.name,
                 strategy=strategy,
             )
+        if strategy == "reflection":
+            max_rounds = kwargs.pop("max_rounds", 3)
+            compiled_graph = self._build_reflection_graph(steps, max_rounds=max_rounds, **kwargs)
+            final_state = await compiled_graph.ainvoke(
+                {"input": input, "draft": "", "critique": "", "steps": [], "rounds": 0},
+            )
+            return WorkflowResult(
+                content=final_state["draft"],
+                steps=final_state["steps"],
+                orchestrator=self.name,
+                strategy=strategy,
+            )
         raise ConfigurationException(
-            f"The langgraph orchestrator supports the 'sequential' and 'supervisor' "
-            f"strategies (got '{strategy}').",
+            f"The langgraph orchestrator supports the 'sequential', 'supervisor', and "
+            f"'reflection' strategies (got '{strategy}').",
         )

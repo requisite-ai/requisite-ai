@@ -7,6 +7,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.27.0] - 2026-08-23
+
+### Added
+
+- `reflection` strategy on the `langgraph` orchestrator backend -- see
+  [ADR-0028](docs/adr/0028-langgraph-reflection-strategy.md) for the
+  full design. Closes the last remaining line in `ROADMAP.md`'s
+  orchestration section (`hierarchical`/`graph` on langgraph remain
+  separately-tracked follow-ups).
+- `LangGraphOrchestrator` builds a real 3-node conditional cycle
+  (`"__draft__"` -> `"__critique__"` -> `"__revise__"`, looping back to
+  `"__critique__"`) reusing `NativeOrchestrator`'s exact
+  `_reflection_critique_prompt`/`_reflection_revise_prompt` and
+  `NO_CHANGES_NEEDED` sentinel, matching how ADR-0016's `supervisor`
+  strategy already reuses `_supervisor_prompt`. `workflow.reflection()`
+  now works unmodified on both `use_native()` and `use_langgraph()`.
+- Verified against a real Gemini call: a full 5-step
+  draft/critique/revise/critique/revise cycle at `max_rounds=3`,
+  correctly exhausting the round budget and returning the final
+  revision.
+
 ## [0.26.0] - 2026-08-23
 
 ### Added

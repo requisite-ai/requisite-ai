@@ -442,6 +442,89 @@ async def test_workflow_use_langgraph_arun_supervisor() -> None:
     assert result.strategy == "supervisor"
 
 
+def test_workflow_use_langgraph_reflection_revises_then_stops() -> None:
+    """Proof of a real conditional cycle, not a disguised fixed chain:
+    two full critique/revise rounds happen before NO_CHANGES_NEEDED --
+    only possible if add_conditional_edges genuinely re-evaluates the
+    routing function each time control returns to __critique__."""
+    pytest.importorskip("langgraph")
+
+    provider = ScriptedReflectionProvider(
+        responses=["draft v1", "needs work", "draft v2", "NO_CHANGES_NEEDED"]
+    )
+    worker = make_agent_with_provider("Writer", provider)
+
+    workflow = Workflow().reflection()
+    workflow.add(worker)
+    workflow.use_langgraph()
+    result = workflow.run("Write a tagline", max_rounds=5)
+
+    assert result.content == "draft v2"
+    assert result.orchestrator == "langgraph"
+    assert result.strategy == "reflection"
+    assert len(result.steps) == 4
+
+
+def test_workflow_use_langgraph_reflection_stops_early_on_no_changes_needed() -> None:
+    pytest.importorskip("langgraph")
+
+    provider = ScriptedReflectionProvider(responses=["draft v1", "NO_CHANGES_NEEDED"])
+    worker = make_agent_with_provider("Writer", provider)
+
+    workflow = Workflow().reflection()
+    workflow.add(worker)
+    workflow.use_langgraph()
+    result = workflow.run("Write a tagline", max_rounds=5)
+
+    assert result.content == "draft v1"
+    assert len(result.steps) == 2
+
+
+def test_workflow_use_langgraph_reflection_max_rounds_one_skips_critique() -> None:
+    pytest.importorskip("langgraph")
+
+    provider = ScriptedReflectionProvider(responses=["only draft"])
+    worker = make_agent_with_provider("Writer", provider)
+
+    workflow = Workflow().reflection()
+    workflow.add(worker)
+    workflow.use_langgraph()
+    result = workflow.run("Write a tagline", max_rounds=1)
+
+    assert result.content == "only draft"
+    assert len(result.steps) == 1
+
+
+def test_workflow_use_langgraph_reflection_requires_exactly_one_agent() -> None:
+    pytest.importorskip("langgraph")
+
+    workflow = Workflow().reflection()
+    workflow.add(make_agent("A", "a")).add(make_agent("B", "b"))
+    workflow.use_langgraph()
+    with pytest.raises(ConfigurationException, match="reflection"):
+        workflow.run("task")
+
+
+@pytest.mark.asyncio
+async def test_workflow_use_langgraph_arun_reflection() -> None:
+    pytest.importorskip("langgraph")
+
+    provider = ScriptedReflectionProvider(
+        responses=["draft v1", "needs work", "draft v2", "NO_CHANGES_NEEDED"]
+    )
+    worker = make_agent_with_provider("Writer", provider)
+
+    workflow = Workflow().reflection()
+    workflow.add(worker)
+    workflow.use_langgraph()
+    result = await workflow.arun("Write a tagline", max_rounds=5)
+
+    assert result.content == "draft v2"
+    assert result.orchestrator == "langgraph"
+    assert result.strategy == "reflection"
+    assert len(result.steps) == 4
+
+
 def test_workflow_use_crewai_runs_a_real_sequential_pipeline() -> None:
     pytest.importorskip("crewai")
 

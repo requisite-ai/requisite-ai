@@ -75,7 +75,7 @@ construction (each lives in its own module, imported lazily).
 | Native orchestrator: sequential strategy | ✅ |
 | Native orchestrator: parallel strategy | ✅ |
 | `langgraph` orchestrator backend (linear graph) | ✅ |
-| `langgraph` backend: branching / conditional graphs | ✅ — `supervisor` strategy only (real `add_conditional_edges` + a loop-back cycle, not a disguised loop); `reflection`/`hierarchical`/`graph` on langgraph remain 📋 — see [ADR-0016](docs/adr/0016-langgraph-branching.md) |
+| `langgraph` backend: branching / conditional graphs | ✅ — `supervisor` (real `add_conditional_edges` + a loop-back cycle, not a disguised loop) and `reflection` (a 3-node draft/critique/revise cycle) — see [ADR-0016](docs/adr/0016-langgraph-branching.md) and [ADR-0028](docs/adr/0028-langgraph-reflection-strategy.md); `hierarchical`/`graph` on langgraph remain 📋 |
 | Supervisor strategy (a coordinating agent delegates to others) | ✅ — `native` orchestrator only; see [ADR-0007](docs/adr/0007-multi-agent-orchestration-strategies.md) |
 | Planner strategy | ✅ — `native` orchestrator only; see [ADR-0007](docs/adr/0007-multi-agent-orchestration-strategies.md) |
 | Reflection strategy (agent critiques and revises its own output) | ✅ — `native` orchestrator only; see [ADR-0007](docs/adr/0007-multi-agent-orchestration-strategies.md) |
