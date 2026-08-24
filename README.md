@@ -802,13 +802,19 @@ tested against fully in-memory fake providers.
 Implemented: 8 providers (OpenAI, Anthropic, Gemini, Groq, Azure OpenAI,
 OpenRouter, Together AI, Ollama), structured outputs, tool calling,
 skills, capability resolution (`agent.requires(...)`), MCP client and
-server integration (stdio + Streamable HTTP, both directions), RAG (embeddings, in-memory /
-Pinecone / Weaviate vector stores, dense retrieval), memory + conversation policies
+server integration (stdio + Streamable HTTP, both directions, plus an
+opt-in persistent-session client mode), RAG (embeddings, in-memory /
+Pinecone / Weaviate vector stores, dense/BM25/hybrid retrieval,
+re-ranking, context compression), memory + conversation policies
 (`Agent(memory=..., conversation_policy=...)`), prompt templates,
-structured logging, agents + registry, multi-agent workflows (sequential,
-parallel, reflection, planner, supervisor, critic, consensus, debate,
-map-reduce, hierarchical, tree-of-thoughts on the native backend;
-sequential and supervisor on langgraph), entry-point plugin discovery.
+structured logging plus OpenTelemetry tracing/metrics, agents +
+registry, multi-agent workflows (sequential, parallel, reflection,
+planner, supervisor, critic, consensus, debate, map-reduce,
+hierarchical, tree-of-thoughts, and graph on the native backend;
+sequential, supervisor, hierarchical, reflection, graph, parallel,
+consensus, and map-reduce on langgraph; sequential on CrewAI and AutoGen,
+supervisor also on AutoGen), entry-point plugin discovery, an official
+plugin directory (`PLUGINS.md`).
 
 See [`ROADMAP.md`](ROADMAP.md) for the full, per-layer status table
 (providers, orchestration strategies, MCP, memory, RAG, ...) and what's

@@ -168,9 +168,10 @@ def _reject_reserved_node_names(
 class LangGraphOrchestrator(BaseOrchestrator):
     """Runs agents as a ``langgraph`` ``StateGraph`` -- linear for
     ``"sequential"``, real conditional graphs with loop-back cycles for
-    ``"supervisor"``/``"hierarchical"``/``"reflection"``, and an
-    arbitrary developer-declared graph for ``"graph"``. See module
-    docstring.
+    ``"supervisor"``/``"hierarchical"``/``"reflection"``, an arbitrary
+    developer-declared graph for ``"graph"``, and a fan-out/fan-in graph
+    (no loop-back cycle) for ``"parallel"``/``"consensus"``/
+    ``"map_reduce"``. See module docstring.
     """
 
     @property
