@@ -38,7 +38,7 @@ Status legend: ✅ Done · 🚧 Partial · 📋 Not started · N/A Deliberately 
 | Agent creation | ✅ | `Agent(...)` |
 | Agent execution | ✅ | `Agent.run` / `Agent.arun` (tool-calling loop) |
 | Agent registry | ✅ | `AgentRegistry` |
-| Multi-agent orchestration | 🚧 | `Workflow` ships sequential, parallel, reflection, planner, supervisor (ADR-0007), critic, consensus (ADR-0011), debate, map-reduce (ADR-0012), and hierarchical (ADR-0013) on the native orchestrator; sequential, supervisor, hierarchical, reflection, graph, parallel, consensus, and map-reduce also run on the langgraph backend (ADR-0016, ADR-0028, ADR-0029, ADR-0032) — see the Multi-Agent System table below for the rest |
+| Multi-agent orchestration | 🚧 | `Workflow` ships sequential, parallel, reflection, planner, supervisor (ADR-0007), critic, consensus (ADR-0011), debate, map-reduce (ADR-0012), hierarchical (ADR-0013), graph (ADR-0019), and tree-of-thoughts (ADR-0018) on the native orchestrator; all except planner and tree-of-thoughts also run on the langgraph backend (ADR-0016, ADR-0028, ADR-0029, ADR-0032, ADR-0033) — see the Multi-Agent System table below for the rest |
 | Agentic execution | 🚧 | `Agent`'s own tool-calling loop is agentic (model decides which tool); the supervisor/planner strategies add model-decided agent delegation (ADR-0007); full autonomous planning across agents/skills/MCP beyond that is 📋 — see Agentic Mode below |
 | MCP client integration | ✅ | `MCPClient` (stdio + Streamable HTTP) — ADR-0004 |
 | MCP server integration | ✅ | `MCPServer` (stdio + Streamable HTTP) — ADR-0015 |
@@ -134,8 +134,8 @@ Status legend: ✅ Done · 🚧 Partial · 📋 Not started · N/A Deliberately 
 | Supervisor | ✅ | `native` and `langgraph` orchestrators — coordinator (`steps[0]`) delegates to named workers (`steps[1:]`) via structured decisions, up to `max_rounds`; ADR-0007, ADR-0016 (langgraph: a real conditional graph, not a Python loop) |
 | Planner | ✅ | `native` orchestrator only — coordinator (`steps[0]`) decomposes the task into a plan executed by named workers (`steps[1:]`); ADR-0007 |
 | Reflection | ✅ | `native` and `langgraph` orchestrators — single agent critiques and revises its own output, up to `max_rounds`; ADR-0007, ADR-0028 (langgraph: a real 3-node conditional cycle) |
-| Debate | ✅ | `native` orchestrator only — moderator (`steps[0]`) judges debaters (`steps[1:]`) after `max_rounds` of each seeing the others' prior-round arguments; ADR-0012 |
-| Critic | ✅ | `native` orchestrator only — generator (`steps[0]`) and a separate critic (`steps[1]`) iterate on a draft, up to `max_rounds`; ADR-0011 |
+| Debate | ✅ | `native` and `langgraph` orchestrators — moderator (`steps[0]`) judges debaters (`steps[1:]`) after `max_rounds` of each seeing the others' prior-round arguments; ADR-0012, ADR-0033 (langgraph: `max_rounds` fan-out/join blocks unrolled in a row, not a true cycle) |
+| Critic | ✅ | `native` and `langgraph` orchestrators — generator (`steps[0]`) and a separate critic (`steps[1]`) iterate on a draft, up to `max_rounds`; ADR-0011, ADR-0033 (langgraph: shares its graph builder with Reflection) |
 | Consensus | ✅ | `native` and `langgraph` orchestrators — synthesizer (`steps[0]`) combines the independent, concurrently-run answers of `steps[1:]`; ADR-0011, ADR-0032 |
 | Hierarchical | ✅ | `native` and `langgraph` orchestrators — same shape as Supervisor, except a delegate may be an `Agent` or a named `Workflow` (nested "team"); ADR-0013, ADR-0029 (langgraph: shares its graph builder with Supervisor) |
 | Map-reduce | ✅ | `native` and `langgraph` orchestrators — reducer (`steps[0]`) combines mapper (`steps[1:]`) results for `map_items=`, assigned round-robin; ADR-0012, ADR-0032 |

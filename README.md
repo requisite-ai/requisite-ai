@@ -812,9 +812,9 @@ registry, multi-agent workflows (sequential, parallel, reflection,
 planner, supervisor, critic, consensus, debate, map-reduce,
 hierarchical, tree-of-thoughts, and graph on the native backend;
 sequential, supervisor, hierarchical, reflection, graph, parallel,
-consensus, and map-reduce on langgraph; sequential on CrewAI and AutoGen,
-supervisor also on AutoGen), entry-point plugin discovery, an official
-plugin directory (`PLUGINS.md`).
+consensus, map-reduce, critic, and debate on langgraph; sequential on
+CrewAI and AutoGen, supervisor also on AutoGen), entry-point plugin
+discovery, an official plugin directory (`PLUGINS.md`).
 
 See [`ROADMAP.md`](ROADMAP.md) for the full, per-layer status table
 (providers, orchestration strategies, MCP, memory, RAG, ...) and what's

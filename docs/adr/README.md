@@ -71,3 +71,4 @@ need one — `CONTRIBUTING.md` already covers those.
 | [0030](0030-mcp-persistent-session-mode.md) | MCP persistent session mode | Accepted |
 | [0031](0031-code-review-fixes.md) | Code review, adversarial testing, and fixes across the whole codebase | Accepted |
 | [0032](0032-langgraph-parallel-consensus-map-reduce-strategies.md) | LangGraph backend: parallel, consensus, and map-reduce strategies | Accepted |
+| [0033](0033-langgraph-critic-debate-strategies.md) | LangGraph backend: critic and debate strategies | Accepted |

@@ -7,6 +7,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.32.0] - 2026-08-25
+
+### Added
+
+- `critic` and `debate` multi-agent strategies now run on the
+  `langgraph` orchestrator backend, not just `native`. `critic` is a
+  near-direct generalization of `reflection` (already on this backend),
+  reusing the same graph builder with two agents instead of one and no
+  new state shape. `debate` unrolls its `max_rounds` into a static
+  sequence of fan-out/join blocks (round-by-round, each debater a
+  concurrent node, joined before the next round starts) rather than a
+  true cycle, since `max_rounds` is known at graph-build time -- the
+  same reasoning ADR-0032 used for `map_reduce`. Only `tree_of_thoughts`
+  and `planner` remain native-only now. See
+  [ADR-0033](docs/adr/0033-langgraph-critic-debate-strategies.md).
+
 ## [0.31.0] - 2026-08-24
 
 ### Added

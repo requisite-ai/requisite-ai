@@ -12,7 +12,7 @@ Install with: ``pip install langgraph``
 
 Notes
 -----
-Eight strategies are supported: ``"sequential"`` (a linear chain -- each
+Ten strategies are supported: ``"sequential"`` (a linear chain -- each
 agent is a node, wired node-to-node in the order added); ``"supervisor"``
 and ``"hierarchical"`` (both a real conditional graph built by the same
 :meth:`LangGraphOrchestrator._build_delegation_graph` -- one coordinator
@@ -23,23 +23,32 @@ the two strategies is which split-helper validates ``steps`` --
 Agent-only for ``supervisor``, Agent-or-named-``Workflow`` for
 ``hierarchical`` -- mirroring how
 :class:`~requisite.orchestrators.native.NativeOrchestrator` itself
-shares one ``_run_delegation_loop`` between both); ``"reflection"`` (a
-3-node cycle -- draft, critique, revise -- with a conditional exit on
-the ``NO_CHANGES_NEEDED`` sentinel); ``"graph"`` (an arbitrary,
+shares one ``_run_delegation_loop`` between both); ``"reflection"`` and
+``"critic"`` (both a 3-node cycle -- draft, critique, revise -- with a
+conditional exit on the ``NO_CHANGES_NEEDED`` sentinel, built by the
+same :meth:`LangGraphOrchestrator._build_reflection_graph`; the only
+difference is whether one agent plays both the drafting and critiquing
+role, or two separate agents do); ``"graph"`` (an arbitrary,
 developer-declared graph -- one node per step, routed by
 ``Workflow.add_edge(...)``'s own conditions, reusing
 :class:`NativeOrchestrator`'s validation/routing helpers directly rather
-than reimplementing them); and ``"parallel"``, ``"consensus"``, and
+than reimplementing them); ``"parallel"``, ``"consensus"``, and
 ``"map_reduce"`` (all three share one fan-out/fan-in shape -- N agents
 run concurrently as separate nodes in the same superstep, writing
 ``(index, result)`` tuples into a reducer channel, then one aggregator
-node sorts by index and combines -- no loop-back cycle needed, unlike
-every strategy above). See ``docs/adr/0016-langgraph-branching.md``
+node sorts by index and combines -- no loop-back cycle needed); and
+``"debate"`` (``max_rounds`` fan-out/join blocks in a row -- one per
+round, each round's debaters seeing the transcript as of the previous
+round's join node -- then one verdict node; a static unroll of the
+round loop rather than a true cycle, since ``max_rounds`` is known at
+graph-build time). See ``docs/adr/0016-langgraph-branching.md``
 (``supervisor``), ``docs/adr/0028-langgraph-reflection-strategy.md``
 (``reflection``), ``docs/adr/0029-langgraph-hierarchical-graph-strategies.md``
-(``hierarchical``, ``graph``), and
+(``hierarchical``, ``graph``),
 ``docs/adr/0032-langgraph-parallel-consensus-map-reduce-strategies.md``
-(``parallel``, ``consensus``, ``map_reduce``) for the full design of each.
+(``parallel``, ``consensus``, ``map_reduce``), and
+``docs/adr/0033-langgraph-critic-debate-strategies.md``
+(``critic``, ``debate``) for the full design of each.
 """
 
 from __future__ import annotations
@@ -55,6 +64,9 @@ from requisite.orchestrators.native import (
     NativeOrchestrator,
     _SupervisorDecision,
     _consensus_prompt,
+    _critic_prompt,
+    _debate_prompt,
+    _debate_verdict_prompt,
     _map_prompt,
     _reduce_prompt,
     _reflection_critique_prompt,
@@ -81,6 +93,8 @@ _NO_CHANGES_NEEDED = "NO_CHANGES_NEEDED"
 # _FanOutGraphState / _build_parallel_graph / _build_consensus_graph /
 # _build_map_reduce_graph.
 _AGGREGATOR_NODE = "__aggregator__"
+# "debate" only -- see _DebateGraphState / _build_debate_graph.
+_VERDICT_NODE = "__verdict__"
 
 
 class _GraphState(TypedDict):
@@ -140,6 +154,26 @@ class _FanOutGraphState(TypedDict):
     output: str
 
 
+class _DebateGraphState(TypedDict):
+    """ "debate" only -- see _build_debate_graph.
+
+    Unlike _FanOutGraphState, this strategy has multiple rounds, each
+    its own fan-out/join block (see _build_debate_graph's module
+    docstring reference, docs/adr/0033). ``results`` is still one
+    shared reducer channel for the *whole* debate, not one per round --
+    TypedDict schemas are static, so per-round-named keys aren't an
+    option -- each round's join node writes a globally-unique index
+    range (round_num * len(debaters) + i) and reads back only its own
+    slice.
+    """
+
+    task: str
+    results: Annotated[list[tuple[int, Any]], operator.add]
+    transcript: dict[str, list[str]]  # plain field -- exactly one join node writes it per superstep
+    steps: list[Any]
+    output: str
+
+
 def _reject_reserved_node_names(
     named: dict[str, Any], *, role: str, reserved: Sequence[str]
 ) -> None:
@@ -168,10 +202,11 @@ def _reject_reserved_node_names(
 class LangGraphOrchestrator(BaseOrchestrator):
     """Runs agents as a ``langgraph`` ``StateGraph`` -- linear for
     ``"sequential"``, real conditional graphs with loop-back cycles for
-    ``"supervisor"``/``"hierarchical"``/``"reflection"``, an arbitrary
-    developer-declared graph for ``"graph"``, and a fan-out/fan-in graph
-    (no loop-back cycle) for ``"parallel"``/``"consensus"``/
-    ``"map_reduce"``. See module docstring.
+    ``"supervisor"``/``"hierarchical"``/``"reflection"``/``"critic"``,
+    an arbitrary developer-declared graph for ``"graph"``, a
+    fan-out/fan-in graph (no loop-back cycle) for ``"parallel"``/
+    ``"consensus"``/``"map_reduce"``, and a static per-round unroll of
+    fan-out/join blocks for ``"debate"``. See module docstring.
     """
 
     @property
@@ -376,36 +411,57 @@ class LangGraphOrchestrator(BaseOrchestrator):
         return graph.compile()
 
     def _build_reflection_graph(
-        self, steps: Sequence["Agent"], *, max_rounds: int, **kwargs: Any
+        self, steps: Sequence["Agent"], *, role: str, max_rounds: int, **kwargs: Any
     ) -> Any:
-        """Build a real conditional graph for the ``reflection`` strategy.
+        """Build a real conditional graph shared by ``reflection`` and ``critic``.
 
-        Mirrors :meth:`~requisite.orchestrators.native.NativeOrchestrator._run_reflection`
+        Mirrors :meth:`~requisite.orchestrators.native.NativeOrchestrator._run_reflection`/
+        :meth:`~requisite.orchestrators.native.NativeOrchestrator._run_critic`
         exactly: draft, then up to ``max_rounds - 1`` rounds of
         critique-then-maybe-revise. Revise always follows a non-sentinel
         critique regardless of remaining budget -- only whether the loop
         goes around *again* (another critique) is budget-gated -- so
         ``rounds`` (critique count) is checked after revise, not before
         it. ``max_rounds`` is a closure variable baked in at graph-build
-        time, the same way :meth:`_build_supervisor_graph` closes over it
+        time, the same way :meth:`_build_delegation_graph` closes over it
         rather than storing it in graph state.
+
+        ``role`` is the only thing that differs between the two
+        strategies, mirroring how :meth:`_build_delegation_graph` is
+        shared by ``supervisor``/``hierarchical`` via a ``split_fn``
+        parameter: for ``"reflection"``, one agent (``steps[0]``) plays
+        both roles -- it drafts, critiques its own draft, and revises.
+        For ``"critic"``, ``steps[0]`` only ever drafts/revises and
+        ``steps[1]`` only ever critiques -- and critiques via
+        ``_critic_prompt`` instead of ``_reflection_critique_prompt``.
+        ``_reflection_revise_prompt`` is shared by both in
+        ``native.py`` itself, so the revise step needs no per-role
+        branching at all.
         """
         StateGraph, START, END = self._require_langgraph()  # noqa: N806
-        if len(steps) != 1:
-            raise ConfigurationException(
-                f"The 'reflection' strategy requires exactly one agent (it critiques "
-                f"and revises its own output). Got {len(steps)}.",
-            )
-        worker = steps[0]
+        if role == "reflection":
+            if len(steps) != 1:
+                raise ConfigurationException(
+                    f"The 'reflection' strategy requires exactly one agent (it critiques "
+                    f"and revises its own output). Got {len(steps)}.",
+                )
+            generator = critic_agent = steps[0]
+            critique_prompt_fn = _reflection_critique_prompt
+        else:
+            if len(steps) != 2:
+                raise ConfigurationException(
+                    f"The 'critic' strategy requires exactly two agents: a generator "
+                    f"(steps[0]) and a critic (steps[1]). Got {len(steps)}.",
+                )
+            generator, critic_agent = steps[0], steps[1]
+            critique_prompt_fn = _critic_prompt
 
         def _draft_node(state: _ReflectionGraphState) -> dict[str, Any]:
-            result = worker.run(state["input"], **kwargs)
+            result = generator.run(state["input"], **kwargs)
             return {"draft": result.content, "steps": [*state["steps"], result], "rounds": 0}
 
         def _critique_node(state: _ReflectionGraphState) -> dict[str, Any]:
-            result = worker.run(
-                _reflection_critique_prompt(state["input"], state["draft"]), **kwargs
-            )
+            result = critic_agent.run(critique_prompt_fn(state["input"], state["draft"]), **kwargs)
             return {
                 "critique": result.content,
                 "steps": [*state["steps"], result],
@@ -413,7 +469,7 @@ class LangGraphOrchestrator(BaseOrchestrator):
             }
 
         def _revise_node(state: _ReflectionGraphState) -> dict[str, Any]:
-            result = worker.run(
+            result = generator.run(
                 _reflection_revise_prompt(state["input"], state["draft"], state["critique"]),
                 **kwargs,
             )
@@ -583,6 +639,97 @@ class LangGraphOrchestrator(BaseOrchestrator):
 
         return graph.compile()
 
+    def _build_debate_graph(
+        self, steps: Sequence["Agent"], *, max_rounds: int, **kwargs: Any
+    ) -> tuple[Any, list[str]]:
+        """Build a graph for the ``debate`` strategy: ``max_rounds``
+        fan-out/join blocks in a row (one per round), then one verdict
+        node -- not a true cycle. ``max_rounds`` is build-time-known
+        (same as every other strategy in this module), so the round
+        loop is unrolled into a longer static graph instead of a
+        dynamic/cyclic one. Each round's debater nodes read the
+        transcript as of the end of the *previous* round's join node
+        (guaranteed by the edge between them); each round's join node
+        writes a fresh ``transcript`` dict, read by the next round.
+        Mirrors :meth:`~requisite.orchestrators.native.NativeOrchestrator._run_debate`
+        exactly, including the degenerate ``max_rounds=0`` case (zero
+        debater calls, the moderator still runs once against an empty
+        transcript). See docs/adr/0033.
+
+        Returns ``(compiled_graph, debater_names)`` -- the caller needs
+        ``debater_names`` to build the initial ``transcript`` dict
+        before invoking, and computing the split twice (once here, once
+        in ``run``/``arun``) would risk the two falling out of sync.
+        """
+        StateGraph, START, END = self._require_langgraph()  # noqa: N806
+        moderator, debaters = NativeOrchestrator._split_coordinator_and_workers(
+            steps, role="debate moderator"
+        )
+        debater_names = list(debaters)
+        n = len(debater_names)
+
+        graph = StateGraph(_DebateGraphState)
+
+        def _make_debater_node(name: str, debater: "Agent", round_num: int, index: int) -> Any:
+            def _node(state: _DebateGraphState) -> dict[str, Any]:
+                prompt = _debate_prompt(
+                    state["task"],
+                    debater_names,
+                    state["transcript"],
+                    agent_name=name,
+                    round_num=round_num,
+                )
+                result = debater.run(prompt, **kwargs)
+                return {"results": [(index, result)]}
+
+            return _node
+
+        def _make_join_node(round_num: int) -> Any:
+            start_index = round_num * n
+
+            def _node(state: _DebateGraphState) -> dict[str, Any]:
+                round_entries = sorted(
+                    (idx, r) for idx, r in state["results"] if start_index <= idx < start_index + n
+                )
+                round_results = [r for _, r in round_entries]
+                new_transcript = {name: list(state["transcript"][name]) for name in debater_names}
+                for name, result in zip(debater_names, round_results, strict=True):
+                    new_transcript[name].append(result.content)
+                return {"transcript": new_transcript, "steps": [*state["steps"], *round_results]}
+
+            return _node
+
+        previous_join_name: Optional[str] = None
+        for round_num in range(max_rounds):
+            round_node_names = []
+            for i, (name, debater) in enumerate(debaters.items()):
+                index = round_num * n + i
+                node_name = f"{name}_r{round_num}"
+                graph.add_node(node_name, _make_debater_node(name, debater, round_num, index))
+                if previous_join_name is None:
+                    graph.add_edge(START, node_name)
+                else:
+                    graph.add_edge(previous_join_name, node_name)
+                round_node_names.append(node_name)
+
+            join_name = f"__debate_join_r{round_num}__"
+            graph.add_node(join_name, _make_join_node(round_num))
+            graph.add_edge(round_node_names, join_name)
+            previous_join_name = join_name
+
+        def _verdict_node(state: _DebateGraphState) -> dict[str, Any]:
+            verdict = moderator.run(
+                _debate_verdict_prompt(state["task"], debater_names, state["transcript"]),
+                **kwargs,
+            )
+            return {"output": verdict.content, "steps": [*state["steps"], verdict]}
+
+        graph.add_node(_VERDICT_NODE, _verdict_node)
+        graph.add_edge(START if previous_join_name is None else previous_join_name, _VERDICT_NODE)
+        graph.add_edge(_VERDICT_NODE, END)
+
+        return graph.compile(), debater_names
+
     def run(
         self,
         steps: Sequence[Any],
@@ -632,14 +779,36 @@ class LangGraphOrchestrator(BaseOrchestrator):
                 orchestrator=self.name,
                 strategy=strategy,
             )
-        if strategy == "reflection":
+        if strategy in ("reflection", "critic"):
             max_rounds = kwargs.pop("max_rounds", 3)
-            compiled_graph = self._build_reflection_graph(steps, max_rounds=max_rounds, **kwargs)
+            compiled_graph = self._build_reflection_graph(
+                steps, role=strategy, max_rounds=max_rounds, **kwargs
+            )
             final_state = compiled_graph.invoke(
                 {"input": input, "draft": "", "critique": "", "steps": [], "rounds": 0},
             )
             return WorkflowResult(
                 content=final_state["draft"],
+                steps=final_state["steps"],
+                orchestrator=self.name,
+                strategy=strategy,
+            )
+        if strategy == "debate":
+            max_rounds = kwargs.pop("max_rounds", 3)
+            compiled_graph, debater_names = self._build_debate_graph(
+                steps, max_rounds=max_rounds, **kwargs
+            )
+            final_state = compiled_graph.invoke(
+                {
+                    "task": input,
+                    "results": [],
+                    "transcript": {name: [] for name in debater_names},
+                    "steps": [],
+                    "output": "",
+                },
+            )
+            return WorkflowResult(
+                content=final_state["output"],
                 steps=final_state["steps"],
                 orchestrator=self.name,
                 strategy=strategy,
@@ -678,8 +847,8 @@ class LangGraphOrchestrator(BaseOrchestrator):
             )
         raise ConfigurationException(
             f"The langgraph orchestrator supports the 'sequential', 'supervisor', "
-            f"'hierarchical', 'reflection', 'graph', 'parallel', 'consensus', and "
-            f"'map_reduce' strategies (got '{strategy}').",
+            f"'hierarchical', 'reflection', 'graph', 'parallel', 'consensus', "
+            f"'map_reduce', 'critic', and 'debate' strategies (got '{strategy}').",
         )
 
     async def arun(
@@ -731,14 +900,36 @@ class LangGraphOrchestrator(BaseOrchestrator):
                 orchestrator=self.name,
                 strategy=strategy,
             )
-        if strategy == "reflection":
+        if strategy in ("reflection", "critic"):
             max_rounds = kwargs.pop("max_rounds", 3)
-            compiled_graph = self._build_reflection_graph(steps, max_rounds=max_rounds, **kwargs)
+            compiled_graph = self._build_reflection_graph(
+                steps, role=strategy, max_rounds=max_rounds, **kwargs
+            )
             final_state = await compiled_graph.ainvoke(
                 {"input": input, "draft": "", "critique": "", "steps": [], "rounds": 0},
             )
             return WorkflowResult(
                 content=final_state["draft"],
+                steps=final_state["steps"],
+                orchestrator=self.name,
+                strategy=strategy,
+            )
+        if strategy == "debate":
+            max_rounds = kwargs.pop("max_rounds", 3)
+            compiled_graph, debater_names = self._build_debate_graph(
+                steps, max_rounds=max_rounds, **kwargs
+            )
+            final_state = await compiled_graph.ainvoke(
+                {
+                    "task": input,
+                    "results": [],
+                    "transcript": {name: [] for name in debater_names},
+                    "steps": [],
+                    "output": "",
+                },
+            )
+            return WorkflowResult(
+                content=final_state["output"],
                 steps=final_state["steps"],
                 orchestrator=self.name,
                 strategy=strategy,
@@ -777,6 +968,6 @@ class LangGraphOrchestrator(BaseOrchestrator):
             )
         raise ConfigurationException(
             f"The langgraph orchestrator supports the 'sequential', 'supervisor', "
-            f"'hierarchical', 'reflection', 'graph', 'parallel', 'consensus', and "
-            f"'map_reduce' strategies (got '{strategy}').",
+            f"'hierarchical', 'reflection', 'graph', 'parallel', 'consensus', "
+            f"'map_reduce', 'critic', and 'debate' strategies (got '{strategy}').",
         )

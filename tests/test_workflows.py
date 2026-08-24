@@ -436,10 +436,10 @@ async def test_workflow_use_langgraph_arun_real_sequential_pipeline() -> None:
     assert result.content == "write:research:AI trends"
 
 
-def test_workflow_use_langgraph_rejects_debate_strategy() -> None:
+def test_workflow_use_langgraph_rejects_tree_of_thoughts_strategy() -> None:
     pytest.importorskip("langgraph")
 
-    workflow = Workflow().debate()
+    workflow = Workflow().tree_of_thoughts()
     workflow.add(make_agent("A", "a"))
     workflow.add(make_agent("B", "b"))
     workflow.use_langgraph()
@@ -1111,6 +1111,108 @@ async def test_workflow_arun_critic() -> None:
     assert result.content == "draft"
 
 
+def test_workflow_use_langgraph_critic_revises_output() -> None:
+    pytest.importorskip("langgraph")
+
+    generator = make_agent_with_provider(
+        "Generator", ScriptedReflectionProvider(responses=["draft v1", "draft v2, better tone"])
+    )
+    critic = make_agent_with_provider(
+        "Critic", ScriptedReflectionProvider(responses=["fix the tone"])
+    )
+    workflow = Workflow().critic()
+    workflow.add(generator).add(critic)
+    workflow.use_langgraph()
+
+    result = workflow.run("Write a haiku", max_rounds=2)
+
+    assert result.content == "draft v2, better tone"
+    assert result.strategy == "critic"
+    assert result.orchestrator == "langgraph"
+    assert [s.agent_name for s in result.steps] == ["Generator", "Critic", "Generator"]
+
+
+def test_workflow_use_langgraph_critic_stops_early_on_no_changes_needed() -> None:
+    pytest.importorskip("langgraph")
+
+    generator = make_agent_with_provider(
+        "Generator", ScriptedReflectionProvider(responses=["draft v1"])
+    )
+    critic = make_agent_with_provider(
+        "Critic", ScriptedReflectionProvider(responses=["NO_CHANGES_NEEDED"])
+    )
+    workflow = Workflow().critic()
+    workflow.add(generator).add(critic)
+    workflow.use_langgraph()
+
+    result = workflow.run("Write a haiku", max_rounds=5)
+
+    assert result.content == "draft v1"
+    assert len(result.steps) == 2
+
+
+def test_workflow_use_langgraph_critic_requires_exactly_two_agents() -> None:
+    pytest.importorskip("langgraph")
+
+    workflow = Workflow().critic()
+    workflow.add(make_agent("A", "a"))
+    workflow.use_langgraph()
+    with pytest.raises(ConfigurationException, match="critic"):
+        workflow.run("task")
+
+    workflow2 = Workflow().critic()
+    workflow2.add(make_agent("A", "a")).add(make_agent("B", "b")).add(make_agent("C", "c"))
+    workflow2.use_langgraph()
+    with pytest.raises(ConfigurationException, match="critic"):
+        workflow2.run("task")
+
+
+@pytest.mark.asyncio
+async def test_workflow_use_langgraph_arun_critic() -> None:
+    pytest.importorskip("langgraph")
+
+    generator = make_agent_with_provider(
+        "Generator", ScriptedReflectionProvider(responses=["draft"])
+    )
+    critic = make_agent_with_provider(
+        "Critic", ScriptedReflectionProvider(responses=["NO_CHANGES_NEEDED"])
+    )
+    workflow = Workflow().critic()
+    workflow.add(generator).add(critic)
+    workflow.use_langgraph()
+
+    result = await workflow.arun("task", max_rounds=5)
+
+    assert result.content == "draft"
+    assert result.orchestrator == "langgraph"
+
+
+def test_workflow_critic_native_and_langgraph_parity() -> None:
+    pytest.importorskip("langgraph")
+
+    def build() -> Workflow:
+        generator = make_agent_with_provider(
+            "Generator", ScriptedReflectionProvider(responses=["draft v1", "draft v2"])
+        )
+        critic = make_agent_with_provider(
+            "Critic", ScriptedReflectionProvider(responses=["fix it"])
+        )
+        workflow = Workflow().critic()
+        workflow.add(generator).add(critic)
+        return workflow
+
+    native_result = build().run("Write a haiku", max_rounds=2)
+
+    langgraph_workflow = build()
+    langgraph_workflow.use_langgraph()
+    langgraph_result = langgraph_workflow.run("Write a haiku", max_rounds=2)
+
+    assert native_result.content == langgraph_result.content
+    assert [s.agent_name for s in native_result.steps] == [
+        s.agent_name for s in langgraph_result.steps
+    ]
+
+
 # ---------------------------------------------------------------------------
 # Consensus strategy
 # ---------------------------------------------------------------------------
@@ -1425,6 +1527,135 @@ async def test_workflow_arun_debate() -> None:
 
     assert result.content == "verdict"
     assert len(result.steps) == 2
+
+
+def test_workflow_use_langgraph_debate_runs_rounds_and_delivers_verdict() -> None:
+    pytest.importorskip("langgraph")
+
+    moderator_provider = ScriptedReflectionProvider(responses=["final verdict"])
+    moderator = make_agent_with_provider("Moderator", moderator_provider)
+    debater_a = make_agent_with_provider(
+        "A", ScriptedReflectionProvider(responses=["A round 1", "A round 2"])
+    )
+    debater_b = make_agent_with_provider(
+        "B", ScriptedReflectionProvider(responses=["B round 1", "B round 2"])
+    )
+    workflow = Workflow().debate()
+    workflow.add(moderator).add(debater_a).add(debater_b)
+    workflow.use_langgraph()
+
+    result = workflow.run("Is X better than Y?", max_rounds=2)
+
+    assert result.content == "final verdict"
+    assert result.strategy == "debate"
+    assert result.orchestrator == "langgraph"
+    assert len(result.steps) == 5
+    assert result.steps[-1].agent_name == "Moderator"
+    assert [s.agent_name for s in result.steps[:-1]] == ["A", "B", "A", "B"]
+
+    verdict_prompt = moderator_provider.last_messages[-1].content
+    assert "A round 1" in verdict_prompt
+    assert "A round 2" in verdict_prompt
+    assert "B round 1" in verdict_prompt
+    assert "B round 2" in verdict_prompt
+
+
+def test_workflow_use_langgraph_debate_requires_at_least_two_agents() -> None:
+    pytest.importorskip("langgraph")
+
+    workflow = Workflow().debate()
+    workflow.add(make_agent("Solo", "solo"))
+    workflow.use_langgraph()
+    with pytest.raises(ConfigurationException, match="debate"):
+        workflow.run("task")
+
+
+def test_workflow_use_langgraph_debate_zero_rounds_only_runs_moderator() -> None:
+    """Degenerate case, matching native exactly: with max_rounds=0, no
+    debater ever runs, but the moderator still delivers a verdict
+    against an empty transcript. Confirms the graph's fallback edge
+    (START straight to the verdict node when no round blocks exist)
+    matches native's `for round_num in range(0): ...` no-op loop."""
+    pytest.importorskip("langgraph")
+
+    moderator = make_agent_with_provider("Moderator", ScriptedReflectionProvider(responses=["v"]))
+    a = make_agent("A", "a")
+    b = make_agent("B", "b")
+    workflow = Workflow().debate()
+    workflow.add(moderator).add(a).add(b)
+    workflow.use_langgraph()
+
+    result = workflow.run("task", max_rounds=0)
+
+    assert len(result.steps) == 1
+    assert result.steps[0].agent_name == "Moderator"
+
+
+@pytest.mark.asyncio
+async def test_workflow_use_langgraph_arun_debate() -> None:
+    pytest.importorskip("langgraph")
+
+    moderator = make_agent_with_provider(
+        "Moderator", ScriptedReflectionProvider(responses=["verdict"])
+    )
+    debater = make_agent_with_provider("A", ScriptedReflectionProvider(responses=["round 1"]))
+    workflow = Workflow().debate()
+    workflow.add(moderator).add(debater)
+    workflow.use_langgraph()
+
+    result = await workflow.arun("task", max_rounds=1)
+
+    assert result.content == "verdict"
+    assert result.orchestrator == "langgraph"
+    assert len(result.steps) == 2
+
+
+def test_workflow_use_langgraph_debate_preserves_order_with_ten_plus_debaters() -> None:
+    """Same lexicographic-write-order risk as parallel/consensus/
+    map_reduce (see docs/adr/0032), now for debate's globally-indexed
+    results channel across rounds. See docs/adr/0033."""
+    pytest.importorskip("langgraph")
+
+    moderator = make_agent_with_provider("Moderator", ScriptedReflectionProvider(responses=["v"]))
+    debaters = [make_agent(f"D{i}", f"d{i}") for i in range(11)]
+    workflow = Workflow().debate()
+    workflow.add(moderator)
+    for debater in debaters:
+        workflow.add(debater)
+    workflow.use_langgraph()
+
+    result = workflow.run("task", max_rounds=1)
+
+    assert [s.agent_name for s in result.steps[:-1]] == [f"D{i}" for i in range(11)]
+
+
+def test_workflow_debate_native_and_langgraph_parity() -> None:
+    pytest.importorskip("langgraph")
+
+    def build() -> Workflow:
+        moderator = make_agent_with_provider(
+            "Moderator", ScriptedReflectionProvider(responses=["final verdict"])
+        )
+        debater_a = make_agent_with_provider(
+            "A", ScriptedReflectionProvider(responses=["A round 1", "A round 2"])
+        )
+        debater_b = make_agent_with_provider(
+            "B", ScriptedReflectionProvider(responses=["B round 1", "B round 2"])
+        )
+        workflow = Workflow().debate()
+        workflow.add(moderator).add(debater_a).add(debater_b)
+        return workflow
+
+    native_result = build().run("Is X better than Y?", max_rounds=2)
+
+    langgraph_workflow = build()
+    langgraph_workflow.use_langgraph()
+    langgraph_result = langgraph_workflow.run("Is X better than Y?", max_rounds=2)
+
+    assert native_result.content == langgraph_result.content
+    assert [s.agent_name for s in native_result.steps] == [
+        s.agent_name for s in langgraph_result.steps
+    ]
 
 
 # ---------------------------------------------------------------------------
