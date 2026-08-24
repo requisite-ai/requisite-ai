@@ -416,8 +416,9 @@ print(result.failed)   # {name: error} for any that didn't -- one broken
 Never automatic — nothing runs from a package you didn't ask to
 discover. Also available as `requisite plugins` on the CLI. See
 [`CONTRIBUTING.md`](CONTRIBUTING.md#writing-a-plugin) for how to write
-one, and [ADR-0017](docs/adr/0017-entry-point-plugin-discovery.md) for
-the design.
+one, [ADR-0017](docs/adr/0017-entry-point-plugin-discovery.md) for the
+design, and [`PLUGINS.md`](PLUGINS.md) for the directory of published
+third-party plugins.
 
 ### MCP integration
 

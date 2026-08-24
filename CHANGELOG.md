@@ -7,6 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.30.1] - 2026-08-24
+
+### Added
+
+- [`PLUGINS.md`](PLUGINS.md): an official plugin directory, with a
+  submission process for third-party packages that register via the
+  `"requisite.plugins"` entry-point mechanism (ADR-0017). Empty until a
+  real plugin is published, but closes the last open line in
+  `ROADMAP.md`'s Plugin architecture section. Linked from `README.md`'s
+  Plugins section and `CONTRIBUTING.md`'s "Writing a plugin" walkthrough.
+
 ## [0.30.0] - 2026-08-23
 
 ### Fixed

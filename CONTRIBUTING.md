@@ -176,6 +176,9 @@ Name your package `requisite-plugin-<something>` on PyPI so it's
 discoverable by search, in addition to (not instead of) the
 entry-point mechanism above.
 
+Once it's published, add it to [`PLUGINS.md`](PLUGINS.md) so people
+browsing the repo can find it without already knowing to search PyPI.
+
 ## Commit messages & PRs
 
 - Keep commits focused; prefer several small, reviewable commits over one

@@ -162,7 +162,7 @@ original interface design).
 |---|---|
 | Plugins register providers/tools/capabilities via the existing registries | ✅ — already possible today; no plugin-specific API needed since every registry is a plain, importable class |
 | A `requisite-plugin-*` naming/discovery convention (entry points) | ✅ — `requisite.plugins.discover()` (entry-point group `"requisite.plugins"`), `requisite plugins` on the CLI — see [ADR-0017](docs/adr/0017-entry-point-plugin-discovery.md) |
-| Official plugin listing / directory in the docs | 📋 |
+| Official plugin listing / directory in the docs | ✅ — [`PLUGINS.md`](PLUGINS.md); empty until a real third-party plugin is published, but the table/submission process is live. This is the last previously-open line in this file. |
 
 ## Telemetry
 
