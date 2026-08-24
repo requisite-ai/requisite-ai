@@ -7,7 +7,8 @@ is a discovery aid, not a gate: any package that registers with one of
 Requisite's registries (`ProviderRegistry`, `CapabilityRegistry`,
 `OrchestratorRegistry`, `ToolRegistry`, `MemoryRegistry`,
 `EmbeddingRegistry`, `VectorStoreRegistry`, `PromptTemplateRegistry`,
-`MCPClientRegistry`) works today whether or not it is listed here.
+`MCPClientRegistry`, `AgentRegistry`, `SkillRegistry`) works today
+whether or not it is listed here.
 
 ## Listed plugins
 

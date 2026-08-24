@@ -834,6 +834,8 @@ Contributions are welcome:
   philosophy, docstring format, logging/error-handling conventions,
   versioning policy.
 - [`ROADMAP.md`](ROADMAP.md) — what's shipped, planned, or out of scope.
+- [`PLUGINS.md`](PLUGINS.md) — the directory of published third-party
+  plugins, and how to get yours listed.
 
 Please also read the [Code of Conduct](CODE_OF_CONDUCT.md). Security
 issues should go through [`SECURITY.md`](SECURITY.md), not a public issue.
