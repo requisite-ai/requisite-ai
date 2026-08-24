@@ -7,6 +7,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.31.0] - 2026-08-24
+
+### Added
+
+- `parallel`, `consensus`, and `map_reduce` multi-agent strategies now
+  run on the `langgraph` orchestrator backend, not just `native`. All
+  three share one fan-out/fan-in graph shape (N agents run concurrently
+  in one superstep, then one aggregator/reducer node combines the
+  results) -- genuinely simpler than the loop-back-cycle strategies
+  already on this backend, and requires no dependency floor bump
+  (`langgraph>=1.0` already covers the installed `1.2.9`). `debate`,
+  `critic`, `tree_of_thoughts`, and `planner` remain native-only by
+  design. See [ADR-0032](docs/adr/0032-langgraph-parallel-consensus-map-reduce-strategies.md).
+
 ## [0.30.1] - 2026-08-24
 
 ### Added

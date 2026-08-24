@@ -294,6 +294,92 @@ def test_workflow_parallel_combines_all_outputs() -> None:
     assert len(result.steps) == 2
 
 
+def test_workflow_use_langgraph_parallel_combines_all_outputs() -> None:
+    pytest.importorskip("langgraph")
+
+    workflow = Workflow().parallel()
+    workflow.add(make_agent("Researcher", "research")).add(make_agent("Writer", "write"))
+    workflow.use_langgraph()
+
+    result = workflow.run("AI trends")
+
+    assert "[Researcher]" in result.content
+    assert "[Writer]" in result.content
+    assert result.orchestrator == "langgraph"
+    assert result.strategy == "parallel"
+    assert len(result.steps) == 2
+
+
+def test_workflow_use_langgraph_parallel_single_agent() -> None:
+    """Degenerate single-node fan-out/join: StateGraph.add_edge's
+    list-form (waiting-edge) join with exactly one start node."""
+    pytest.importorskip("langgraph")
+
+    workflow = Workflow().parallel()
+    workflow.add(make_agent("Solo", "solo"))
+    workflow.use_langgraph()
+
+    result = workflow.run("AI trends")
+
+    assert "[Solo]" in result.content
+    assert len(result.steps) == 1
+
+
+@pytest.mark.asyncio
+async def test_workflow_use_langgraph_arun_parallel() -> None:
+    pytest.importorskip("langgraph")
+
+    workflow = Workflow().parallel()
+    workflow.add(make_agent("Researcher", "research")).add(make_agent("Writer", "write"))
+    workflow.use_langgraph()
+
+    result = await workflow.arun("AI trends")
+
+    assert "[Researcher]" in result.content
+    assert "[Writer]" in result.content
+    assert result.orchestrator == "langgraph"
+    assert len(result.steps) == 2
+
+
+def test_workflow_use_langgraph_parallel_preserves_order_with_ten_plus_agents() -> None:
+    """See docs/adr/0032: langgraph applies a superstep's concurrent
+    writes in node-name lexicographic order, not declaration order --
+    with naive index-free node naming this would silently misorder past
+    10 agents. The (index, result) tuple + explicit sort in the
+    aggregator node must produce the correct order regardless."""
+    pytest.importorskip("langgraph")
+
+    agents = [make_agent(f"Agent{i}", f"a{i}") for i in range(11)]
+    workflow = Workflow().parallel()
+    for agent in agents:
+        workflow.add(agent)
+    workflow.use_langgraph()
+
+    result = workflow.run("task")
+
+    assert [s.agent_name for s in result.steps] == [f"Agent{i}" for i in range(11)]
+
+
+def test_workflow_parallel_native_and_langgraph_parity() -> None:
+    pytest.importorskip("langgraph")
+
+    def build() -> Workflow:
+        workflow = Workflow().parallel()
+        workflow.add(make_agent("Researcher", "research")).add(make_agent("Writer", "write"))
+        return workflow
+
+    native_result = build().run("AI trends")
+
+    langgraph_workflow = build()
+    langgraph_workflow.use_langgraph()
+    langgraph_result = langgraph_workflow.run("AI trends")
+
+    assert native_result.content == langgraph_result.content
+    assert [s.agent_name for s in native_result.steps] == [
+        s.agent_name for s in langgraph_result.steps
+    ]
+
+
 def test_workflow_run_without_input_raises() -> None:
     workflow = Workflow()
     workflow.add(make_agent("A", "a"))
@@ -350,11 +436,12 @@ async def test_workflow_use_langgraph_arun_real_sequential_pipeline() -> None:
     assert result.content == "write:research:AI trends"
 
 
-def test_workflow_use_langgraph_rejects_parallel_strategy() -> None:
+def test_workflow_use_langgraph_rejects_debate_strategy() -> None:
     pytest.importorskip("langgraph")
 
-    workflow = Workflow().parallel()
+    workflow = Workflow().debate()
     workflow.add(make_agent("A", "a"))
+    workflow.add(make_agent("B", "b"))
     workflow.use_langgraph()
     with pytest.raises(ConfigurationException, match="sequential"):
         workflow.run("hello")
@@ -1153,6 +1240,136 @@ async def test_workflow_arun_consensus() -> None:
     assert len(result.steps) == 3
 
 
+def test_workflow_use_langgraph_consensus_synthesizes_participant_answers() -> None:
+    synthesizer_provider = ScriptedReflectionProvider(responses=["synthesized answer"])
+    synthesizer = make_agent_with_provider("Synthesizer", synthesizer_provider)
+    a = make_agent("A", "alpha")
+    b = make_agent("B", "beta")
+
+    workflow = Workflow().consensus()
+    workflow.add(synthesizer).add(a).add(b)
+    workflow.use_langgraph()
+    result = workflow.run("What is RAG?")
+
+    assert result.strategy == "consensus"
+    assert result.orchestrator == "langgraph"
+    assert result.content == "synthesized answer"
+    assert len(result.steps) == 3
+    participant_names = {result.steps[0].agent_name, result.steps[1].agent_name}
+    assert participant_names == {"A", "B"}
+    assert result.steps[2].agent_name == "Synthesizer"
+
+    synthesis_prompt = synthesizer_provider.last_messages[-1].content
+    assert "alpha:What is RAG?" in synthesis_prompt
+    assert "beta:What is RAG?" in synthesis_prompt
+
+
+@pytest.mark.asyncio
+async def test_workflow_use_langgraph_arun_consensus() -> None:
+    synthesizer = make_agent_with_provider(
+        "Synthesizer", ScriptedReflectionProvider(responses=["final"])
+    )
+    a = make_agent("A", "alpha")
+    b = make_agent("B", "beta")
+    workflow = Workflow().consensus()
+    workflow.add(synthesizer).add(a).add(b)
+    workflow.use_langgraph()
+
+    result = await workflow.arun("What is RAG?")
+
+    assert result.content == "final"
+    assert result.orchestrator == "langgraph"
+    assert len(result.steps) == 3
+
+
+def test_workflow_use_langgraph_consensus_requires_at_least_two_agents() -> None:
+    workflow = Workflow().consensus()
+    workflow.add(make_agent("Solo", "solo"))
+    workflow.use_langgraph()
+    with pytest.raises(ConfigurationException, match="consensus"):
+        workflow.run("task")
+
+
+def test_workflow_use_langgraph_consensus_duplicate_participant_names_raises() -> None:
+    workflow = Workflow().consensus()
+    workflow.add(make_agent("Synth", "synth"))
+    workflow.add(make_agent("Dup", "a")).add(make_agent("Dup", "b"))
+    workflow.use_langgraph()
+    with pytest.raises(ConfigurationException, match="unique worker names"):
+        workflow.run("task")
+
+
+def test_workflow_use_langgraph_consensus_worker_named_like_reserved_node_raises_cleanly() -> None:
+    """A participant literally named '__aggregator__' collides with
+    langgraph's own internal aggregator node -- must raise a clean
+    ConfigurationException, not a raw library ValueError, and the
+    identical Workflow must still succeed on native (parity)."""
+    pytest.importorskip("langgraph")
+
+    synthesizer = make_agent_with_provider(
+        "Synthesizer", ScriptedReflectionProvider(responses=["final"])
+    )
+    reserved_named_participant = make_agent("__aggregator__", "x")
+
+    workflow = Workflow().consensus()
+    workflow.add(synthesizer).add(reserved_named_participant)
+    workflow.use_langgraph()
+    with pytest.raises(ConfigurationException, match="reserves"):
+        workflow.run("task")
+
+    workflow.use_native()
+    result = workflow.run("task")
+    assert result.content == "final"
+
+
+def test_workflow_use_langgraph_consensus_preserves_order_with_ten_plus_participants() -> None:
+    """langgraph applies a superstep's concurrent writes in node-name
+    lexicographic order, not declaration order -- with naive index-free
+    node naming this would silently misorder past 10 participants
+    (participant_0, participant_1, participant_10, participant_2, ...).
+    The (index, result) tuple + explicit sort in the aggregator node
+    must produce the correct order regardless. See docs/adr/0032."""
+    pytest.importorskip("langgraph")
+
+    synthesizer = make_agent_with_provider(
+        "Synthesizer", ScriptedReflectionProvider(responses=["final"])
+    )
+    participants = [make_agent(f"P{i}", f"p{i}") for i in range(11)]
+
+    workflow = Workflow().consensus()
+    workflow.add(synthesizer)
+    for participant in participants:
+        workflow.add(participant)
+    workflow.use_langgraph()
+
+    result = workflow.run("task")
+
+    assert [s.agent_name for s in result.steps[:-1]] == [f"P{i}" for i in range(11)]
+
+
+def test_workflow_consensus_native_and_langgraph_parity() -> None:
+    def build() -> Workflow:
+        synthesizer = make_agent_with_provider(
+            "Synthesizer", ScriptedReflectionProvider(responses=["final"])
+        )
+        a = make_agent("A", "alpha")
+        b = make_agent("B", "beta")
+        workflow = Workflow().consensus()
+        workflow.add(synthesizer).add(a).add(b)
+        return workflow
+
+    native_result = build().run("What is RAG?")
+
+    langgraph_workflow = build()
+    langgraph_workflow.use_langgraph()
+    langgraph_result = langgraph_workflow.run("What is RAG?")
+
+    assert native_result.content == langgraph_result.content
+    assert [s.agent_name for s in native_result.steps] == [
+        s.agent_name for s in langgraph_result.steps
+    ]
+
+
 # ---------------------------------------------------------------------------
 # Debate strategy
 # ---------------------------------------------------------------------------
@@ -1267,6 +1484,125 @@ async def test_workflow_arun_map_reduce() -> None:
 
     assert result.content == "final"
     assert len(result.steps) == 3
+
+
+def test_workflow_use_langgraph_map_reduce_distributes_items_round_robin() -> None:
+    pytest.importorskip("langgraph")
+
+    reducer = make_agent_with_provider(
+        "Reducer", ScriptedReflectionProvider(responses=["combined result"])
+    )
+    mapper_a = make_agent("MapperA", "a")
+    mapper_b = make_agent("MapperB", "b")
+    workflow = Workflow().map_reduce()
+    workflow.add(reducer).add(mapper_a).add(mapper_b)
+    workflow.use_langgraph()
+
+    result = workflow.run("Summarize these items", map_items=["item1", "item2", "item3"])
+
+    assert result.content == "combined result"
+    assert result.strategy == "map_reduce"
+    assert result.orchestrator == "langgraph"
+    assert len(result.steps) == 4
+    assert result.steps[-1].agent_name == "Reducer"
+    assert [s.agent_name for s in result.steps[:-1]] == ["MapperA", "MapperB", "MapperA"]
+
+
+@pytest.mark.asyncio
+async def test_workflow_use_langgraph_arun_map_reduce() -> None:
+    pytest.importorskip("langgraph")
+
+    reducer = make_agent_with_provider("Reducer", ScriptedReflectionProvider(responses=["final"]))
+    mapper = make_agent("Mapper", "m")
+    workflow = Workflow().map_reduce()
+    workflow.add(reducer).add(mapper)
+    workflow.use_langgraph()
+
+    result = await workflow.arun("task", map_items=["x", "y"])
+
+    assert result.content == "final"
+    assert result.orchestrator == "langgraph"
+    assert len(result.steps) == 3
+
+
+def test_workflow_use_langgraph_map_reduce_missing_map_items_raises() -> None:
+    pytest.importorskip("langgraph")
+
+    workflow = Workflow().map_reduce()
+    workflow.add(make_agent("Reducer", "r")).add(make_agent("Mapper", "m"))
+    workflow.use_langgraph()
+    with pytest.raises(ConfigurationException, match="map_items"):
+        workflow.run("task")
+
+
+def test_workflow_use_langgraph_map_reduce_empty_map_items_raises() -> None:
+    pytest.importorskip("langgraph")
+
+    workflow = Workflow().map_reduce()
+    workflow.add(make_agent("Reducer", "r")).add(make_agent("Mapper", "m"))
+    workflow.use_langgraph()
+    with pytest.raises(ConfigurationException, match="map_items"):
+        workflow.run("task", map_items=[])
+
+
+def test_workflow_use_langgraph_map_reduce_requires_at_least_two_agents() -> None:
+    pytest.importorskip("langgraph")
+
+    workflow = Workflow().map_reduce()
+    workflow.add(make_agent("Solo", "solo"))
+    workflow.use_langgraph()
+    with pytest.raises(ConfigurationException, match="map-reduce"):
+        workflow.run("task", map_items=["a"])
+
+
+def test_workflow_use_langgraph_map_reduce_preserves_order_with_ten_plus_items() -> None:
+    """Same lexicographic-write-order risk as parallel/consensus, but for
+    map_reduce's zip(map_items, results, strict=True) alignment in
+    _reduce_prompt specifically -- a misordered `results` list here would
+    pair each item's summary with the WRONG item's actual result. See
+    docs/adr/0032."""
+    pytest.importorskip("langgraph")
+
+    reducer = make_agent_with_provider(
+        "Reducer", ScriptedReflectionProvider(responses=["combined"])
+    )
+    mapper = make_agent("Mapper", "m")
+    items = [f"item{i}" for i in range(11)]
+    workflow = Workflow().map_reduce()
+    workflow.add(reducer).add(mapper)
+    workflow.use_langgraph()
+
+    result = workflow.run("task", map_items=items)
+
+    assert len(result.steps) == 12
+    assert result.steps[-1].agent_name == "Reducer"
+    assert all(s.agent_name == "Mapper" for s in result.steps[:-1])
+
+
+def test_workflow_map_reduce_native_and_langgraph_parity() -> None:
+    pytest.importorskip("langgraph")
+
+    def build() -> Workflow:
+        reducer = make_agent_with_provider(
+            "Reducer", ScriptedReflectionProvider(responses=["combined result"])
+        )
+        mapper_a = make_agent("MapperA", "a")
+        mapper_b = make_agent("MapperB", "b")
+        workflow = Workflow().map_reduce()
+        workflow.add(reducer).add(mapper_a).add(mapper_b)
+        return workflow
+
+    items = ["item1", "item2", "item3"]
+    native_result = build().run("Summarize these items", map_items=items)
+
+    langgraph_workflow = build()
+    langgraph_workflow.use_langgraph()
+    langgraph_result = langgraph_workflow.run("Summarize these items", map_items=items)
+
+    assert native_result.content == langgraph_result.content
+    assert [s.agent_name for s in native_result.steps] == [
+        s.agent_name for s in langgraph_result.steps
+    ]
 
 
 # ---------------------------------------------------------------------------

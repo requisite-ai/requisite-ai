@@ -12,7 +12,7 @@ Install with: ``pip install langgraph``
 
 Notes
 -----
-Five strategies are supported: ``"sequential"`` (a linear chain -- each
+Eight strategies are supported: ``"sequential"`` (a linear chain -- each
 agent is a node, wired node-to-node in the order added); ``"supervisor"``
 and ``"hierarchical"`` (both a real conditional graph built by the same
 :meth:`LangGraphOrchestrator._build_delegation_graph` -- one coordinator
@@ -25,28 +25,38 @@ Agent-only for ``supervisor``, Agent-or-named-``Workflow`` for
 :class:`~requisite.orchestrators.native.NativeOrchestrator` itself
 shares one ``_run_delegation_loop`` between both); ``"reflection"`` (a
 3-node cycle -- draft, critique, revise -- with a conditional exit on
-the ``NO_CHANGES_NEEDED`` sentinel); and ``"graph"`` (an arbitrary,
+the ``NO_CHANGES_NEEDED`` sentinel); ``"graph"`` (an arbitrary,
 developer-declared graph -- one node per step, routed by
 ``Workflow.add_edge(...)``'s own conditions, reusing
 :class:`NativeOrchestrator`'s validation/routing helpers directly rather
-than reimplementing them). See ``docs/adr/0016-langgraph-branching.md``
+than reimplementing them); and ``"parallel"``, ``"consensus"``, and
+``"map_reduce"`` (all three share one fan-out/fan-in shape -- N agents
+run concurrently as separate nodes in the same superstep, writing
+``(index, result)`` tuples into a reducer channel, then one aggregator
+node sorts by index and combines -- no loop-back cycle needed, unlike
+every strategy above). See ``docs/adr/0016-langgraph-branching.md``
 (``supervisor``), ``docs/adr/0028-langgraph-reflection-strategy.md``
-(``reflection``), and
-``docs/adr/0029-langgraph-hierarchical-graph-strategies.md``
-(``hierarchical``, ``graph``) for the full design of each.
+(``reflection``), ``docs/adr/0029-langgraph-hierarchical-graph-strategies.md``
+(``hierarchical``, ``graph``), and
+``docs/adr/0032-langgraph-parallel-consensus-map-reduce-strategies.md``
+(``parallel``, ``consensus``, ``map_reduce``) for the full design of each.
 """
 
 from __future__ import annotations
 
 import logging
+import operator
 from collections.abc import Sequence
-from typing import TYPE_CHECKING, Any, Callable, Optional, TypedDict
+from typing import TYPE_CHECKING, Annotated, Any, Callable, Optional, TypedDict
 
 from requisite.core.exceptions import AgentException, ConfigurationException
 from requisite.orchestrators.base import BaseOrchestrator, WorkflowResult
 from requisite.orchestrators.native import (
     NativeOrchestrator,
     _SupervisorDecision,
+    _consensus_prompt,
+    _map_prompt,
+    _reduce_prompt,
     _reflection_critique_prompt,
     _reflection_revise_prompt,
     _supervisor_prompt,
@@ -67,6 +77,10 @@ _DRAFT_NODE = "__draft__"
 _CRITIQUE_NODE = "__critique__"
 _REVISE_NODE = "__revise__"
 _NO_CHANGES_NEEDED = "NO_CHANGES_NEEDED"
+# Shared by "parallel", "consensus", and "map_reduce" -- see
+# _FanOutGraphState / _build_parallel_graph / _build_consensus_graph /
+# _build_map_reduce_graph.
+_AGGREGATOR_NODE = "__aggregator__"
 
 
 class _GraphState(TypedDict):
@@ -100,6 +114,30 @@ class _ArbitraryGraphState(TypedDict):
     output: str
     steps: list[Any]
     step_count: int
+
+
+class _FanOutGraphState(TypedDict):
+    """Shared by "parallel", "consensus", and "map_reduce" -- all three
+    fan out to N agent nodes that run concurrently in the same
+    superstep, then join into one aggregator node. See
+    _build_parallel_graph / _build_consensus_graph /
+    _build_map_reduce_graph and docs/adr/0032.
+    """
+
+    task: str
+    # Every fan-out node writes exactly one (build-time-assigned index,
+    # AgentResult) tuple here. A reducer (Annotated[..., operator.add])
+    # is required because multiple nodes write to this key in the same
+    # superstep -- langgraph raises InvalidUpdateError on a plain,
+    # non-Annotated key with concurrent writers. The index lets the
+    # aggregator node restore build-time order regardless of what order
+    # langgraph itself applies the concurrent writes in (confirmed via
+    # langgraph/pregel/_algo.py: write order is node-name lexicographic,
+    # not declaration order -- silently wrong past 10 fan-out nodes if
+    # trusted directly). See docs/adr/0032.
+    results: Annotated[list[tuple[int, Any]], operator.add]
+    steps: list[Any]  # final ordered AgentResult list, written once by the aggregator
+    output: str
 
 
 def _reject_reserved_node_names(
@@ -405,6 +443,145 @@ class LangGraphOrchestrator(BaseOrchestrator):
 
         return graph.compile()
 
+    def _build_parallel_graph(self, steps: Sequence["Agent"], **kwargs: Any) -> Any:
+        """Build a fan-out/fan-in graph for the ``parallel`` strategy.
+
+        No coordinator/worker split -- every step is a peer agent, run
+        concurrently against the same input, purely string-combined
+        (no aggregator agent call). Mirrors
+        :meth:`~requisite.orchestrators.native.NativeOrchestrator._run_parallel`
+        exactly. See :class:`_FanOutGraphState` and docs/adr/0032.
+        """
+        StateGraph, START, END = self._require_langgraph()  # noqa: N806
+        graph = StateGraph(_FanOutGraphState)
+
+        def _make_node(agent: "Agent", index: int) -> Any:
+            def _node(state: _FanOutGraphState) -> dict[str, Any]:
+                result = agent.run(state["task"], **kwargs)
+                return {"results": [(index, result)]}
+
+            return _node
+
+        node_names = []
+        for index, agent in enumerate(steps):
+            # Index-suffixed: parallel has no name-uniqueness requirement
+            # on agents, unlike consensus/map_reduce's name-addressed
+            # workers.
+            node_name = f"{agent.name}_{index}"
+            graph.add_node(node_name, _make_node(agent, index))
+            graph.add_edge(START, node_name)
+            node_names.append(node_name)
+
+        def _combine_node(state: _FanOutGraphState) -> dict[str, Any]:
+            ordered = [r for _, r in sorted(state["results"], key=lambda pair: pair[0])]
+            combined = "\n\n".join(f"[{r.agent_name}]\n{r.content}" for r in ordered)
+            return {"output": combined, "steps": ordered}
+
+        graph.add_node(_AGGREGATOR_NODE, _combine_node)
+        graph.add_edge(node_names, _AGGREGATOR_NODE)
+        graph.add_edge(_AGGREGATOR_NODE, END)
+
+        return graph.compile()
+
+    def _build_consensus_graph(self, steps: Sequence["Agent"], **kwargs: Any) -> Any:
+        """Build a fan-out/fan-in graph for the ``consensus`` strategy.
+
+        ``steps[0]`` is the synthesizer, ``steps[1:]`` are independent
+        participants run concurrently against the same original input
+        (not each other's outputs). The synthesizer then combines every
+        participant's answer into one final answer. Reuses
+        :meth:`NativeOrchestrator._split_coordinator_and_workers` and
+        ``_consensus_prompt`` rather than reimplementing them -- mirrors
+        :meth:`~requisite.orchestrators.native.NativeOrchestrator._run_consensus`
+        exactly. See :class:`_FanOutGraphState` and docs/adr/0032.
+        """
+        StateGraph, START, END = self._require_langgraph()  # noqa: N806
+        synthesizer, participants = NativeOrchestrator._split_coordinator_and_workers(
+            steps, role="consensus synthesizer"
+        )
+        _reject_reserved_node_names(
+            participants, role="consensus synthesizer", reserved=(_AGGREGATOR_NODE,)
+        )
+        graph = StateGraph(_FanOutGraphState)
+
+        def _make_node(participant: "Agent", index: int) -> Any:
+            def _node(state: _FanOutGraphState) -> dict[str, Any]:
+                result = participant.run(state["task"], **kwargs)
+                return {"results": [(index, result)]}
+
+            return _node
+
+        node_names = []
+        for index, (name, participant) in enumerate(participants.items()):
+            graph.add_node(name, _make_node(participant, index))
+            graph.add_edge(START, name)
+            node_names.append(name)
+
+        def _synthesize_node(state: _FanOutGraphState) -> dict[str, Any]:
+            ordered = [r for _, r in sorted(state["results"], key=lambda pair: pair[0])]
+            synthesis = synthesizer.run(_consensus_prompt(state["task"], ordered), **kwargs)
+            return {"output": synthesis.content, "steps": [*ordered, synthesis]}
+
+        graph.add_node(_AGGREGATOR_NODE, _synthesize_node)
+        graph.add_edge(node_names, _AGGREGATOR_NODE)
+        graph.add_edge(_AGGREGATOR_NODE, END)
+
+        return graph.compile()
+
+    def _build_map_reduce_graph(
+        self, steps: Sequence["Agent"], *, map_items: Optional[Sequence[str]], **kwargs: Any
+    ) -> Any:
+        """Build a fan-out/fan-in graph for the ``map_reduce`` strategy.
+
+        One node per ``map_items`` entry (not per agent -- items are
+        assigned to ``steps[1:]`` workers round-robin, so the same
+        worker can appear at multiple indices), run concurrently, then
+        ``steps[0]`` reduces every mapped result into one final answer.
+        Node names are synthetic (``__mapper_<index>__``) rather than
+        the worker's own name, since a worker's name isn't unique across
+        the items it's assigned. Mirrors
+        :meth:`~requisite.orchestrators.native.NativeOrchestrator._run_map_reduce`
+        exactly, including its error message. See :class:`_FanOutGraphState`
+        and docs/adr/0032.
+        """
+        StateGraph, START, END = self._require_langgraph()  # noqa: N806
+        if not map_items:
+            raise ConfigurationException(
+                "The 'map_reduce' strategy requires map_items=[...] -- the list of "
+                "individual items to process, passed to workflow.run()/arun().",
+            )
+        reducer, mappers = NativeOrchestrator._split_coordinator_and_workers(
+            steps, role="map-reduce reducer"
+        )
+        mapper_list = list(mappers.values())
+        graph = StateGraph(_FanOutGraphState)
+
+        def _make_node(mapper: "Agent", item: str, index: int) -> Any:
+            def _node(state: _FanOutGraphState) -> dict[str, Any]:
+                result = mapper.run(_map_prompt(state["task"], item), **kwargs)
+                return {"results": [(index, result)]}
+
+            return _node
+
+        node_names = []
+        for index, item in enumerate(map_items):
+            mapper = mapper_list[index % len(mapper_list)]
+            node_name = f"__mapper_{index}__"
+            graph.add_node(node_name, _make_node(mapper, item, index))
+            graph.add_edge(START, node_name)
+            node_names.append(node_name)
+
+        def _reduce_node(state: _FanOutGraphState) -> dict[str, Any]:
+            ordered = [r for _, r in sorted(state["results"], key=lambda pair: pair[0])]
+            reduced = reducer.run(_reduce_prompt(state["task"], map_items, ordered), **kwargs)
+            return {"output": reduced.content, "steps": [*ordered, reduced]}
+
+        graph.add_node(_AGGREGATOR_NODE, _reduce_node)
+        graph.add_edge(node_names, _AGGREGATOR_NODE)
+        graph.add_edge(_AGGREGATOR_NODE, END)
+
+        return graph.compile()
+
     def run(
         self,
         steps: Sequence[Any],
@@ -481,9 +658,27 @@ class LangGraphOrchestrator(BaseOrchestrator):
                 orchestrator=self.name,
                 strategy=strategy,
             )
+        if strategy in ("parallel", "consensus", "map_reduce"):
+            if strategy == "parallel":
+                compiled_graph = self._build_parallel_graph(steps, **kwargs)
+            elif strategy == "consensus":
+                compiled_graph = self._build_consensus_graph(steps, **kwargs)
+            else:
+                map_items = kwargs.pop("map_items", None)
+                compiled_graph = self._build_map_reduce_graph(steps, map_items=map_items, **kwargs)
+            final_state = compiled_graph.invoke(
+                {"task": input, "results": [], "steps": [], "output": ""},
+            )
+            return WorkflowResult(
+                content=final_state["output"],
+                steps=final_state["steps"],
+                orchestrator=self.name,
+                strategy=strategy,
+            )
         raise ConfigurationException(
             f"The langgraph orchestrator supports the 'sequential', 'supervisor', "
-            f"'hierarchical', 'reflection', and 'graph' strategies (got '{strategy}').",
+            f"'hierarchical', 'reflection', 'graph', 'parallel', 'consensus', and "
+            f"'map_reduce' strategies (got '{strategy}').",
         )
 
     async def arun(
@@ -562,7 +757,25 @@ class LangGraphOrchestrator(BaseOrchestrator):
                 orchestrator=self.name,
                 strategy=strategy,
             )
+        if strategy in ("parallel", "consensus", "map_reduce"):
+            if strategy == "parallel":
+                compiled_graph = self._build_parallel_graph(steps, **kwargs)
+            elif strategy == "consensus":
+                compiled_graph = self._build_consensus_graph(steps, **kwargs)
+            else:
+                map_items = kwargs.pop("map_items", None)
+                compiled_graph = self._build_map_reduce_graph(steps, map_items=map_items, **kwargs)
+            final_state = await compiled_graph.ainvoke(
+                {"task": input, "results": [], "steps": [], "output": ""},
+            )
+            return WorkflowResult(
+                content=final_state["output"],
+                steps=final_state["steps"],
+                orchestrator=self.name,
+                strategy=strategy,
+            )
         raise ConfigurationException(
             f"The langgraph orchestrator supports the 'sequential', 'supervisor', "
-            f"'hierarchical', 'reflection', and 'graph' strategies (got '{strategy}').",
+            f"'hierarchical', 'reflection', 'graph', 'parallel', 'consensus', and "
+            f"'map_reduce' strategies (got '{strategy}').",
         )

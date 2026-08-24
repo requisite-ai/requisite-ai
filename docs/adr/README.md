@@ -57,3 +57,17 @@ need one — `CONTRIBUTING.md` already covers those.
 | [0016](0016-langgraph-branching.md) | LangGraph backend: branching/conditional graphs | Accepted |
 | [0017](0017-entry-point-plugin-discovery.md) | Entry-point plugin discovery | Accepted |
 | [0018](0018-tree-of-thoughts-strategy.md) | Tree-of-thoughts multi-agent strategy | Accepted |
+| [0019](0019-graph-execution-strategy.md) | General graph execution strategy | Accepted |
+| [0020](0020-github-capability-resolver.md) | `github` default capability resolver | Accepted |
+| [0021](0021-opentelemetry-tracing-and-metrics.md) | OpenTelemetry tracing and metrics | Accepted |
+| [0022](0022-vector-memory.md) | Vector-database-backed memory | Accepted |
+| [0023](0023-mcp-default-capability-providers.md) | First-party MCP servers as default capability providers | Accepted |
+| [0024](0024-rag-context-compression.md) | RAG context compression | Accepted |
+| [0025](0025-mcp-2x-migration.md) | Migrate to `mcp` 2.x | Accepted |
+| [0026](0026-mcp-resource-prompt-discovery.md) | MCP resource / prompt discovery | Accepted |
+| [0027](0027-crewai-autogen-orchestrator-backends.md) | CrewAI and AutoGen orchestrator backends | Accepted |
+| [0028](0028-langgraph-reflection-strategy.md) | LangGraph backend: reflection strategy | Accepted |
+| [0029](0029-langgraph-hierarchical-graph-strategies.md) | LangGraph backend: hierarchical and graph strategies | Accepted |
+| [0030](0030-mcp-persistent-session-mode.md) | MCP persistent session mode | Accepted |
+| [0031](0031-code-review-fixes.md) | Code review, adversarial testing, and fixes across the whole codebase | Accepted |
+| [0032](0032-langgraph-parallel-consensus-map-reduce-strategies.md) | LangGraph backend: parallel, consensus, and map-reduce strategies | Accepted |
