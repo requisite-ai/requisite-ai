@@ -12,7 +12,8 @@ Install with: ``pip install langgraph``
 
 Notes
 -----
-Eleven strategies are supported: ``"sequential"`` (a linear chain -- each
+Twelve strategies are supported -- every native strategy has a
+langgraph counterpart: ``"sequential"`` (a linear chain -- each
 agent is a node, wired node-to-node in the order added); ``"supervisor"``
 and ``"hierarchical"`` (both a real conditional graph built by the same
 :meth:`LangGraphOrchestrator._build_delegation_graph` -- one coordinator
@@ -56,9 +57,13 @@ termination or exhausting ``max_depth``). See
 ``docs/adr/0032-langgraph-parallel-consensus-map-reduce-strategies.md``
 (``parallel``, ``consensus``, ``map_reduce``),
 ``docs/adr/0033-langgraph-critic-debate-strategies.md``
-(``critic``, ``debate``), and
+(``critic``, ``debate``),
 ``docs/adr/0034-langgraph-tree-of-thoughts-strategy.md``
-(``tree_of_thoughts``) for the full design of each.
+(``tree_of_thoughts``), and ``docs/adr/0035-langgraph-planner-strategy.md``
+(``"planner"`` -- one upfront structured-output call produces an entire
+ordered plan, then a bounded loop-back cycle executes each plan step in
+turn, the loop bound read from the plan's own length in state rather
+than a build-time ``max_rounds`` constant) for the full design of each.
 """
 
 from __future__ import annotations
@@ -72,6 +77,7 @@ from requisite.core.exceptions import AgentException, ConfigurationException
 from requisite.orchestrators.base import BaseOrchestrator, WorkflowResult
 from requisite.orchestrators.native import (
     NativeOrchestrator,
+    _Plan,
     _SupervisorDecision,
     _ThoughtEvaluation,
     _consensus_prompt,
@@ -79,6 +85,7 @@ from requisite.orchestrators.native import (
     _debate_prompt,
     _debate_verdict_prompt,
     _map_prompt,
+    _planner_prompt,
     _reduce_prompt,
     _reflection_critique_prompt,
     _reflection_revise_prompt,
@@ -108,6 +115,9 @@ _NO_CHANGES_NEEDED = "NO_CHANGES_NEEDED"
 _AGGREGATOR_NODE = "__aggregator__"
 # "debate" only -- see _DebateGraphState / _build_debate_graph.
 _VERDICT_NODE = "__verdict__"
+# "planner" only -- see _PlannerGraphState / _build_planner_graph.
+_PLAN_NODE = "__plan__"
+_EXECUTE_NODE = "__execute__"
 
 
 class _GraphState(TypedDict):
@@ -208,6 +218,27 @@ class _TreeOfThoughtsGraphState(TypedDict):
     finished: bool
 
 
+class _PlannerGraphState(TypedDict):
+    """ "planner" only -- see _build_planner_graph.
+
+    Unlike every strategy since ADR-0032, nothing here needs a reducer
+    field: exactly one node runs per superstep in this graph (a plain
+    two-node cycle, the same "no reducer needed" situation ADR-0016's
+    original delegation graph relied on), since planner has no
+    concurrent fan-out at all. ``plan``/``step_index`` are written once
+    by the plan node then read (and step_index incremented) by every
+    execute-node visit; the loop bound is the plan's own length, not a
+    build-time ``max_rounds`` constant.
+    """
+
+    task: str
+    plan: list[Any]  # list[_PlanStep], written once by the plan node
+    step_index: int
+    context_notes: list[str]
+    steps: list[Any]
+    output: str
+
+
 def _reject_reserved_node_names(
     named: dict[str, Any], *, role: str, reserved: Sequence[str]
 ) -> None:
@@ -236,13 +267,13 @@ def _reject_reserved_node_names(
 class LangGraphOrchestrator(BaseOrchestrator):
     """Runs agents as a ``langgraph`` ``StateGraph`` -- linear for
     ``"sequential"``, real conditional graphs with loop-back cycles for
-    ``"supervisor"``/``"hierarchical"``/``"reflection"``/``"critic"``,
-    an arbitrary developer-declared graph for ``"graph"``, a
-    fan-out/fan-in graph (no loop-back cycle) for ``"parallel"``/
+    ``"supervisor"``/``"hierarchical"``/``"reflection"``/``"critic"``/
+    ``"planner"``, an arbitrary developer-declared graph for ``"graph"``,
+    a fan-out/fan-in graph (no loop-back cycle) for ``"parallel"``/
     ``"consensus"``/``"map_reduce"``, a static per-round unroll of
     fan-out/join blocks for ``"debate"``, and a static per-level unroll
-    of fan-out/evaluate/prune blocks for ``"tree_of_thoughts"``. See
-    module docstring.
+    of fan-out/evaluate/prune blocks for ``"tree_of_thoughts"``. Every
+    native strategy has a langgraph counterpart. See module docstring.
     """
 
     @property
@@ -910,6 +941,59 @@ class LangGraphOrchestrator(BaseOrchestrator):
 
         return graph.compile()
 
+    def _build_planner_graph(self, steps: Sequence["Agent"], **kwargs: Any) -> Any:
+        """Build a graph for the ``planner`` strategy: one upfront
+        structured-output call produces an entire ordered plan, then a
+        bounded loop-back cycle executes each plan step in turn.
+
+        Unlike every strategy since ADR-0032, the plan's length is not
+        computable from build-time kwargs -- it only exists after a real
+        LLM call returns -- so this can't be a static unroll. It doesn't
+        need ``Send`` either: it's the same bounded loop-back cycle shape
+        ``supervisor``/``hierarchical``/``reflection``/``critic`` already
+        use, just with the loop bound read from ``state["plan"]``'s own
+        length instead of a closed-over ``max_rounds`` constant. Mirrors
+        :meth:`~requisite.orchestrators.native.NativeOrchestrator._run_planner`
+        exactly, including validating the plan (raises inside the plan
+        node's body, since the plan is only known at invoke time) before
+        any step executes. See docs/adr/0035.
+        """
+        StateGraph, START, END = self._require_langgraph()  # noqa: N806
+        planner, workers = NativeOrchestrator._split_coordinator_and_workers(steps, role="planner")
+
+        def _plan_node(state: _PlannerGraphState) -> dict[str, Any]:
+            plan = planner.ai.chat(
+                _planner_prompt(state["task"], list(workers)), response_model=_Plan
+            )
+            NativeOrchestrator._validate_plan(plan, planner_name=planner.name, workers=workers)
+            return {"plan": list(plan.steps), "step_index": 0}
+
+        def _execute_node(state: _PlannerGraphState) -> dict[str, Any]:
+            plan_step = state["plan"][state["step_index"]]
+            worker = workers[plan_step.agent]
+            task_prompt = NativeOrchestrator._task_prompt_with_context(
+                plan_step.task, state["context_notes"]
+            )
+            result = worker.run(task_prompt, **kwargs)
+            return {
+                "steps": [*state["steps"], result],
+                "context_notes": [*state["context_notes"], f"[{worker.name}] {result.content}"],
+                "step_index": state["step_index"] + 1,
+                "output": result.content,
+            }
+
+        def _route_after_execute(state: _PlannerGraphState) -> Any:
+            return _EXECUTE_NODE if state["step_index"] < len(state["plan"]) else END
+
+        graph = StateGraph(_PlannerGraphState)
+        graph.add_node(_PLAN_NODE, _plan_node)
+        graph.add_node(_EXECUTE_NODE, _execute_node)
+        graph.add_edge(START, _PLAN_NODE)
+        graph.add_edge(_PLAN_NODE, _EXECUTE_NODE)
+        graph.add_conditional_edges(_EXECUTE_NODE, _route_after_execute)
+
+        return graph.compile()
+
     def run(
         self,
         steps: Sequence[Any],
@@ -1048,11 +1132,29 @@ class LangGraphOrchestrator(BaseOrchestrator):
                 orchestrator=self.name,
                 strategy=strategy,
             )
+        if strategy == "planner":
+            compiled_graph = self._build_planner_graph(steps, **kwargs)
+            final_state = compiled_graph.invoke(
+                {
+                    "task": input,
+                    "plan": [],
+                    "step_index": 0,
+                    "context_notes": [],
+                    "steps": [],
+                    "output": "",
+                },
+            )
+            return WorkflowResult(
+                content=final_state["output"],
+                steps=final_state["steps"],
+                orchestrator=self.name,
+                strategy=strategy,
+            )
         raise ConfigurationException(
             f"The langgraph orchestrator supports the 'sequential', 'supervisor', "
             f"'hierarchical', 'reflection', 'graph', 'parallel', 'consensus', "
-            f"'map_reduce', 'critic', 'debate', and 'tree_of_thoughts' strategies "
-            f"(got '{strategy}').",
+            f"'map_reduce', 'critic', 'debate', 'tree_of_thoughts', and 'planner' "
+            f"strategies (got '{strategy}').",
         )
 
     async def arun(
@@ -1193,9 +1295,27 @@ class LangGraphOrchestrator(BaseOrchestrator):
                 orchestrator=self.name,
                 strategy=strategy,
             )
+        if strategy == "planner":
+            compiled_graph = self._build_planner_graph(steps, **kwargs)
+            final_state = await compiled_graph.ainvoke(
+                {
+                    "task": input,
+                    "plan": [],
+                    "step_index": 0,
+                    "context_notes": [],
+                    "steps": [],
+                    "output": "",
+                },
+            )
+            return WorkflowResult(
+                content=final_state["output"],
+                steps=final_state["steps"],
+                orchestrator=self.name,
+                strategy=strategy,
+            )
         raise ConfigurationException(
             f"The langgraph orchestrator supports the 'sequential', 'supervisor', "
             f"'hierarchical', 'reflection', 'graph', 'parallel', 'consensus', "
-            f"'map_reduce', 'critic', 'debate', and 'tree_of_thoughts' strategies "
-            f"(got '{strategy}').",
+            f"'map_reduce', 'critic', 'debate', 'tree_of_thoughts', and 'planner' "
+            f"strategies (got '{strategy}').",
         )

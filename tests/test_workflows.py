@@ -436,17 +436,6 @@ async def test_workflow_use_langgraph_arun_real_sequential_pipeline() -> None:
     assert result.content == "write:research:AI trends"
 
 
-def test_workflow_use_langgraph_rejects_planner_strategy() -> None:
-    pytest.importorskip("langgraph")
-
-    workflow = Workflow().planner()
-    workflow.add(make_agent("A", "a"))
-    workflow.add(make_agent("B", "b"))
-    workflow.use_langgraph()
-    with pytest.raises(ConfigurationException, match="sequential"):
-        workflow.run("hello")
-
-
 def test_workflow_use_langgraph_supervisor_routes_to_both_workers_then_finishes() -> None:
     """Proof of real conditional routing, not a disguised chain: the
     supervisor delegates to two *different* workers across rounds --
@@ -966,6 +955,125 @@ async def test_workflow_arun_planner() -> None:
     result = await workflow.arun("task")
 
     assert result.content == "research:do X"
+
+
+def test_workflow_use_langgraph_planner_executes_plan_across_workers() -> None:
+    pytest.importorskip("langgraph")
+
+    plan = _Plan(
+        steps=[
+            _PlanStep(agent="Researcher", task="Find 3 facts about RAG"),
+            _PlanStep(agent="Writer", task="Summarize the facts"),
+        ]
+    )
+    planner_agent = make_agent_with_provider("Planner", ScriptedPlannerProvider(plan=plan))
+    researcher = make_agent("Researcher", "research")
+    writer = make_agent("Writer", "write")
+
+    workflow = Workflow().planner()
+    workflow.add(planner_agent).add(researcher).add(writer)
+    workflow.use_langgraph()
+    result = workflow.run("Explain RAG")
+
+    assert result.strategy == "planner"
+    assert result.orchestrator == "langgraph"
+    assert len(result.steps) == 2
+    assert result.steps[0].agent_name == "Researcher"
+    assert result.steps[1].agent_name == "Writer"
+    assert result.content.startswith("write:Summarize the facts")
+    assert "[Researcher] research:Find 3 facts about RAG" in result.content
+
+
+def test_workflow_use_langgraph_planner_empty_plan_raises() -> None:
+    pytest.importorskip("langgraph")
+
+    planner_agent = make_agent_with_provider(
+        "Planner", ScriptedPlannerProvider(plan=_Plan(steps=[]))
+    )
+    workflow = Workflow().planner()
+    workflow.add(planner_agent).add(make_agent("Researcher", "research"))
+    workflow.use_langgraph()
+    with pytest.raises(ConfigurationException, match="empty plan"):
+        workflow.run("task")
+
+
+def test_workflow_use_langgraph_planner_unknown_worker_raises() -> None:
+    pytest.importorskip("langgraph")
+
+    plan = _Plan(steps=[_PlanStep(agent="Nonexistent", task="do X")])
+    planner_agent = make_agent_with_provider("Planner", ScriptedPlannerProvider(plan=plan))
+    workflow = Workflow().planner()
+    workflow.add(planner_agent).add(make_agent("Researcher", "research"))
+    workflow.use_langgraph()
+    with pytest.raises(ConfigurationException, match="unknown worker"):
+        workflow.run("task")
+
+
+def test_workflow_use_langgraph_planner_requires_at_least_two_agents() -> None:
+    pytest.importorskip("langgraph")
+
+    workflow = Workflow().planner()
+    workflow.add(make_agent("Solo", "solo"))
+    workflow.use_langgraph()
+    with pytest.raises(ConfigurationException, match="planner"):
+        workflow.run("task")
+
+
+def test_workflow_use_langgraph_planner_duplicate_worker_names_raises() -> None:
+    pytest.importorskip("langgraph")
+
+    workflow = Workflow().planner()
+    workflow.add(make_agent("Planner", "plan"))
+    workflow.add(make_agent("Dup", "a")).add(make_agent("Dup", "b"))
+    workflow.use_langgraph()
+    with pytest.raises(ConfigurationException, match="unique worker names"):
+        workflow.run("task")
+
+
+@pytest.mark.asyncio
+async def test_workflow_use_langgraph_arun_planner() -> None:
+    pytest.importorskip("langgraph")
+
+    plan = _Plan(steps=[_PlanStep(agent="Researcher", task="do X")])
+    planner_agent = make_agent_with_provider("Planner", ScriptedPlannerProvider(plan=plan))
+    researcher = make_agent("Researcher", "research")
+    workflow = Workflow().planner()
+    workflow.add(planner_agent).add(researcher)
+    workflow.use_langgraph()
+
+    result = await workflow.arun("task")
+
+    assert result.content == "research:do X"
+    assert result.orchestrator == "langgraph"
+
+
+def test_workflow_planner_native_and_langgraph_parity() -> None:
+    pytest.importorskip("langgraph")
+
+    def build() -> Workflow:
+        plan = _Plan(
+            steps=[
+                _PlanStep(agent="Researcher", task="Find 3 facts about RAG"),
+                _PlanStep(agent="Writer", task="Summarize the facts"),
+            ]
+        )
+        planner_agent = make_agent_with_provider("Planner", ScriptedPlannerProvider(plan=plan))
+        researcher = make_agent("Researcher", "research")
+        writer = make_agent("Writer", "write")
+        workflow = Workflow().planner()
+        workflow.add(planner_agent).add(researcher).add(writer)
+        return workflow
+
+    native_result = build().run("Explain RAG")
+
+    langgraph_workflow = build()
+    langgraph_workflow.use_langgraph()
+    langgraph_result = langgraph_workflow.run("Explain RAG")
+
+    assert native_result.content == langgraph_result.content
+    assert [s.agent_name for s in native_result.steps] == [
+        s.agent_name for s in langgraph_result.steps
+    ]
 
 
 # ---------------------------------------------------------------------------

@@ -73,3 +73,4 @@ need one — `CONTRIBUTING.md` already covers those.
 | [0032](0032-langgraph-parallel-consensus-map-reduce-strategies.md) | LangGraph backend: parallel, consensus, and map-reduce strategies | Accepted |
 | [0033](0033-langgraph-critic-debate-strategies.md) | LangGraph backend: critic and debate strategies | Accepted |
 | [0034](0034-langgraph-tree-of-thoughts-strategy.md) | LangGraph backend: tree-of-thoughts strategy | Accepted |
+| [0035](0035-langgraph-planner-strategy.md) | LangGraph backend: planner strategy | Accepted |

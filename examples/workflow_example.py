@@ -101,6 +101,24 @@ def main() -> None:
         f"{[s.agent_name for s in planner_result.steps]})"
     )
 
+    # Same planner strategy, run on the langgraph backend: one upfront
+    # structured-output call produces the whole plan, then a bounded
+    # loop-back cycle executes each step in turn -- see
+    # docs/adr/0035-langgraph-planner-strategy.md.
+    try:
+        planner_workflow.use_langgraph()
+        planner_langgraph_result = planner_workflow.run(
+            "Research what MCP (Model Context Protocol) is and write a short explainer."
+        )
+        print("\n--- planner (langgraph) ---")
+        print(planner_langgraph_result.content)
+        print(
+            f"(plan had {len(planner_langgraph_result.steps)} step(s): "
+            f"{[s.agent_name for s in planner_langgraph_result.steps]})"
+        )
+    except Exception as exc:  # noqa: BLE001
+        print(f"\nlanggraph backend not available: {exc}")
+
     # Supervisor: the first agent delegates subtasks to named workers one
     # at a time, deciding for itself when the task is complete.
     supervisor_agent = Agent(

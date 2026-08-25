@@ -7,6 +7,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.34.0] - 2026-08-25
+
+### Added
+
+- `planner` now runs on the `langgraph` orchestrator backend, not just
+  `native` -- the last native strategy without a langgraph counterpart.
+  All twelve multi-agent strategies now run on both backends; the
+  `langgraph`-backend parity line started in ADR-0032 is closed. One
+  upfront structured-output call produces the whole plan, then a
+  bounded loop-back cycle executes each step in turn, the loop bound
+  read from the plan's own length in graph state rather than a
+  build-time `max_rounds` constant -- the cheapest strategy addition
+  across this whole line of work, needing no new reducer channel at
+  all. See [ADR-0035](docs/adr/0035-langgraph-planner-strategy.md).
+
 ## [0.33.0] - 2026-08-25
 
 ### Added
