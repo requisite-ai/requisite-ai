@@ -38,7 +38,7 @@ Status legend: ✅ Done · 🚧 Partial · 📋 Not started · N/A Deliberately 
 | Agent creation | ✅ | `Agent(...)` |
 | Agent execution | ✅ | `Agent.run` / `Agent.arun` (tool-calling loop) |
 | Agent registry | ✅ | `AgentRegistry` |
-| Multi-agent orchestration | 🚧 | `Workflow` ships sequential, parallel, reflection, planner, supervisor (ADR-0007), critic, consensus (ADR-0011), debate, map-reduce (ADR-0012), hierarchical (ADR-0013), graph (ADR-0019), and tree-of-thoughts (ADR-0018) on the native orchestrator; all except planner and tree-of-thoughts also run on the langgraph backend (ADR-0016, ADR-0028, ADR-0029, ADR-0032, ADR-0033) — see the Multi-Agent System table below for the rest |
+| Multi-agent orchestration | 🚧 | `Workflow` ships sequential, parallel, reflection, planner, supervisor (ADR-0007), critic, consensus (ADR-0011), debate, map-reduce (ADR-0012), hierarchical (ADR-0013), graph (ADR-0019), and tree-of-thoughts (ADR-0018) on the native orchestrator; all except planner also run on the langgraph backend (ADR-0016, ADR-0028, ADR-0029, ADR-0032, ADR-0033, ADR-0034) — see the Multi-Agent System table below for the rest |
 | Agentic execution | 🚧 | `Agent`'s own tool-calling loop is agentic (model decides which tool); the supervisor/planner strategies add model-decided agent delegation (ADR-0007); full autonomous planning across agents/skills/MCP beyond that is 📋 — see Agentic Mode below |
 | MCP client integration | ✅ | `MCPClient` (stdio + Streamable HTTP) — ADR-0004 |
 | MCP server integration | ✅ | `MCPServer` (stdio + Streamable HTTP) — ADR-0015 |
@@ -139,7 +139,7 @@ Status legend: ✅ Done · 🚧 Partial · 📋 Not started · N/A Deliberately 
 | Consensus | ✅ | `native` and `langgraph` orchestrators — synthesizer (`steps[0]`) combines the independent, concurrently-run answers of `steps[1:]`; ADR-0011, ADR-0032 |
 | Hierarchical | ✅ | `native` and `langgraph` orchestrators — same shape as Supervisor, except a delegate may be an `Agent` or a named `Workflow` (nested "team"); ADR-0013, ADR-0029 (langgraph: shares its graph builder with Supervisor) |
 | Map-reduce | ✅ | `native` and `langgraph` orchestrators — reducer (`steps[0]`) combines mapper (`steps[1:]`) results for `map_items=`, assigned round-robin; ADR-0012, ADR-0032 |
-| Tree of thoughts | ✅ | `native` orchestrator only — evaluator (`steps[0]`) scores candidate reasoning steps thinkers (`steps[1:]`) generate; `breadth`/`beam_width`/`max_depth` control the search; ADR-0018 |
+| Tree of thoughts | ✅ | `native` and `langgraph` orchestrators — evaluator (`steps[0]`) scores candidate reasoning steps thinkers (`steps[1:]`) generate; `breadth`/`beam_width`/`max_depth` control the search; ADR-0018, ADR-0034 (langgraph: `max_depth` levels unrolled at graph-build time, since the beam-search shape is fully determined by `breadth`/`beam_width`/`max_depth` alone) |
 | Graph execution (arbitrary DAGs) | ✅ | `native` and `langgraph` orchestrators — nodes (`Agent` or named `Workflow`) wired with developer-declared edges via `Workflow.add_edge(from_, to, condition=...)`; routing is deterministic (checked against a node's output), not LLM-decided like every strategy above; cycles allowed, bounded by `max_steps`; ADR-0019, ADR-0029 (langgraph: reuses the native backend's own node-indexing/edge-validation/routing helpers verbatim) |
 
 ## Orchestration

@@ -12,7 +12,7 @@ Install with: ``pip install langgraph``
 
 Notes
 -----
-Ten strategies are supported: ``"sequential"`` (a linear chain -- each
+Eleven strategies are supported: ``"sequential"`` (a linear chain -- each
 agent is a node, wired node-to-node in the order added); ``"supervisor"``
 and ``"hierarchical"`` (both a real conditional graph built by the same
 :meth:`LangGraphOrchestrator._build_delegation_graph` -- one coordinator
@@ -41,14 +41,24 @@ node sorts by index and combines -- no loop-back cycle needed); and
 round, each round's debaters seeing the transcript as of the previous
 round's join node -- then one verdict node; a static unroll of the
 round loop rather than a true cycle, since ``max_rounds`` is known at
-graph-build time). See ``docs/adr/0016-langgraph-branching.md``
-(``supervisor``), ``docs/adr/0028-langgraph-reflection-strategy.md``
-(``reflection``), ``docs/adr/0029-langgraph-hierarchical-graph-strategies.md``
+graph-build time); and ``"tree_of_thoughts"`` (a beam search unrolled
+the same way -- ``breadth``/``beam_width``/``max_depth`` fully determine
+every level's fan-out width at graph-build time, even though the paths
+themselves are only known at runtime; each level is a fan-out of
+candidate-thought nodes joined into one structured-output evaluation/prune
+node, which conditionally routes to a trivial "expand" passthrough node
+that fans out to the next level, or straight to ``END`` on early
+termination or exhausting ``max_depth``). See
+``docs/adr/0016-langgraph-branching.md`` (``supervisor``),
+``docs/adr/0028-langgraph-reflection-strategy.md`` (``reflection``),
+``docs/adr/0029-langgraph-hierarchical-graph-strategies.md``
 (``hierarchical``, ``graph``),
 ``docs/adr/0032-langgraph-parallel-consensus-map-reduce-strategies.md``
-(``parallel``, ``consensus``, ``map_reduce``), and
+(``parallel``, ``consensus``, ``map_reduce``),
 ``docs/adr/0033-langgraph-critic-debate-strategies.md``
-(``critic``, ``debate``) for the full design of each.
+(``critic``, ``debate``), and
+``docs/adr/0034-langgraph-tree-of-thoughts-strategy.md``
+(``tree_of_thoughts``) for the full design of each.
 """
 
 from __future__ import annotations
@@ -63,6 +73,7 @@ from requisite.orchestrators.base import BaseOrchestrator, WorkflowResult
 from requisite.orchestrators.native import (
     NativeOrchestrator,
     _SupervisorDecision,
+    _ThoughtEvaluation,
     _consensus_prompt,
     _critic_prompt,
     _debate_prompt,
@@ -72,6 +83,8 @@ from requisite.orchestrators.native import (
     _reflection_critique_prompt,
     _reflection_revise_prompt,
     _supervisor_prompt,
+    _tot_evaluation_prompt,
+    _tot_thinker_prompt,
 )
 
 if TYPE_CHECKING:
@@ -174,6 +187,27 @@ class _DebateGraphState(TypedDict):
     output: str
 
 
+class _TreeOfThoughtsGraphState(TypedDict):
+    """ "tree_of_thoughts" only -- see _build_tree_of_thoughts_graph.
+
+    Like _DebateGraphState, one shared reducer channel spans every
+    level rather than one field per level -- TypedDict schemas are
+    static. Each level's evaluation node knows its own offset range
+    (precomputed at graph-build time, see docs/adr/0034) and reads back
+    only its own slice. ``paths`` is a plain field: exactly one
+    evaluation node (the current level's) writes it per superstep.
+    ``finished`` is written by every level's evaluation node and read
+    by that same level's routing function immediately after.
+    """
+
+    task: str
+    paths: list[list[str]]
+    candidates: Annotated[list[tuple[int, Any]], operator.add]
+    steps: list[Any]
+    output: str
+    finished: bool
+
+
 def _reject_reserved_node_names(
     named: dict[str, Any], *, role: str, reserved: Sequence[str]
 ) -> None:
@@ -205,8 +239,10 @@ class LangGraphOrchestrator(BaseOrchestrator):
     ``"supervisor"``/``"hierarchical"``/``"reflection"``/``"critic"``,
     an arbitrary developer-declared graph for ``"graph"``, a
     fan-out/fan-in graph (no loop-back cycle) for ``"parallel"``/
-    ``"consensus"``/``"map_reduce"``, and a static per-round unroll of
-    fan-out/join blocks for ``"debate"``. See module docstring.
+    ``"consensus"``/``"map_reduce"``, a static per-round unroll of
+    fan-out/join blocks for ``"debate"``, and a static per-level unroll
+    of fan-out/evaluate/prune blocks for ``"tree_of_thoughts"``. See
+    module docstring.
     """
 
     @property
@@ -730,6 +766,150 @@ class LangGraphOrchestrator(BaseOrchestrator):
 
         return graph.compile(), debater_names
 
+    def _build_tree_of_thoughts_graph(
+        self,
+        steps: Sequence["Agent"],
+        *,
+        breadth: int,
+        beam_width: int,
+        max_depth: int,
+        **kwargs: Any,
+    ) -> Any:
+        """Build a graph for the ``tree_of_thoughts`` strategy: a beam
+        search unrolled into ``max_depth`` levels, each a fan-out of
+        candidate-thought nodes joined into one structured-output
+        evaluation/prune node.
+
+        ``breadth``/``beam_width``/``max_depth`` fully determine every
+        level's fan-out width at graph-build time (see docs/adr/0034 for
+        the induction proof) even though the actual thoughts are only
+        known at runtime -- the same "unroll since the shape is
+        build-time-known" reasoning ADR-0032 used for ``map_reduce`` and
+        ADR-0033 used for ``debate``. Mirrors
+        :meth:`~requisite.orchestrators.native.NativeOrchestrator._run_tree_of_thoughts`
+        exactly, including its per-level bookkeeping (thinkers assigned
+        round-robin *within* each level, not globally) and its
+        termination rules (an early-finished candidate wins immediately;
+        otherwise the top-ranked survivor after ``max_depth`` levels).
+
+        Node names are always synthetic (``__tot_L{level}_{i}__``, never
+        derived from thinker names), so unlike ``consensus`` this needs
+        no ``_reject_reserved_node_names`` call -- the same argument
+        already used for ``map_reduce``'s synthetic ``__mapper_{i}__``
+        names.
+        """
+        StateGraph, START, END = self._require_langgraph()  # noqa: N806
+        NativeOrchestrator._validate_tot_params(
+            breadth=breadth, beam_width=beam_width, max_depth=max_depth
+        )
+        evaluator, thinkers = NativeOrchestrator._split_coordinator_and_workers(
+            steps, role="tree-of-thoughts evaluator"
+        )
+        thinker_list = list(thinkers.values())
+
+        # Precompute every level's fan-out width and its offset into the
+        # one shared `candidates` reducer channel -- pure arithmetic, no
+        # agent calls. paths_count[0] = 1 (the root empty path); each
+        # level's candidate count is paths_count[level] * breadth, and
+        # the next level's surviving-path count is min(beam_width, that).
+        paths_count = [1]
+        level_widths: list[int] = []
+        for level in range(max_depth):
+            width = paths_count[level] * breadth
+            level_widths.append(width)
+            paths_count.append(min(beam_width, width))
+        level_offsets: list[int] = []
+        running = 0
+        for width in level_widths:
+            level_offsets.append(running)
+            running += width
+
+        graph = StateGraph(_TreeOfThoughtsGraphState)
+
+        def _make_candidate_node(index_in_level: int, global_index: int) -> Any:
+            def _node(state: _TreeOfThoughtsGraphState) -> dict[str, Any]:
+                parent_path = state["paths"][index_in_level // breadth]
+                thinker = thinker_list[index_in_level % len(thinker_list)]
+                result = thinker.run(_tot_thinker_prompt(state["task"], parent_path), **kwargs)
+                return {"candidates": [(global_index, result)]}
+
+            return _node
+
+        def _make_eval_node(level: int) -> Any:
+            offset = level_offsets[level]
+            width = level_widths[level]
+            is_last_level = level == max_depth - 1
+
+            def _node(state: _TreeOfThoughtsGraphState) -> dict[str, Any]:
+                level_entries = sorted(
+                    (idx, r) for idx, r in state["candidates"] if offset <= idx < offset + width
+                )
+                candidate_results = [r for _, r in level_entries]
+                candidate_paths = [
+                    [*state["paths"][i // breadth], result.content]
+                    for i, result in enumerate(candidate_results)
+                ]
+                evaluation = evaluator.ai.chat(
+                    _tot_evaluation_prompt(state["task"], candidate_paths),
+                    response_model=_ThoughtEvaluation,
+                )
+                final = NativeOrchestrator._select_finished_tot_candidate(
+                    evaluation, candidate_paths
+                )
+                if final is not None:
+                    return {
+                        "output": final[-1],
+                        "steps": [*state["steps"], *candidate_results],
+                        "finished": True,
+                    }
+                pruned = NativeOrchestrator._prune_tot_candidates(
+                    evaluation, candidate_paths, beam_width=beam_width
+                )
+                update: dict[str, Any] = {
+                    "paths": pruned,
+                    "steps": [*state["steps"], *candidate_results],
+                    "finished": False,
+                }
+                if is_last_level:
+                    update["output"] = pruned[0][-1] if pruned[0] else ""
+                return update
+
+            return _node
+
+        def _make_router(level: int) -> Any:
+            def _router(state: _TreeOfThoughtsGraphState) -> Any:
+                if state["finished"] or level == max_depth - 1:
+                    return END
+                return f"__tot_expand_L{level + 1}__"
+
+            return _router
+
+        def _expand_node(state: _TreeOfThoughtsGraphState) -> dict[str, Any]:
+            return {}
+
+        level_candidate_names: list[list[str]] = []
+        for level in range(max_depth):
+            names = [f"__tot_L{level}_{i}__" for i in range(level_widths[level])]
+            for i, name in enumerate(names):
+                graph.add_node(name, _make_candidate_node(i, level_offsets[level] + i))
+            level_candidate_names.append(names)
+
+            eval_name = f"__tot_eval_L{level}__"
+            graph.add_node(eval_name, _make_eval_node(level))
+            graph.add_edge(names, eval_name)
+            graph.add_conditional_edges(eval_name, _make_router(level))
+
+        for name in level_candidate_names[0]:
+            graph.add_edge(START, name)
+
+        for level in range(1, max_depth):
+            expand_name = f"__tot_expand_L{level}__"
+            graph.add_node(expand_name, _expand_node)
+            for name in level_candidate_names[level]:
+                graph.add_edge(expand_name, name)
+
+        return graph.compile()
+
     def run(
         self,
         steps: Sequence[Any],
@@ -845,10 +1025,34 @@ class LangGraphOrchestrator(BaseOrchestrator):
                 orchestrator=self.name,
                 strategy=strategy,
             )
+        if strategy == "tree_of_thoughts":
+            breadth = kwargs.pop("breadth", 3)
+            beam_width = kwargs.pop("beam_width", 1)
+            max_depth = kwargs.pop("max_depth", 3)
+            compiled_graph = self._build_tree_of_thoughts_graph(
+                steps, breadth=breadth, beam_width=beam_width, max_depth=max_depth, **kwargs
+            )
+            final_state = compiled_graph.invoke(
+                {
+                    "task": input,
+                    "paths": [[]],
+                    "candidates": [],
+                    "steps": [],
+                    "output": "",
+                    "finished": False,
+                },
+            )
+            return WorkflowResult(
+                content=final_state["output"],
+                steps=final_state["steps"],
+                orchestrator=self.name,
+                strategy=strategy,
+            )
         raise ConfigurationException(
             f"The langgraph orchestrator supports the 'sequential', 'supervisor', "
             f"'hierarchical', 'reflection', 'graph', 'parallel', 'consensus', "
-            f"'map_reduce', 'critic', and 'debate' strategies (got '{strategy}').",
+            f"'map_reduce', 'critic', 'debate', and 'tree_of_thoughts' strategies "
+            f"(got '{strategy}').",
         )
 
     async def arun(
@@ -966,8 +1170,32 @@ class LangGraphOrchestrator(BaseOrchestrator):
                 orchestrator=self.name,
                 strategy=strategy,
             )
+        if strategy == "tree_of_thoughts":
+            breadth = kwargs.pop("breadth", 3)
+            beam_width = kwargs.pop("beam_width", 1)
+            max_depth = kwargs.pop("max_depth", 3)
+            compiled_graph = self._build_tree_of_thoughts_graph(
+                steps, breadth=breadth, beam_width=beam_width, max_depth=max_depth, **kwargs
+            )
+            final_state = await compiled_graph.ainvoke(
+                {
+                    "task": input,
+                    "paths": [[]],
+                    "candidates": [],
+                    "steps": [],
+                    "output": "",
+                    "finished": False,
+                },
+            )
+            return WorkflowResult(
+                content=final_state["output"],
+                steps=final_state["steps"],
+                orchestrator=self.name,
+                strategy=strategy,
+            )
         raise ConfigurationException(
             f"The langgraph orchestrator supports the 'sequential', 'supervisor', "
             f"'hierarchical', 'reflection', 'graph', 'parallel', 'consensus', "
-            f"'map_reduce', 'critic', and 'debate' strategies (got '{strategy}').",
+            f"'map_reduce', 'critic', 'debate', and 'tree_of_thoughts' strategies "
+            f"(got '{strategy}').",
         )

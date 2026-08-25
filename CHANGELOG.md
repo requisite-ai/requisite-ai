@@ -7,6 +7,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.33.0] - 2026-08-25
+
+### Added
+
+- `tree_of_thoughts` now runs on the `langgraph` orchestrator backend,
+  not just `native` -- the last of the four strategies flagged as
+  follow-ups across ADR-0032/ADR-0033 that Keyan asked for, and the most
+  involved: a beam search where `breadth`/`beam_width`/`max_depth` fully
+  determine every level's fan-out width at graph-build time (proved by
+  induction in the ADR), even though the actual generated thoughts and
+  whether a level finds a `finished` candidate are only known at
+  runtime. Only `planner` remains native-only now. See
+  [ADR-0034](docs/adr/0034-langgraph-tree-of-thoughts-strategy.md).
+
 ## [0.32.1] - 2026-08-25
 
 ### Added

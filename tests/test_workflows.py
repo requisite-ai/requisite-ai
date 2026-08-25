@@ -436,10 +436,10 @@ async def test_workflow_use_langgraph_arun_real_sequential_pipeline() -> None:
     assert result.content == "write:research:AI trends"
 
 
-def test_workflow_use_langgraph_rejects_tree_of_thoughts_strategy() -> None:
+def test_workflow_use_langgraph_rejects_planner_strategy() -> None:
     pytest.importorskip("langgraph")
 
-    workflow = Workflow().tree_of_thoughts()
+    workflow = Workflow().planner()
     workflow.add(make_agent("A", "a"))
     workflow.add(make_agent("B", "b"))
     workflow.use_langgraph()
@@ -1960,6 +1960,206 @@ async def test_workflow_arun_tree_of_thoughts() -> None:
 
     assert result.strategy == "tree_of_thoughts"
     assert len(result.steps) == 1
+
+
+def test_workflow_use_langgraph_tree_of_thoughts_prunes_to_best_scoring_path() -> None:
+    pytest.importorskip("langgraph")
+
+    evaluations = [
+        _ThoughtEvaluation(
+            scores=[_ThoughtScore(index=0, score=3.0), _ThoughtScore(index=1, score=9.0)]
+        ),
+        _ThoughtEvaluation(
+            scores=[_ThoughtScore(index=0, score=9.0), _ThoughtScore(index=1, score=2.0)]
+        ),
+    ]
+    evaluator = make_agent_with_provider(
+        "Evaluator", ScriptedThoughtEvaluatorProvider(evaluations=evaluations)
+    )
+    alpha = make_agent("Alpha", "alpha")
+    beta = make_agent("Beta", "beta")
+
+    workflow = Workflow().tree_of_thoughts()
+    workflow.add(evaluator).add(alpha).add(beta)
+    workflow.use_langgraph()
+    result = workflow.run("Solve the task", breadth=2, beam_width=1, max_depth=2)
+
+    assert result.strategy == "tree_of_thoughts"
+    assert result.orchestrator == "langgraph"
+    assert len(result.steps) == 4
+    assert [s.agent_name for s in result.steps] == ["Alpha", "Beta", "Alpha", "Beta"]
+    assert result.content == result.steps[2].content
+
+
+def test_workflow_use_langgraph_tree_of_thoughts_stops_early_on_finished_candidate() -> None:
+    pytest.importorskip("langgraph")
+
+    evaluations = [
+        _ThoughtEvaluation(
+            scores=[
+                _ThoughtScore(index=0, score=5.0),
+                _ThoughtScore(index=1, score=9.0, finished=True),
+            ]
+        ),
+    ]
+    evaluator = make_agent_with_provider(
+        "Evaluator", ScriptedThoughtEvaluatorProvider(evaluations=evaluations)
+    )
+    workflow = Workflow().tree_of_thoughts()
+    workflow.add(evaluator).add(make_agent("Alpha", "alpha")).add(make_agent("Beta", "beta"))
+    workflow.use_langgraph()
+
+    # max_depth=5 but should stop after level 1 since a candidate is finished.
+    result = workflow.run("Solve the task", breadth=2, beam_width=1, max_depth=5)
+
+    assert len(result.steps) == 2
+    assert result.content == result.steps[1].content
+
+
+def test_workflow_use_langgraph_tree_of_thoughts_round_robins_across_thinkers() -> None:
+    pytest.importorskip("langgraph")
+
+    evaluations = [
+        _ThoughtEvaluation(
+            scores=[
+                _ThoughtScore(index=0, score=1.0),
+                _ThoughtScore(index=1, score=2.0),
+                _ThoughtScore(index=2, score=3.0),
+            ]
+        ),
+    ]
+    evaluator = make_agent_with_provider(
+        "Evaluator", ScriptedThoughtEvaluatorProvider(evaluations=evaluations)
+    )
+    workflow = Workflow().tree_of_thoughts()
+    workflow.add(evaluator).add(make_agent("Alpha", "alpha")).add(make_agent("Beta", "beta"))
+    workflow.use_langgraph()
+
+    result = workflow.run("Solve the task", breadth=3, beam_width=1, max_depth=1)
+
+    assert [s.agent_name for s in result.steps] == ["Alpha", "Beta", "Alpha"]
+
+
+def test_workflow_use_langgraph_tree_of_thoughts_requires_at_least_two_agents() -> None:
+    pytest.importorskip("langgraph")
+
+    workflow = Workflow().tree_of_thoughts()
+    workflow.add(make_agent("Solo", "solo"))
+    workflow.use_langgraph()
+    with pytest.raises(ConfigurationException, match="tree-of-thoughts"):
+        workflow.run("task")
+
+
+def test_workflow_use_langgraph_tree_of_thoughts_invalid_breadth_raises() -> None:
+    pytest.importorskip("langgraph")
+
+    workflow = Workflow().tree_of_thoughts()
+    workflow.add(make_agent("Evaluator", "e")).add(make_agent("Thinker", "t"))
+    workflow.use_langgraph()
+    with pytest.raises(ConfigurationException, match="breadth"):
+        workflow.run("task", breadth=0)
+
+
+def test_workflow_use_langgraph_tree_of_thoughts_invalid_beam_width_raises() -> None:
+    pytest.importorskip("langgraph")
+
+    workflow = Workflow().tree_of_thoughts()
+    workflow.add(make_agent("Evaluator", "e")).add(make_agent("Thinker", "t"))
+    workflow.use_langgraph()
+    with pytest.raises(ConfigurationException, match="beam_width"):
+        workflow.run("task", beam_width=0)
+
+
+def test_workflow_use_langgraph_tree_of_thoughts_invalid_max_depth_raises() -> None:
+    pytest.importorskip("langgraph")
+
+    workflow = Workflow().tree_of_thoughts()
+    workflow.add(make_agent("Evaluator", "e")).add(make_agent("Thinker", "t"))
+    workflow.use_langgraph()
+    with pytest.raises(ConfigurationException, match="max_depth"):
+        workflow.run("task", max_depth=0)
+
+
+@pytest.mark.asyncio
+async def test_workflow_use_langgraph_arun_tree_of_thoughts() -> None:
+    pytest.importorskip("langgraph")
+
+    evaluations = [
+        _ThoughtEvaluation(
+            scores=[_ThoughtScore(index=0, score=5.0, finished=True)],
+        ),
+    ]
+    evaluator = make_agent_with_provider(
+        "Evaluator", ScriptedThoughtEvaluatorProvider(evaluations=evaluations)
+    )
+    workflow = Workflow().tree_of_thoughts()
+    workflow.add(evaluator).add(make_agent("Alpha", "alpha"))
+    workflow.use_langgraph()
+
+    result = await workflow.arun("task", breadth=1, beam_width=1, max_depth=3)
+
+    assert result.strategy == "tree_of_thoughts"
+    assert result.orchestrator == "langgraph"
+    assert len(result.steps) == 1
+
+
+def test_workflow_use_langgraph_tree_of_thoughts_preserves_order_with_eleven_candidates() -> None:
+    """Same lexicographic-write-order risk as every other fan-out
+    strategy (see docs/adr/0032/0033), now for tree_of_thoughts's
+    globally-indexed candidates channel spanning all levels. See
+    docs/adr/0034."""
+    pytest.importorskip("langgraph")
+
+    evaluations = [
+        _ThoughtEvaluation(
+            scores=[_ThoughtScore(index=i, score=float(i)) for i in range(11)],
+        ),
+    ]
+    evaluator = make_agent_with_provider(
+        "Evaluator", ScriptedThoughtEvaluatorProvider(evaluations=evaluations)
+    )
+    workflow = Workflow().tree_of_thoughts()
+    workflow.add(evaluator).add(make_agent("Thinker", "t"))
+    workflow.use_langgraph()
+
+    result = workflow.run("task", breadth=11, beam_width=1, max_depth=1)
+
+    assert len(result.steps) == 11
+
+
+def test_workflow_tree_of_thoughts_native_and_langgraph_parity() -> None:
+    pytest.importorskip("langgraph")
+
+    def build() -> Workflow:
+        evaluations = [
+            _ThoughtEvaluation(
+                scores=[_ThoughtScore(index=0, score=3.0), _ThoughtScore(index=1, score=9.0)]
+            ),
+            _ThoughtEvaluation(
+                scores=[_ThoughtScore(index=0, score=9.0), _ThoughtScore(index=1, score=2.0)]
+            ),
+        ]
+        evaluator = make_agent_with_provider(
+            "Evaluator", ScriptedThoughtEvaluatorProvider(evaluations=evaluations)
+        )
+        alpha = make_agent("Alpha", "alpha")
+        beta = make_agent("Beta", "beta")
+        workflow = Workflow().tree_of_thoughts()
+        workflow.add(evaluator).add(alpha).add(beta)
+        return workflow
+
+    native_result = build().run("Solve the task", breadth=2, beam_width=1, max_depth=2)
+
+    langgraph_workflow = build()
+    langgraph_workflow.use_langgraph()
+    langgraph_result = langgraph_workflow.run(
+        "Solve the task", breadth=2, beam_width=1, max_depth=2
+    )
+
+    assert native_result.content == langgraph_result.content
+    assert [s.agent_name for s in native_result.steps] == [
+        s.agent_name for s in langgraph_result.steps
+    ]
 
 
 # ---------------------------------------------------------------------------

@@ -359,6 +359,26 @@ def main() -> None:
         f"pruned to a beam of 2 each level)"
     )
 
+    # Same tree_of_thoughts strategy, run on the langgraph backend: each
+    # level (breadth/beam_width/max_depth fully determine every level's
+    # fan-out width at graph-build time) is a fan-out of candidate nodes
+    # joined into one structured-output evaluation/prune node -- see
+    # docs/adr/0034-langgraph-tree-of-thoughts-strategy.md.
+    try:
+        tot_workflow.use_langgraph()
+        tot_langgraph_result = tot_workflow.run(
+            "A train travels 60 miles in the first hour and 90 miles in the "
+            "second hour. What is its average speed over the two hours?",
+            breadth=3,
+            beam_width=2,
+            max_depth=3,
+        )
+        print("\n--- tree_of_thoughts (langgraph) ---")
+        print(tot_langgraph_result.content)
+        print(f"(generated {len(tot_langgraph_result.steps)} candidate thoughts)")
+    except Exception as exc:  # noqa: BLE001
+        print(f"\nlanggraph backend not available: {exc}")
+
     # Graph: an arbitrary graph of nodes wired with developer-declared
     # edges. Unlike every strategy above, routing isn't decided by an LLM
     # at run time -- Triage's output content is checked against each
