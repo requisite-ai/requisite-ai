@@ -50,6 +50,17 @@ def main() -> None:
     print("\n--- parallel (native) ---")
     print(parallel_result.content)
 
+    # Same parallel strategy, run on the langgraph backend: both agents
+    # are separate nodes in the same superstep, joined by one aggregator
+    # node -- see docs/adr/0032-langgraph-parallel-consensus-map-reduce-strategies.md.
+    try:
+        workflow.use_langgraph()
+        parallel_langgraph_result = workflow.run("What is retrieval-augmented generation?")
+        print("\n--- parallel (langgraph) ---")
+        print(parallel_langgraph_result.content)
+    except Exception as exc:  # noqa: BLE001
+        print(f"\nlanggraph backend not available: {exc}")
+
     # Switch the execution engine to langgraph -- same add()/run() API.
     # Requires: pip install langgraph
     workflow.sequential().use_langgraph()
@@ -142,6 +153,20 @@ def main() -> None:
     print(critic_result.content)
     print(f"(rounds of generator/critic exchange: {len(critic_result.steps)})")
 
+    # Same critic strategy, run on the langgraph backend: reuses the same
+    # graph builder reflection does, generalized to two agents instead of
+    # one -- see docs/adr/0033-langgraph-critic-debate-strategies.md.
+    try:
+        critic_workflow.use_langgraph()
+        critic_langgraph_result = critic_workflow.run(
+            "Write a one-sentence tagline for an open-source AI framework.", max_rounds=3
+        )
+        print("\n--- critic (langgraph) ---")
+        print(critic_langgraph_result.content)
+        print(f"(rounds of generator/critic exchange: {len(critic_langgraph_result.steps)})")
+    except Exception as exc:  # noqa: BLE001
+        print(f"\nlanggraph backend not available: {exc}")
+
     # Consensus: several agents answer independently, then the first
     # agent synthesizes their answers into one.
     consensus_writer_a = Agent(name="WriterA", provider="gemini", rate_limiter=shared_rate_limit)
@@ -154,6 +179,22 @@ def main() -> None:
     print("\n--- consensus (native) ---")
     print(consensus_result.content)
     print(f"(synthesized from: {[s.agent_name for s in consensus_result.steps[:-1]]})")
+
+    # Same consensus strategy, run on the langgraph backend: participants
+    # are concurrent nodes in one superstep, joined into one synthesizer
+    # node -- see docs/adr/0032-langgraph-parallel-consensus-map-reduce-strategies.md.
+    try:
+        consensus_workflow.use_langgraph()
+        consensus_langgraph_result = consensus_workflow.run(
+            "In one sentence, what is the single biggest benefit of retrieval-augmented generation?"
+        )
+        print("\n--- consensus (langgraph) ---")
+        print(consensus_langgraph_result.content)
+        print(
+            f"(synthesized from: {[s.agent_name for s in consensus_langgraph_result.steps[:-1]]})"
+        )
+    except Exception as exc:  # noqa: BLE001
+        print(f"\nlanggraph backend not available: {exc}")
 
     # Debate: a moderator judges two agents debating a real trade-off,
     # each round seeing the other's arguments from the previous round.
@@ -185,6 +226,22 @@ def main() -> None:
     print(debate_result.content)
     print(f"(debate steps + verdict: {len(debate_result.steps)})")
 
+    # Same debate strategy, run on the langgraph backend: max_rounds is
+    # unrolled into a static sequence of fan-out/join blocks (one per
+    # round) rather than a true cycle, since max_rounds is known at
+    # graph-build time -- see docs/adr/0033-langgraph-critic-debate-strategies.md.
+    try:
+        debate_workflow.use_langgraph()
+        debate_langgraph_result = debate_workflow.run(
+            "Should a small team building a new product start with a monolith or microservices?",
+            max_rounds=2,
+        )
+        print("\n--- debate (langgraph) ---")
+        print(debate_langgraph_result.content)
+        print(f"(debate steps + verdict: {len(debate_langgraph_result.steps)})")
+    except Exception as exc:  # noqa: BLE001
+        print(f"\nlanggraph backend not available: {exc}")
+
     # Map-reduce: each mapper summarizes one item independently
     # (round-robin across mappers), then the reducer combines them.
     mapper_a = Agent(name="MapperA", provider="gemini", rate_limiter=shared_rate_limit)
@@ -208,6 +265,25 @@ def main() -> None:
     print("\n--- map_reduce (native) ---")
     print(map_reduce_result.content)
     print(f"(mapped by: {[s.agent_name for s in map_reduce_result.steps[:-1]]})")
+
+    # Same map_reduce strategy, run on the langgraph backend: one node
+    # per item (round-robin across mappers), joined into one reducer
+    # node -- see docs/adr/0032-langgraph-parallel-consensus-map-reduce-strategies.md.
+    try:
+        map_reduce_workflow.use_langgraph()
+        map_reduce_langgraph_result = map_reduce_workflow.run(
+            "Summarize the key idea of each note in one sentence each.",
+            map_items=[
+                "RAG grounds LLM answers in retrieved documents to reduce hallucination.",
+                "MCP standardizes how AI applications connect to external tools and data.",
+                "LangGraph models agent workflows as graphs instead of linear chains.",
+            ],
+        )
+        print("\n--- map_reduce (langgraph) ---")
+        print(map_reduce_langgraph_result.content)
+        print(f"(mapped by: {[s.agent_name for s in map_reduce_langgraph_result.steps[:-1]]})")
+    except Exception as exc:  # noqa: BLE001
+        print(f"\nlanggraph backend not available: {exc}")
 
     # Hierarchical: a top-level coordinator delegates to either a plain
     # agent or a named sub-team Workflow -- delegating to a Workflow

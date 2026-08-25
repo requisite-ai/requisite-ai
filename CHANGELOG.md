@@ -7,6 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.32.1] - 2026-08-25
+
+### Added
+
+- `examples/workflow_example.py` extended with `langgraph` demonstrations
+  of `parallel`, `consensus`, `map_reduce`, `critic`, and `debate` --
+  ADR-0032 and ADR-0033 shipped the backend support but not the example
+  coverage for it. Verified against real Gemini output, each new
+  strategy running immediately after its native counterpart against the
+  same input.
+
 ## [0.32.0] - 2026-08-25
 
 ### Added
