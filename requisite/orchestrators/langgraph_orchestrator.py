@@ -12,8 +12,10 @@ Install with: ``pip install langgraph``
 
 Notes
 -----
-Twelve strategies are supported -- every native strategy has a
-langgraph counterpart: ``"sequential"`` (a linear chain -- each
+Twelve strategies are supported -- every native strategy except
+``"reflexion"`` (native-only so far, see
+``docs/adr/0036-reflexion-strategy.md``) has a langgraph counterpart:
+``"sequential"`` (a linear chain -- each
 agent is a node, wired node-to-node in the order added); ``"supervisor"``
 and ``"hierarchical"`` (both a real conditional graph built by the same
 :meth:`LangGraphOrchestrator._build_delegation_graph` -- one coordinator
@@ -273,7 +275,8 @@ class LangGraphOrchestrator(BaseOrchestrator):
     ``"consensus"``/``"map_reduce"``, a static per-round unroll of
     fan-out/join blocks for ``"debate"``, and a static per-level unroll
     of fan-out/evaluate/prune blocks for ``"tree_of_thoughts"``. Every
-    native strategy has a langgraph counterpart. See module docstring.
+    native strategy except ``"reflexion"`` (native-only so far) has a
+    langgraph counterpart. See module docstring.
     """
 
     @property
