@@ -13,7 +13,7 @@ instead of letting Gemini reject the call with a 429. See the "Rate
 limiting" section of README.md and docs/adr/0008-rate-limiting.md.
 """
 
-from requisite import END, Agent, RateLimiter, Workflow
+from requisite import END, Agent, EvaluationResult, RateLimiter, Workflow
 
 # Shared across every agent below since they all draw on the same Gemini
 # API key/quota -- a limiter scoped to just one agent wouldn't help, since
@@ -396,6 +396,39 @@ def main() -> None:
         print(f"(generated {len(tot_langgraph_result.steps)} candidate thoughts)")
     except Exception as exc:  # noqa: BLE001
         print(f"\nlanggraph backend not available: {exc}")
+
+    # Reflexion: a single agent attempts a task, a pluggable evaluator
+    # scores the attempt, and on failure the agent reflects before
+    # trying again from scratch -- up to max_trials independent trials.
+    # A deterministic custom evaluator (checking the correct number
+    # appears in the answer) makes this example's outcome reproducible
+    # without relying on an LLM to judge its own arithmetic.
+    solver = Agent(
+        name="Solver",
+        provider="gemini",
+        system_prompt="You solve arithmetic word problems, showing your work briefly.",
+        rate_limiter=shared_rate_limit,
+    )
+
+    def check_contains_391(task: str, attempt: str) -> EvaluationResult:
+        if "391" in attempt:
+            return EvaluationResult(success=True, feedback="Correct.")
+        return EvaluationResult(
+            success=False,
+            feedback="The final numeric answer is wrong -- recompute 17 * 23 carefully.",
+        )
+
+    reflexion_workflow = Workflow().reflexion()
+    reflexion_workflow.add(solver)
+    reflexion_result = reflexion_workflow.run(
+        "What is 17 * 23?", evaluator=check_contains_391, max_trials=3
+    )
+    print("\n--- reflexion (native) ---")
+    print(reflexion_result.content)
+    print(
+        f"(succeeded: {reflexion_result.succeeded}, "
+        f"{len(reflexion_result.steps)} step(s) across up to 3 trials)"
+    )
 
     # Graph: an arbitrary graph of nodes wired with developer-declared
     # edges. Unlike every strategy above, routing isn't decided by an LLM

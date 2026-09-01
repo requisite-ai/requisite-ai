@@ -810,10 +810,11 @@ re-ranking, context compression), memory + conversation policies
 structured logging plus OpenTelemetry tracing/metrics, agents +
 registry, multi-agent workflows (sequential, parallel, reflection,
 planner, supervisor, critic, consensus, debate, map-reduce,
-hierarchical, tree-of-thoughts, and graph -- all twelve run on both the
-native and langgraph backends; sequential on CrewAI and AutoGen,
-supervisor also on AutoGen), entry-point plugin discovery, an
-official plugin directory (`PLUGINS.md`).
+hierarchical, tree-of-thoughts, reflexion, and graph -- twelve of the
+thirteen run on both the native and langgraph backends, reflexion is
+native-only so far; sequential on CrewAI and AutoGen, supervisor also
+on AutoGen), entry-point plugin discovery, an official plugin directory
+(`PLUGINS.md`).
 
 See [`ROADMAP.md`](ROADMAP.md) for the full, per-layer status table
 (providers, orchestration strategies, MCP, memory, RAG, ...) and what's

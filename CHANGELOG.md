@@ -7,6 +7,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.35.0] - 2026-09-01
+
+### Added
+
+- New `reflexion` multi-agent strategy (`native` orchestrator only), based
+  on the published Reflexion technique (Actor / Evaluator /
+  Self-Reflection). A single agent attempts a task from scratch, is
+  scored by a pluggable `evaluator=` callback (falls back to the same
+  agent judging its own attempt via structured output if none is
+  given), and on failure writes a self-reflection lesson that's folded
+  into the next attempt's prompt -- for up to `max_trials` independent
+  trials, stopping as soon as the evaluator reports success. Unlike
+  `reflection`/`critic`, each trial re-attempts the whole task rather
+  than revising the previous draft. Adds a new public
+  `EvaluationResult`/`Evaluator` contract and an optional
+  `WorkflowResult.succeeded` field. See
+  [ADR-0036](docs/adr/0036-reflexion-strategy.md).
+
 ## [0.34.0] - 2026-08-25
 
 ### Added

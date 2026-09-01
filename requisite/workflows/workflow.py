@@ -48,6 +48,7 @@ _KNOWN_STRATEGIES = {
     "map_reduce",
     "hierarchical",
     "tree_of_thoughts",
+    "reflexion",
     "graph",
 }
 
@@ -88,24 +89,31 @@ class Workflow:
           reasoning steps the remaining agents generate, branching and
           pruning a search tree over several levels (see
           :meth:`tree_of_thoughts`).
+        - ``"reflexion"``: a single agent attempts the task from
+          scratch, is scored by a pluggable evaluator, and reflects on
+          failure before retrying, over several independent trials (see
+          :meth:`reflexion`).
         - ``"graph"``: an arbitrary graph of nodes wired together with
           explicit, developer-declared edges (see :meth:`graph` and
           :meth:`add_edge`) -- unlike every strategy above, routing isn't
           decided by an LLM at run time; the graph's shape is fixed when
           you build it.
 
-        ``"planner"``, ``"critic"``, ``"consensus"``, ``"debate"``, and
-        ``"map_reduce"``, and ``"tree_of_thoughts"`` are currently only
-        implemented on the ``"native"`` orchestrator backend.
-        ``"sequential"``, ``"supervisor"``, ``"reflection"``,
-        ``"hierarchical"``, and ``"graph"`` are also implemented on
-        ``"langgraph"`` -- on langgraph, ``"supervisor"``/``"hierarchical"``
-        are a real conditional graph (``add_conditional_edges`` plus a
-        loop-back cycle) and ``"graph"`` builds the identical developer-
-        declared graph natively, not a disguised Python loop; see
+        Every strategy except ``"reflexion"`` runs on both the
+        ``"native"`` and ``"langgraph"`` orchestrator backends.
+        ``"reflexion"`` is currently ``"native"``-only; langgraph parity
+        is a natural follow-up, not yet built. On langgraph,
+        ``"supervisor"``/``"hierarchical"`` are a real conditional graph
+        (``add_conditional_edges`` plus a loop-back cycle) and
+        ``"graph"`` builds the identical developer-declared graph
+        natively, not a disguised Python loop; see
         ``docs/adr/0016-langgraph-branching.md``,
-        ``docs/adr/0028-langgraph-reflection-strategy.md``, and
-        ``docs/adr/0029-langgraph-hierarchical-graph-strategies.md``.
+        ``docs/adr/0028-langgraph-reflection-strategy.md``,
+        ``docs/adr/0029-langgraph-hierarchical-graph-strategies.md``,
+        ``docs/adr/0032-langgraph-parallel-consensus-map-reduce-strategies.md``,
+        ``docs/adr/0033-langgraph-critic-debate-strategies.md``,
+        ``docs/adr/0034-langgraph-tree-of-thoughts-strategy.md``, and
+        ``docs/adr/0035-langgraph-planner-strategy.md``.
     orchestrator:
         Execution backend: ``"native"`` (default, pure Python, no extra
         dependency), ``"langgraph"``, ``"crewai"``, or ``"autogen"`` --
@@ -324,6 +332,27 @@ class Workflow:
         ``docs/adr/0018-tree-of-thoughts-strategy.md``.
         """
         self._strategy = "tree_of_thoughts"
+        return self
+
+    def reflexion(self) -> "Workflow":
+        """Switch to the reflexion strategy. Returns ``self`` for chaining.
+
+        Requires exactly one agent. Unlike :meth:`reflection`, which
+        revises the *same* draft, each trial here attempts the whole
+        task again from scratch. Pass ``evaluator=`` to
+        :meth:`run`/:meth:`arun` (a ``(task, attempt_content) ->
+        EvaluationResult`` callable -- see
+        :class:`~requisite.orchestrators.base.EvaluationResult`) to
+        score each attempt; omit it and the same agent judges its own
+        attempt via structured output instead. On failure, a
+        self-reflection lesson is generated and folded into the next
+        attempt's prompt. Runs for up to ``max_trials=`` independent
+        trials (default 3), stopping as soon as the evaluator reports
+        success. See ``docs/adr/0036-reflexion-strategy.md``.
+
+        Only implemented on :meth:`use_native` (the default) today.
+        """
+        self._strategy = "reflexion"
         return self
 
     def graph(self) -> "Workflow":

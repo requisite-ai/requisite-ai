@@ -143,7 +143,7 @@ from requisite.memory.in_process import InProcessMemory
 from requisite.memory.policies import BaseConversationPolicy, MessageCountPolicy, SummarizingPolicy
 from requisite.memory.sqlite import SQLiteMemory
 from requisite.memory.vector import VectorMemory
-from requisite.orchestrators.base import END, WorkflowResult
+from requisite.orchestrators.base import END, EvaluationResult, Evaluator, WorkflowResult
 from requisite.prompts import default_prompt_registry
 from requisite.prompts.registry import PromptTemplateRegistry
 from requisite.prompts.template import ChatPromptTemplate, PromptTemplate
@@ -209,6 +209,9 @@ __all__ = [
     # Multi-agent workflows: terminating edge sentinel for the "graph" strategy
     "END",
     "EmbeddingRegistry",
+    # Multi-agent workflows: the "reflexion" strategy's pluggable evaluator contract
+    "EvaluationResult",
+    "Evaluator",
     "HybridRetriever",
     "InProcessMemory",
     "LLMReranker",
@@ -261,4 +264,4 @@ __all__ = [
     "tool",
 ]
 
-__version__ = "0.34.0"
+__version__ = "0.35.0"

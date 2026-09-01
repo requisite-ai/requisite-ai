@@ -16,7 +16,7 @@ providers.
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 from typing import Any, Optional
 
 from pydantic import BaseModel, ConfigDict, Field
@@ -45,6 +45,11 @@ class WorkflowResult(BaseModel):
         (e.g. ``"native"``, ``"langgraph"``).
     strategy:
         Execution strategy used (e.g. ``"sequential"``, ``"parallel"``).
+    succeeded:
+        Only set by the ``"reflexion"`` strategy, ``True``/``False``
+        depending on whether an evaluator ever reported success within
+        ``max_trials``. ``None`` for every other strategy, which have
+        no equivalent pass/fail signal to report.
     """
 
     model_config = ConfigDict(arbitrary_types_allowed=True)
@@ -53,9 +58,37 @@ class WorkflowResult(BaseModel):
     steps: list[Any] = Field(default_factory=list)
     orchestrator: str
     strategy: str
+    succeeded: Optional[bool] = None
 
     def __str__(self) -> str:  # pragma: no cover - trivial
         return self.content
+
+
+class EvaluationResult(BaseModel):
+    """The verdict from scoring one ``"reflexion"`` attempt.
+
+    Parameters
+    ----------
+    success:
+        Whether the attempt satisfies the task. ``True`` ends the
+        reflexion loop immediately.
+    feedback:
+        What went wrong (or right), fed into the self-reflection step
+        to produce the next attempt's actionable lesson.
+    """
+
+    success: bool
+    feedback: str
+
+
+#: A caller-supplied evaluator for the ``"reflexion"`` strategy:
+#: ``(task, attempt_content) -> EvaluationResult``. Deliberately a plain
+#: callable, not a base class to subclass -- an evaluator can be
+#: anything from a one-line lambda to a function that runs a real test
+#: suite and reports pass/fail. When ``evaluator=`` is omitted, the
+#: framework falls back to judging the attempt with the same agent via
+#: structured output instead.
+Evaluator = Callable[[str, str], EvaluationResult]
 
 
 class BaseOrchestrator(ABC):

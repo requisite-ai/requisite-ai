@@ -74,3 +74,4 @@ need one — `CONTRIBUTING.md` already covers those.
 | [0033](0033-langgraph-critic-debate-strategies.md) | LangGraph backend: critic and debate strategies | Accepted |
 | [0034](0034-langgraph-tree-of-thoughts-strategy.md) | LangGraph backend: tree-of-thoughts strategy | Accepted |
 | [0035](0035-langgraph-planner-strategy.md) | LangGraph backend: planner strategy | Accepted |
+| [0036](0036-reflexion-strategy.md) | Reflexion multi-agent strategy | Accepted |

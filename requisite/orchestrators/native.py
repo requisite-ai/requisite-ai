@@ -1,8 +1,8 @@
 """
 Native orchestrator: sequential, parallel, reflection, planner,
 supervisor, critic, consensus, debate, map-reduce, hierarchical,
-tree-of-thoughts, and graph execution -- no external orchestration
-framework required.
+tree-of-thoughts, reflexion, and graph execution -- no external
+orchestration framework required.
 
 This is the default backend for :class:`~requisite.workflows.workflow.Workflow`.
 Further strategies are natural extensions of this class -- add a
@@ -28,7 +28,13 @@ from typing import TYPE_CHECKING, Any, Literal, Optional
 from pydantic import BaseModel, Field
 
 from requisite.core.exceptions import AgentException, ConfigurationException
-from requisite.orchestrators.base import END, BaseOrchestrator, WorkflowResult
+from requisite.orchestrators.base import (
+    END,
+    BaseOrchestrator,
+    EvaluationResult,
+    Evaluator,
+    WorkflowResult,
+)
 
 if TYPE_CHECKING:
     from requisite.agents.agent import Agent, AgentResult
@@ -165,6 +171,25 @@ def _critic_prompt(task: str, draft: str) -> str:
         "Critique the answer above for accuracy, completeness, and clarity. "
         "If it is already excellent and needs no changes, respond with exactly: "
         "NO_CHANGES_NEEDED. Otherwise, list the specific issues to fix."
+    )
+
+
+def _reflexion_default_evaluation_prompt(task: str, attempt: str) -> str:
+    return (
+        f"Task: {task}\n\nAttempt:\n{attempt}\n\n"
+        "Judge whether this attempt fully and correctly solves the task. "
+        "Set success=True only if it does; otherwise set success=False and "
+        "explain specifically what is wrong or missing in feedback."
+    )
+
+
+def _reflexion_reflect_prompt(task: str, attempt: str, feedback: str) -> str:
+    return (
+        f"Task: {task}\n\nYour attempt:\n{attempt}\n\n"
+        f"Evaluator feedback:\n{feedback}\n\n"
+        "Write a short, specific, actionable lesson for your next attempt at "
+        "this same task -- what to do differently, not a restatement of the "
+        "feedback."
     )
 
 
@@ -366,6 +391,17 @@ class NativeOrchestrator(BaseOrchestrator):
         scored as a complete final answer. See
         ``docs/adr/0018-tree-of-thoughts-strategy.md``.
 
+    Reflexion strategy
+        A single agent (``steps[0]``) attempts the task from scratch, is
+        scored by an ``evaluator`` callback (``(task, attempt) ->
+        EvaluationResult``; falls back to the same agent judging itself
+        via structured output if none is given), and, on failure, writes
+        a self-reflection lesson that's folded into the *next* attempt's
+        prompt -- for up to ``max_trials`` independent trials, stopping
+        as soon as the evaluator reports success. Unlike ``reflection``,
+        each trial re-attempts the whole task rather than revising the
+        previous draft. See ``docs/adr/0036-reflexion-strategy.md``.
+
     Graph strategy
         An arbitrary graph of nodes (``steps``, each an ``Agent`` or a
         named ``Workflow`` "team") wired together with edges declared
@@ -390,6 +426,7 @@ class NativeOrchestrator(BaseOrchestrator):
         "map_reduce",
         "tree_of_thoughts",
         "hierarchical",
+        "reflexion",
         "graph",
     )
 
@@ -432,6 +469,8 @@ class NativeOrchestrator(BaseOrchestrator):
             return self._run_tree_of_thoughts(steps, input, **kwargs)
         if strategy == "hierarchical":
             return self._run_hierarchical(steps, input, **kwargs)
+        if strategy == "reflexion":
+            return self._run_reflexion(steps, input, **kwargs)
         if strategy == "graph":
             return self._run_graph(steps, input, **kwargs)
         raise ConfigurationException(
@@ -474,6 +513,8 @@ class NativeOrchestrator(BaseOrchestrator):
             return await self._arun_tree_of_thoughts(steps, input, **kwargs)
         if strategy == "hierarchical":
             return await self._arun_hierarchical(steps, input, **kwargs)
+        if strategy == "reflexion":
+            return await self._arun_reflexion(steps, input, **kwargs)
         if strategy == "graph":
             return await self._arun_graph(steps, input, **kwargs)
         raise ConfigurationException(
@@ -639,6 +680,112 @@ class NativeOrchestrator(BaseOrchestrator):
 
         return WorkflowResult(
             content=draft.content, steps=results, orchestrator=self.name, strategy="reflection"
+        )
+
+    def _run_reflexion(
+        self,
+        steps: Sequence["Agent"],
+        input: str,  # noqa: A002
+        *,
+        max_trials: int = 3,
+        evaluator: Optional[Evaluator] = None,
+        **kwargs: Any,
+    ) -> WorkflowResult:
+        if len(steps) != 1:
+            raise ConfigurationException(
+                f"The 'reflexion' strategy requires exactly one agent (it attempts, "
+                f"evaluates, and reflects on its own output). Got {len(steps)}.",
+            )
+        worker = steps[0]
+        results: list["AgentResult"] = []
+        reflections: list[str] = []
+        attempt: Optional["AgentResult"] = None
+        succeeded = False
+
+        for trial in range(max_trials):
+            attempt = worker.run(self._task_prompt_with_context(input, reflections), **kwargs)
+            results.append(attempt)
+
+            if evaluator is not None:
+                evaluation = evaluator(input, attempt.content)
+            else:
+                evaluation = worker.ai.chat(
+                    _reflexion_default_evaluation_prompt(input, attempt.content),
+                    response_model=EvaluationResult,
+                )
+
+            if evaluation.success:
+                succeeded = True
+                break
+            if trial < max_trials - 1:
+                reflection = worker.run(
+                    _reflexion_reflect_prompt(input, attempt.content, evaluation.feedback),
+                    **kwargs,
+                )
+                results.append(reflection)
+                reflections.append(reflection.content)
+
+        assert attempt is not None  # max_trials >= 1 is enforced by callers via Workflow
+        return WorkflowResult(
+            content=attempt.content,
+            steps=results,
+            orchestrator=self.name,
+            strategy="reflexion",
+            succeeded=succeeded,
+        )
+
+    async def _arun_reflexion(
+        self,
+        steps: Sequence["Agent"],
+        input: str,  # noqa: A002
+        *,
+        max_trials: int = 3,
+        evaluator: Optional[Evaluator] = None,
+        **kwargs: Any,
+    ) -> WorkflowResult:
+        if len(steps) != 1:
+            raise ConfigurationException(
+                f"The 'reflexion' strategy requires exactly one agent (it attempts, "
+                f"evaluates, and reflects on its own output). Got {len(steps)}.",
+            )
+        worker = steps[0]
+        results: list["AgentResult"] = []
+        reflections: list[str] = []
+        attempt: Optional["AgentResult"] = None
+        succeeded = False
+
+        for trial in range(max_trials):
+            attempt = await worker.arun(
+                self._task_prompt_with_context(input, reflections), **kwargs
+            )
+            results.append(attempt)
+
+            if evaluator is not None:
+                evaluation = evaluator(input, attempt.content)
+            else:
+                evaluation = await worker.ai.achat(
+                    _reflexion_default_evaluation_prompt(input, attempt.content),
+                    response_model=EvaluationResult,
+                )
+
+            if evaluation.success:
+                succeeded = True
+                break
+            if trial < max_trials - 1:
+                reflection = await worker.arun(
+                    _reflexion_reflect_prompt(input, attempt.content, evaluation.feedback),
+                    **kwargs,
+                )
+                results.append(reflection)
+                reflections.append(reflection.content)
+
+        assert attempt is not None  # max_trials >= 1 is enforced by callers via Workflow
+        return WorkflowResult(
+            content=attempt.content,
+            steps=results,
+            orchestrator=self.name,
+            strategy="reflexion",
+            succeeded=succeeded,
         )
 
     def _run_planner(

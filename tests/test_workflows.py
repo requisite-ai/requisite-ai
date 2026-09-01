@@ -15,7 +15,7 @@ from requisite.agents.agent import Agent
 from requisite.config.settings import Settings
 from requisite.core.exceptions import AgentException, ConfigurationException
 from requisite.core.interfaces import ChatResponse, Message, StreamChunk
-from requisite.orchestrators.base import WorkflowResult
+from requisite.orchestrators.base import EvaluationResult, WorkflowResult
 from requisite.orchestrators.factory import (
     OrchestratorRegistry,
     default_registry as default_orchestrator_registry,
@@ -247,6 +247,67 @@ class ScriptedReflectionProvider(BaseProvider):
         content = self._responses[self._call_count]
         self._call_count += 1
         return ChatResponse(content=content, model=self._model, provider=self.name)
+
+    async def achat(
+        self, messages, *, model=None, temperature=None, tools=None, response_model=None, **kwargs
+    ) -> ChatResponse:
+        return self.chat(messages, **kwargs)
+
+    def stream(
+        self, messages, *, model=None, temperature=None, tools=None, response_model=None, **kwargs
+    ) -> Iterator[StreamChunk]:  # pragma: no cover
+        raise NotImplementedError
+
+    async def astream(
+        self, messages, *, model=None, temperature=None, tools=None, response_model=None, **kwargs
+    ) -> AsyncIterator[StreamChunk]:  # pragma: no cover
+        raise NotImplementedError
+        yield  # pragma: no cover
+
+
+class ScriptedReflexionProvider(BaseProvider):
+    """A fake provider that returns pre-set responses in sequence, by call count.
+
+    Each scripted response is either a plain string (used as
+    ``ChatResponse.content``, for attempt/reflect calls) or an
+    :class:`~requisite.orchestrators.base.EvaluationResult` (used as
+    ``ChatResponse.parsed``, for the default LLM-judge evaluator's
+    ``response_model=EvaluationResult`` call) -- covers a full
+    ``reflexion`` trial sequence with one scripted provider.
+    """
+
+    def __init__(
+        self,
+        *,
+        responses: list["str | EvaluationResult"],
+        model: str = "fake-model",
+        **kwargs: Any,
+    ) -> None:
+        super().__init__(api_key="fake-key", model=model)
+        self._responses = responses
+        self._call_count = 0
+        self.last_messages: list[Message] = []
+
+    @property
+    def name(self) -> str:
+        return "scripted-reflexion"
+
+    def chat(
+        self,
+        messages: Sequence[Message],
+        *,
+        model=None,
+        temperature=None,
+        tools=None,
+        response_model=None,
+        **kwargs,
+    ) -> ChatResponse:
+        self.last_messages = list(messages)
+        item = self._responses[self._call_count]
+        self._call_count += 1
+        if isinstance(item, EvaluationResult):
+            return ChatResponse(content="", model=self._model, provider=self.name, parsed=item)
+        return ChatResponse(content=item, model=self._model, provider=self.name)
 
     async def achat(
         self, messages, *, model=None, temperature=None, tools=None, response_model=None, **kwargs
@@ -2386,6 +2447,140 @@ async def test_workflow_arun_hierarchical() -> None:
     result = await workflow.arun("task")
 
     assert result.content == "done"
+
+
+# ---------------------------------------------------------------------------
+# Reflexion strategy
+# ---------------------------------------------------------------------------
+
+
+def test_workflow_reflexion_succeeds_on_first_attempt() -> None:
+    provider = ScriptedReflexionProvider(responses=["the answer is 42"])
+    worker = make_agent_with_provider("Worker", provider)
+    workflow = Workflow().reflexion()
+    workflow.add(worker)
+
+    def evaluator(task: str, content: str) -> EvaluationResult:
+        return EvaluationResult(success="42" in content, feedback="")
+
+    result = workflow.run("what is the answer", evaluator=evaluator, max_trials=3)
+
+    assert result.strategy == "reflexion"
+    assert result.orchestrator == "native"
+    assert result.content == "the answer is 42"
+    assert result.succeeded is True
+    assert len(result.steps) == 1
+
+
+def test_workflow_reflexion_reflects_then_succeeds() -> None:
+    provider = ScriptedReflexionProvider(
+        responses=["wrong answer", "be more precise", "the answer is 42"]
+    )
+    worker = make_agent_with_provider("Worker", provider)
+    workflow = Workflow().reflexion()
+    workflow.add(worker)
+
+    calls = {"n": 0}
+
+    def evaluator(task: str, content: str) -> EvaluationResult:
+        calls["n"] += 1
+        return EvaluationResult(success=calls["n"] >= 2, feedback="too vague")
+
+    result = workflow.run("what is the answer", evaluator=evaluator, max_trials=5)
+
+    assert result.succeeded is True
+    assert result.content == "the answer is 42"
+    assert len(result.steps) == 3
+    # The 2nd attempt's prompt must fold in the reflection from the 1st trial.
+    assert "be more precise" in provider.last_messages[-1].content
+
+
+def test_workflow_reflexion_exhausts_max_trials_without_success() -> None:
+    provider = ScriptedReflexionProvider(
+        responses=["attempt1", "lesson1", "attempt2", "lesson2", "attempt3"]
+    )
+    worker = make_agent_with_provider("Worker", provider)
+    workflow = Workflow().reflexion()
+    workflow.add(worker)
+
+    def never_succeeds(task: str, content: str) -> EvaluationResult:
+        return EvaluationResult(success=False, feedback="still wrong")
+
+    result = workflow.run("task", evaluator=never_succeeds, max_trials=3)
+
+    assert result.succeeded is False
+    assert result.content == "attempt3"
+    # attempt, reflect, attempt, reflect, attempt -- no reflection after the last trial.
+    assert len(result.steps) == 5
+    assert provider._call_count == 5
+
+
+def test_workflow_reflexion_requires_exactly_one_agent() -> None:
+    workflow = Workflow().reflexion()
+    workflow.add(make_agent("A", "a")).add(make_agent("B", "b"))
+    with pytest.raises(ConfigurationException, match="reflexion"):
+        workflow.run("task")
+
+
+def test_workflow_reflexion_default_evaluator_uses_structured_output() -> None:
+    provider = ScriptedReflexionProvider(
+        responses=[
+            "wrong answer",
+            EvaluationResult(success=False, feedback="incorrect"),
+            "lesson learned",
+            "the answer is 42",
+            EvaluationResult(success=True, feedback="correct"),
+        ]
+    )
+    worker = make_agent_with_provider("Worker", provider)
+    workflow = Workflow().reflexion()
+    workflow.add(worker)
+
+    result = workflow.run("what is the answer", max_trials=3)  # no evaluator= passed
+
+    assert result.succeeded is True
+    assert result.content == "the answer is 42"
+    assert len(result.steps) == 3
+
+
+def test_workflow_reflexion_evaluator_exception_propagates() -> None:
+    provider = ScriptedReflexionProvider(responses=["attempt1"])
+    worker = make_agent_with_provider("Worker", provider)
+    workflow = Workflow().reflexion()
+    workflow.add(worker)
+
+    def broken(task: str, content: str) -> EvaluationResult:
+        raise ValueError("evaluator is broken")
+
+    with pytest.raises(ValueError, match="evaluator is broken"):
+        workflow.run("task", evaluator=broken, max_trials=3)
+
+
+def test_workflow_use_langgraph_rejects_reflexion_strategy() -> None:
+    workflow = Workflow().reflexion().use_langgraph()
+    workflow.add(make_agent("Worker", "w"))
+    with pytest.raises(ConfigurationException, match="langgraph orchestrator supports"):
+        workflow.run("task")
+
+
+@pytest.mark.asyncio
+async def test_workflow_arun_reflexion() -> None:
+    provider = ScriptedReflexionProvider(responses=["attempt1", "lesson1", "the answer is 42"])
+    worker = make_agent_with_provider("Worker", provider)
+    workflow = Workflow().reflexion()
+    workflow.add(worker)
+
+    calls = {"n": 0}
+
+    def evaluator(task: str, content: str) -> EvaluationResult:
+        calls["n"] += 1
+        return EvaluationResult(success=calls["n"] >= 2, feedback="try again")
+
+    result = await workflow.arun("task", evaluator=evaluator, max_trials=5)
+
+    assert result.succeeded is True
+    assert result.content == "the answer is 42"
+    assert len(result.steps) == 3
 
 
 # ---------------------------------------------------------------------------
