@@ -2556,13 +2556,6 @@ def test_workflow_reflexion_evaluator_exception_propagates() -> None:
         workflow.run("task", evaluator=broken, max_trials=3)
 
 
-def test_workflow_use_langgraph_rejects_reflexion_strategy() -> None:
-    workflow = Workflow().reflexion().use_langgraph()
-    workflow.add(make_agent("Worker", "w"))
-    with pytest.raises(ConfigurationException, match="langgraph orchestrator supports"):
-        workflow.run("task")
-
-
 @pytest.mark.asyncio
 async def test_workflow_arun_reflexion() -> None:
     provider = ScriptedReflexionProvider(responses=["attempt1", "lesson1", "the answer is 42"])
@@ -2581,6 +2574,167 @@ async def test_workflow_arun_reflexion() -> None:
     assert result.succeeded is True
     assert result.content == "the answer is 42"
     assert len(result.steps) == 3
+
+
+def test_workflow_use_langgraph_reflexion_succeeds_on_first_attempt() -> None:
+    pytest.importorskip("langgraph")
+
+    provider = ScriptedReflexionProvider(responses=["the answer is 42"])
+    worker = make_agent_with_provider("Worker", provider)
+
+    def evaluator(task: str, content: str) -> EvaluationResult:
+        return EvaluationResult(success="42" in content, feedback="")
+
+    workflow = Workflow().reflexion()
+    workflow.add(worker)
+    workflow.use_langgraph()
+    result = workflow.run("what is the answer", evaluator=evaluator, max_trials=3)
+
+    assert result.strategy == "reflexion"
+    assert result.orchestrator == "langgraph"
+    assert result.content == "the answer is 42"
+    assert result.succeeded is True
+    assert len(result.steps) == 1
+
+
+def test_workflow_use_langgraph_reflexion_reflects_then_succeeds() -> None:
+    pytest.importorskip("langgraph")
+
+    provider = ScriptedReflexionProvider(
+        responses=["wrong answer", "be more precise", "the answer is 42"]
+    )
+    worker = make_agent_with_provider("Worker", provider)
+
+    calls = {"n": 0}
+
+    def evaluator(task: str, content: str) -> EvaluationResult:
+        calls["n"] += 1
+        return EvaluationResult(success=calls["n"] >= 2, feedback="too vague")
+
+    workflow = Workflow().reflexion()
+    workflow.add(worker)
+    workflow.use_langgraph()
+    result = workflow.run("what is the answer", evaluator=evaluator, max_trials=5)
+
+    assert result.succeeded is True
+    assert result.content == "the answer is 42"
+    assert len(result.steps) == 3
+    assert "be more precise" in provider.last_messages[-1].content
+
+
+def test_workflow_use_langgraph_reflexion_exhausts_max_trials_without_success() -> None:
+    pytest.importorskip("langgraph")
+
+    provider = ScriptedReflexionProvider(
+        responses=["attempt1", "lesson1", "attempt2", "lesson2", "attempt3"]
+    )
+    worker = make_agent_with_provider("Worker", provider)
+
+    def never_succeeds(task: str, content: str) -> EvaluationResult:
+        return EvaluationResult(success=False, feedback="still wrong")
+
+    workflow = Workflow().reflexion()
+    workflow.add(worker)
+    workflow.use_langgraph()
+    result = workflow.run("task", evaluator=never_succeeds, max_trials=3)
+
+    assert result.succeeded is False
+    assert result.content == "attempt3"
+    # attempt, reflect, attempt, reflect, attempt -- no reflection after the last trial.
+    assert len(result.steps) == 5
+
+
+def test_workflow_use_langgraph_reflexion_requires_exactly_one_agent() -> None:
+    pytest.importorskip("langgraph")
+
+    workflow = Workflow().reflexion()
+    workflow.add(make_agent("A", "a")).add(make_agent("B", "b"))
+    workflow.use_langgraph()
+    with pytest.raises(ConfigurationException, match="reflexion"):
+        workflow.run("task")
+
+
+def test_workflow_use_langgraph_reflexion_default_evaluator_uses_structured_output() -> None:
+    pytest.importorskip("langgraph")
+
+    provider = ScriptedReflexionProvider(
+        responses=[
+            "wrong answer",
+            EvaluationResult(success=False, feedback="incorrect"),
+            "lesson learned",
+            "the answer is 42",
+            EvaluationResult(success=True, feedback="correct"),
+        ]
+    )
+    worker = make_agent_with_provider("Worker", provider)
+    workflow = Workflow().reflexion()
+    workflow.add(worker)
+    workflow.use_langgraph()
+
+    result = workflow.run("what is the answer", max_trials=3)  # no evaluator= passed
+
+    assert result.succeeded is True
+    assert result.content == "the answer is 42"
+    assert len(result.steps) == 3
+
+
+@pytest.mark.asyncio
+async def test_workflow_use_langgraph_arun_reflexion() -> None:
+    pytest.importorskip("langgraph")
+
+    provider = ScriptedReflexionProvider(responses=["attempt1", "lesson1", "the answer is 42"])
+    worker = make_agent_with_provider("Worker", provider)
+
+    calls = {"n": 0}
+
+    def evaluator(task: str, content: str) -> EvaluationResult:
+        calls["n"] += 1
+        return EvaluationResult(success=calls["n"] >= 2, feedback="try again")
+
+    workflow = Workflow().reflexion()
+    workflow.add(worker)
+    workflow.use_langgraph()
+    result = await workflow.arun("task", evaluator=evaluator, max_trials=5)
+
+    assert result.succeeded is True
+    assert result.content == "the answer is 42"
+    assert len(result.steps) == 3
+
+
+def test_workflow_reflexion_native_and_langgraph_parity() -> None:
+    pytest.importorskip("langgraph")
+
+    def build() -> Workflow:
+        provider = ScriptedReflexionProvider(
+            responses=["wrong answer", "be more precise", "the answer is 42"]
+        )
+        worker = make_agent_with_provider("Worker", provider)
+        workflow = Workflow().reflexion()
+        workflow.add(worker)
+        return workflow
+
+    def make_evaluator():
+        calls = {"n": 0}
+
+        def evaluator(task: str, content: str) -> EvaluationResult:
+            calls["n"] += 1
+            return EvaluationResult(success=calls["n"] >= 2, feedback="too vague")
+
+        return evaluator
+
+    native_result = build().run("what is the answer", evaluator=make_evaluator(), max_trials=5)
+
+    langgraph_workflow = build()
+    langgraph_workflow.use_langgraph()
+    langgraph_result = langgraph_workflow.run(
+        "what is the answer", evaluator=make_evaluator(), max_trials=5
+    )
+
+    assert native_result.content == langgraph_result.content
+    assert native_result.succeeded == langgraph_result.succeeded
+    assert [s.agent_name for s in native_result.steps] == [
+        s.agent_name for s in langgraph_result.steps
+    ]
 
 
 # ---------------------------------------------------------------------------

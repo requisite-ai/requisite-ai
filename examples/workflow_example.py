@@ -430,6 +430,25 @@ def main() -> None:
         f"{len(reflexion_result.steps)} step(s) across up to 3 trials)"
     )
 
+    # Same reflexion strategy, run on the langgraph backend: a 3-node
+    # cycle (attempt, evaluate, reflect), structurally close to
+    # reflection/critic, except the loop-back condition is the
+    # evaluator's success signal rather than a fixed text sentinel --
+    # see docs/adr/0037-langgraph-reflexion-strategy.md.
+    try:
+        reflexion_workflow.use_langgraph()
+        reflexion_langgraph_result = reflexion_workflow.run(
+            "What is 17 * 23?", evaluator=check_contains_391, max_trials=3
+        )
+        print("\n--- reflexion (langgraph) ---")
+        print(reflexion_langgraph_result.content)
+        print(
+            f"(succeeded: {reflexion_langgraph_result.succeeded}, "
+            f"{len(reflexion_langgraph_result.steps)} step(s) across up to 3 trials)"
+        )
+    except Exception as exc:  # noqa: BLE001
+        print(f"\nlanggraph backend not available: {exc}")
+
     # Graph: an arbitrary graph of nodes wired with developer-declared
     # edges. Unlike every strategy above, routing isn't decided by an LLM
     # at run time -- Triage's output content is checked against each

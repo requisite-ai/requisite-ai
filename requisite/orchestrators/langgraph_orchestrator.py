@@ -12,10 +12,8 @@ Install with: ``pip install langgraph``
 
 Notes
 -----
-Twelve strategies are supported -- every native strategy except
-``"reflexion"`` (native-only so far, see
-``docs/adr/0036-reflexion-strategy.md``) has a langgraph counterpart:
-``"sequential"`` (a linear chain -- each
+Thirteen strategies are supported -- every native strategy has a
+langgraph counterpart: ``"sequential"`` (a linear chain -- each
 agent is a node, wired node-to-node in the order added); ``"supervisor"``
 and ``"hierarchical"`` (both a real conditional graph built by the same
 :meth:`LangGraphOrchestrator._build_delegation_graph` -- one coordinator
@@ -61,11 +59,18 @@ termination or exhausting ``max_depth``). See
 ``docs/adr/0033-langgraph-critic-debate-strategies.md``
 (``critic``, ``debate``),
 ``docs/adr/0034-langgraph-tree-of-thoughts-strategy.md``
-(``tree_of_thoughts``), and ``docs/adr/0035-langgraph-planner-strategy.md``
+(``tree_of_thoughts``), ``docs/adr/0035-langgraph-planner-strategy.md``
 (``"planner"`` -- one upfront structured-output call produces an entire
 ordered plan, then a bounded loop-back cycle executes each plan step in
 turn, the loop bound read from the plan's own length in state rather
-than a build-time ``max_rounds`` constant) for the full design of each.
+than a build-time ``max_rounds`` constant), and
+``docs/adr/0037-langgraph-reflexion-strategy.md`` (``"reflexion"`` --
+attempt, evaluate, and, on failure, reflect before the next attempt, a
+3-node cycle structurally close to ``"reflection"``/``"critic"`` except
+the loop-back condition is a pluggable evaluator's success signal
+rather than the ``NO_CHANGES_NEEDED`` sentinel, and every attempt is
+evaluated unconditionally rather than skipping evaluation when
+``max_trials <= 1``) for the full design of each.
 """
 
 from __future__ import annotations
@@ -76,7 +81,12 @@ from collections.abc import Sequence
 from typing import TYPE_CHECKING, Annotated, Any, Callable, Optional, TypedDict
 
 from requisite.core.exceptions import AgentException, ConfigurationException
-from requisite.orchestrators.base import BaseOrchestrator, WorkflowResult
+from requisite.orchestrators.base import (
+    BaseOrchestrator,
+    EvaluationResult,
+    Evaluator,
+    WorkflowResult,
+)
 from requisite.orchestrators.native import (
     NativeOrchestrator,
     _Plan,
@@ -91,6 +101,8 @@ from requisite.orchestrators.native import (
     _reduce_prompt,
     _reflection_critique_prompt,
     _reflection_revise_prompt,
+    _reflexion_default_evaluation_prompt,
+    _reflexion_reflect_prompt,
     _supervisor_prompt,
     _tot_evaluation_prompt,
     _tot_thinker_prompt,
@@ -120,6 +132,10 @@ _VERDICT_NODE = "__verdict__"
 # "planner" only -- see _PlannerGraphState / _build_planner_graph.
 _PLAN_NODE = "__plan__"
 _EXECUTE_NODE = "__execute__"
+# "reflexion" only -- see _ReflexionGraphState / _build_reflexion_graph.
+_ATTEMPT_NODE = "__attempt__"
+_EVALUATE_NODE = "__evaluate__"
+_REFLECT_NODE = "__reflect__"
 
 
 class _GraphState(TypedDict):
@@ -241,6 +257,27 @@ class _PlannerGraphState(TypedDict):
     output: str
 
 
+class _ReflexionGraphState(TypedDict):
+    """ "reflexion" only -- see _build_reflexion_graph.
+
+    No reducer field needed -- exactly one node runs per superstep,
+    the same "no reducer needed" situation _ReflectionGraphState and
+    _PlannerGraphState already rely on. ``trial`` is incremented by the
+    attempt node (1-indexed count of attempts made so far); the
+    evaluate node always runs after every attempt (unlike reflection's
+    conditional skip of critique when ``max_rounds <= 1``, reflexion
+    needs ``succeeded`` known even for a single-trial run).
+    """
+
+    task: str
+    attempt: str
+    feedback: str
+    reflections: list[str]
+    trial: int
+    steps: list[Any]
+    succeeded: bool
+
+
 def _reject_reserved_node_names(
     named: dict[str, Any], *, role: str, reserved: Sequence[str]
 ) -> None:
@@ -270,13 +307,13 @@ class LangGraphOrchestrator(BaseOrchestrator):
     """Runs agents as a ``langgraph`` ``StateGraph`` -- linear for
     ``"sequential"``, real conditional graphs with loop-back cycles for
     ``"supervisor"``/``"hierarchical"``/``"reflection"``/``"critic"``/
-    ``"planner"``, an arbitrary developer-declared graph for ``"graph"``,
-    a fan-out/fan-in graph (no loop-back cycle) for ``"parallel"``/
-    ``"consensus"``/``"map_reduce"``, a static per-round unroll of
-    fan-out/join blocks for ``"debate"``, and a static per-level unroll
-    of fan-out/evaluate/prune blocks for ``"tree_of_thoughts"``. Every
-    native strategy except ``"reflexion"`` (native-only so far) has a
-    langgraph counterpart. See module docstring.
+    ``"planner"``/``"reflexion"``, an arbitrary developer-declared graph
+    for ``"graph"``, a fan-out/fan-in graph (no loop-back cycle) for
+    ``"parallel"``/``"consensus"``/``"map_reduce"``, a static per-round
+    unroll of fan-out/join blocks for ``"debate"``, and a static
+    per-level unroll of fan-out/evaluate/prune blocks for
+    ``"tree_of_thoughts"``. Every native strategy has a langgraph
+    counterpart. See module docstring.
     """
 
     @property
@@ -997,6 +1034,87 @@ class LangGraphOrchestrator(BaseOrchestrator):
 
         return graph.compile()
 
+    def _build_reflexion_graph(
+        self,
+        steps: Sequence["Agent"],
+        *,
+        max_trials: int,
+        evaluator: Optional[Evaluator] = None,
+        **kwargs: Any,
+    ) -> Any:
+        """Build a graph for the ``reflexion`` strategy: attempt the task
+        from scratch, evaluate, and -- on failure -- reflect before the
+        next attempt, for up to ``max_trials`` independent trials.
+
+        ``max_trials`` is closed over at graph-build time exactly like
+        ``reflection``'s ``max_rounds`` (it's a caller-supplied bound
+        known before the first call, not runtime-discovered like
+        planner's plan length), so this is structurally
+        ``_build_reflection_graph``'s shape, not
+        ``_build_planner_graph``'s. Unlike ``_build_reflection_graph``'s
+        ``_draft_node``, which conditionally skips critique entirely
+        when ``max_rounds <= 1``, ``_attempt_node -> _evaluate_node`` is
+        a plain edge here: every attempt must be evaluated to know
+        ``succeeded``, even for a single-trial run. Mirrors
+        :meth:`~requisite.orchestrators.native.NativeOrchestrator._run_reflexion`
+        exactly, including reflecting between trials but never after the
+        last one. See docs/adr/0037.
+        """
+        StateGraph, START, END = self._require_langgraph()  # noqa: N806
+        if len(steps) != 1:
+            raise ConfigurationException(
+                f"The 'reflexion' strategy requires exactly one agent (it attempts, "
+                f"evaluates, and reflects on its own output). Got {len(steps)}.",
+            )
+        worker = steps[0]
+
+        def _attempt_node(state: _ReflexionGraphState) -> dict[str, Any]:
+            result = worker.run(
+                NativeOrchestrator._task_prompt_with_context(state["task"], state["reflections"]),
+                **kwargs,
+            )
+            return {
+                "attempt": result.content,
+                "steps": [*state["steps"], result],
+                "trial": state["trial"] + 1,
+            }
+
+        def _evaluate_node(state: _ReflexionGraphState) -> dict[str, Any]:
+            if evaluator is not None:
+                evaluation = evaluator(state["task"], state["attempt"])
+            else:
+                evaluation = worker.ai.chat(
+                    _reflexion_default_evaluation_prompt(state["task"], state["attempt"]),
+                    response_model=EvaluationResult,
+                )
+            return {"succeeded": evaluation.success, "feedback": evaluation.feedback}
+
+        def _reflect_node(state: _ReflexionGraphState) -> dict[str, Any]:
+            result = worker.run(
+                _reflexion_reflect_prompt(state["task"], state["attempt"], state["feedback"]),
+                **kwargs,
+            )
+            return {
+                "steps": [*state["steps"], result],
+                "reflections": [*state["reflections"], result.content],
+            }
+
+        def _route_after_evaluate(state: _ReflexionGraphState) -> Any:
+            if state["succeeded"]:
+                return END
+            return _REFLECT_NODE if state["trial"] < max_trials else END
+
+        graph = StateGraph(_ReflexionGraphState)
+        graph.add_node(_ATTEMPT_NODE, _attempt_node)
+        graph.add_node(_EVALUATE_NODE, _evaluate_node)
+        graph.add_node(_REFLECT_NODE, _reflect_node)
+        graph.add_edge(START, _ATTEMPT_NODE)
+        graph.add_edge(_ATTEMPT_NODE, _EVALUATE_NODE)
+        graph.add_conditional_edges(_EVALUATE_NODE, _route_after_evaluate)
+        graph.add_edge(_REFLECT_NODE, _ATTEMPT_NODE)
+
+        return graph.compile()
+
     def run(
         self,
         steps: Sequence[Any],
@@ -1153,11 +1271,35 @@ class LangGraphOrchestrator(BaseOrchestrator):
                 orchestrator=self.name,
                 strategy=strategy,
             )
+        if strategy == "reflexion":
+            max_trials = kwargs.pop("max_trials", 3)
+            evaluator = kwargs.pop("evaluator", None)
+            compiled_graph = self._build_reflexion_graph(
+                steps, max_trials=max_trials, evaluator=evaluator, **kwargs
+            )
+            final_state = compiled_graph.invoke(
+                {
+                    "task": input,
+                    "attempt": "",
+                    "feedback": "",
+                    "reflections": [],
+                    "trial": 0,
+                    "steps": [],
+                    "succeeded": False,
+                },
+            )
+            return WorkflowResult(
+                content=final_state["attempt"],
+                steps=final_state["steps"],
+                orchestrator=self.name,
+                strategy=strategy,
+                succeeded=final_state["succeeded"],
+            )
         raise ConfigurationException(
             f"The langgraph orchestrator supports the 'sequential', 'supervisor', "
             f"'hierarchical', 'reflection', 'graph', 'parallel', 'consensus', "
-            f"'map_reduce', 'critic', 'debate', 'tree_of_thoughts', and 'planner' "
-            f"strategies (got '{strategy}').",
+            f"'map_reduce', 'critic', 'debate', 'tree_of_thoughts', 'planner', and "
+            f"'reflexion' strategies (got '{strategy}').",
         )
 
     async def arun(
@@ -1316,9 +1458,33 @@ class LangGraphOrchestrator(BaseOrchestrator):
                 orchestrator=self.name,
                 strategy=strategy,
             )
+        if strategy == "reflexion":
+            max_trials = kwargs.pop("max_trials", 3)
+            evaluator = kwargs.pop("evaluator", None)
+            compiled_graph = self._build_reflexion_graph(
+                steps, max_trials=max_trials, evaluator=evaluator, **kwargs
+            )
+            final_state = await compiled_graph.ainvoke(
+                {
+                    "task": input,
+                    "attempt": "",
+                    "feedback": "",
+                    "reflections": [],
+                    "trial": 0,
+                    "steps": [],
+                    "succeeded": False,
+                },
+            )
+            return WorkflowResult(
+                content=final_state["attempt"],
+                steps=final_state["steps"],
+                orchestrator=self.name,
+                strategy=strategy,
+                succeeded=final_state["succeeded"],
+            )
         raise ConfigurationException(
             f"The langgraph orchestrator supports the 'sequential', 'supervisor', "
             f"'hierarchical', 'reflection', 'graph', 'parallel', 'consensus', "
-            f"'map_reduce', 'critic', 'debate', 'tree_of_thoughts', and 'planner' "
-            f"strategies (got '{strategy}').",
+            f"'map_reduce', 'critic', 'debate', 'tree_of_thoughts', 'planner', and "
+            f"'reflexion' strategies (got '{strategy}').",
         )

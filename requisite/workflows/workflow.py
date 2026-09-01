@@ -99,10 +99,8 @@ class Workflow:
           decided by an LLM at run time; the graph's shape is fixed when
           you build it.
 
-        Every strategy except ``"reflexion"`` runs on both the
-        ``"native"`` and ``"langgraph"`` orchestrator backends.
-        ``"reflexion"`` is currently ``"native"``-only; langgraph parity
-        is a natural follow-up, not yet built. On langgraph,
+        Every strategy runs on both the ``"native"`` and ``"langgraph"``
+        orchestrator backends. On langgraph,
         ``"supervisor"``/``"hierarchical"`` are a real conditional graph
         (``add_conditional_edges`` plus a loop-back cycle) and
         ``"graph"`` builds the identical developer-declared graph
@@ -112,8 +110,9 @@ class Workflow:
         ``docs/adr/0029-langgraph-hierarchical-graph-strategies.md``,
         ``docs/adr/0032-langgraph-parallel-consensus-map-reduce-strategies.md``,
         ``docs/adr/0033-langgraph-critic-debate-strategies.md``,
-        ``docs/adr/0034-langgraph-tree-of-thoughts-strategy.md``, and
-        ``docs/adr/0035-langgraph-planner-strategy.md``.
+        ``docs/adr/0034-langgraph-tree-of-thoughts-strategy.md``,
+        ``docs/adr/0035-langgraph-planner-strategy.md``, and
+        ``docs/adr/0037-langgraph-reflexion-strategy.md``.
     orchestrator:
         Execution backend: ``"native"`` (default, pure Python, no extra
         dependency), ``"langgraph"``, ``"crewai"``, or ``"autogen"`` --
@@ -348,9 +347,9 @@ class Workflow:
         self-reflection lesson is generated and folded into the next
         attempt's prompt. Runs for up to ``max_trials=`` independent
         trials (default 3), stopping as soon as the evaluator reports
-        success. See ``docs/adr/0036-reflexion-strategy.md``.
-
-        Only implemented on :meth:`use_native` (the default) today.
+        success. See ``docs/adr/0036-reflexion-strategy.md`` and, for
+        the ``langgraph`` backend's 3-node cycle,
+        ``docs/adr/0037-langgraph-reflexion-strategy.md``.
         """
         self._strategy = "reflexion"
         return self

@@ -7,6 +7,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.36.0] - 2026-09-01
+
+### Added
+
+- `reflexion` now runs on the `langgraph` orchestrator backend, not just
+  `native` -- the last multi-agent strategy without a langgraph
+  counterpart. All thirteen multi-agent strategies now run on both
+  backends. A three-node cycle (attempt, evaluate, reflect), structurally
+  close to `reflection`/`critic`, except the loop-back condition is the
+  evaluator's success signal rather than a fixed text sentinel, and
+  every attempt is evaluated unconditionally rather than skipping
+  evaluation for a single-trial run. See
+  [ADR-0037](docs/adr/0037-langgraph-reflexion-strategy.md).
+
 ## [0.35.0] - 2026-09-01
 
 ### Added
