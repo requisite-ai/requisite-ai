@@ -44,7 +44,7 @@ Status legend: ✅ Done · 🚧 Partial · 📋 Not started · N/A Deliberately 
 | MCP server integration | ✅ | `MCPServer` (stdio + Streamable HTTP) — ADR-0015 |
 | Memory | ✅ | `BaseMemory`, `InProcessMemory`/`SQLiteMemory`/`RedisMemory`, wired into `Agent(memory=..., session_id=...)` |
 | Retrieval | ✅ | `Retriever.retrieve()` / `.aretrieve()` |
-| RAG | 🚧 | Core interfaces, vector stores, hybrid/BM25 retrieval, and re-ranking shipped (ADR-0005, ADR-0010); context compression still 📋 — see RAG table below |
+| RAG | ✅ | Core interfaces, vector stores, hybrid/BM25 retrieval, re-ranking, and context compression all shipped (ADR-0005, ADR-0010, ADR-0024) — see RAG table below |
 | Prompt templates | ✅ | `PromptTemplate`, `ChatPromptTemplate`, `PromptTemplateRegistry` — ADR-0003 |
 | Conversation management | ✅ | `Message` history + `BaseMemory` (storage) + `BaseConversationPolicy` (retention: `MessageCountPolicy`, `SummarizingPolicy`) — ADR-0003 |
 | Workflow execution | ✅ | `Workflow.run` / `Workflow.arun` |
