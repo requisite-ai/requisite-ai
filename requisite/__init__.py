@@ -102,6 +102,15 @@ underlying API key/quota:
 >>> research = Agent(name="Researcher", provider="gemini", rate_limiter=shared_limit)  # doctest: +SKIP
 >>> writer = Agent(name="Writer", provider="gemini", rate_limiter=shared_limit)  # doctest: +SKIP
 
+Capping real dollar spend, independent of and composable with rate
+limiting:
+>>> from requisite import CostLimiter, cost_per_token
+>>> budget = CostLimiter(
+...     budget_usd=10.0,
+...     cost_fn=cost_per_token(prompt_rate_per_1k=0.15, completion_rate_per_1k=0.60),
+... )
+>>> researcher = Agent(name="Researcher", provider="gemini", cost_limiter=budget)  # doctest: +SKIP
+
 Discovering installed plugins (packages that register themselves under
 the ``"requisite.plugins"`` entry-point group):
 >>> from requisite.plugins import discover
@@ -115,11 +124,13 @@ from requisite.ai import AI
 from requisite.capabilities import default_registry as default_capability_registry
 from requisite.capabilities.registry import CapabilityProvider, CapabilityRegistry
 from requisite.config.settings import Settings
+from requisite.core.cost_limiter import CostLimiter, cost_per_token
 from requisite.core.exceptions import (
     AgentException,
     AIException,
     CapabilityException,
     ConfigurationException,
+    CostLimitException,
     MCPException,
     MemoryException,
     PromptException,
@@ -206,6 +217,9 @@ __all__ = [
     # RAG
     "Chunk",
     "ConfigurationException",
+    # Cost-based spend limiting
+    "CostLimitException",
+    "CostLimiter",
     # Multi-agent workflows: terminating edge sentinel for the "graph" strategy
     "END",
     "EmbeddingRegistry",
@@ -253,6 +267,8 @@ __all__ = [
     "Workflow",
     "WorkflowResult",
     "chunk_text",
+    # Cost-based spend limiting
+    "cost_per_token",
     "default_capability_registry",
     "default_embedding_registry",
     "default_mcp_registry",
@@ -264,4 +280,4 @@ __all__ = [
     "tool",
 ]
 
-__version__ = "0.36.0"
+__version__ = "0.37.0"

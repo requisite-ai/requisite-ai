@@ -384,3 +384,92 @@ def test_shared_rate_limiter_serializes_calls_across_two_ai_instances(
     elapsed = time.monotonic() - start
 
     assert elapsed >= 0.1
+
+
+# ---------------------------------------------------------------------------
+# Cost limiter wiring
+# ---------------------------------------------------------------------------
+
+
+def test_ai_has_no_cost_limiter_by_default(
+    registry_with_fake: ProviderRegistry, settings: Settings
+) -> None:
+    ai = AI(provider="fake", settings=settings, registry=registry_with_fake)
+    assert ai.cost_limiter is None
+
+
+def test_ai_cost_limiter_records_real_usage_after_a_successful_call(
+    registry_with_fake: ProviderRegistry, settings: Settings
+) -> None:
+    from requisite.core.cost_limiter import CostLimiter, cost_per_token
+
+    # FakeProvider.chat always returns Usage(prompt_tokens=1, completion_tokens=2, ...).
+    limiter = CostLimiter(
+        budget_usd=100.0,
+        cost_fn=cost_per_token(prompt_rate_per_1k=1000.0, completion_rate_per_1k=1000.0),
+    )
+    ai = AI(provider="fake", settings=settings, registry=registry_with_fake, cost_limiter=limiter)
+
+    ai.chat("hello")
+
+    # 1 prompt token * $1/token + 2 completion tokens * $1/token = $3.
+    assert limiter.spent_usd == pytest.approx(3.0)
+
+
+def test_ai_cost_limiter_blocks_the_call_once_budget_exhausted(
+    registry_with_fake: ProviderRegistry, settings: Settings
+) -> None:
+    from requisite.core.cost_limiter import CostLimiter, cost_per_token
+    from requisite.core.exceptions import CostLimitException
+
+    limiter = CostLimiter(
+        budget_usd=1.0,
+        cost_fn=cost_per_token(prompt_rate_per_1k=1000.0, completion_rate_per_1k=1000.0),
+    )
+    ai = AI(provider="fake", settings=settings, registry=registry_with_fake, cost_limiter=limiter)
+    fake_provider = ai.provider
+    assert isinstance(fake_provider, FakeProvider)
+
+    ai.chat("hello")  # spends $3, already over the $1 budget
+    calls_before = len(fake_provider.last_messages)
+
+    with pytest.raises(CostLimitException, match="budget"):
+        ai.chat("hello again")
+    # The provider must never have been reached for the blocked call.
+    assert fake_provider.last_messages == fake_provider.last_messages[:calls_before]
+
+
+@pytest.mark.asyncio
+async def test_ai_cost_limiter_works_on_the_async_path(
+    registry_with_fake: ProviderRegistry, settings: Settings
+) -> None:
+    from requisite.core.cost_limiter import CostLimiter, cost_per_token
+    from requisite.core.exceptions import CostLimitException
+
+    limiter = CostLimiter(
+        budget_usd=1.0,
+        cost_fn=cost_per_token(prompt_rate_per_1k=1000.0, completion_rate_per_1k=1000.0),
+    )
+    ai = AI(provider="fake", settings=settings, registry=registry_with_fake, cost_limiter=limiter)
+
+    await ai.achat("hello")  # spends $3
+    with pytest.raises(CostLimitException):
+        await ai.achat("hello again")
+
+
+def test_ai_cost_limiter_has_no_effect_on_streaming(
+    registry_with_fake: ProviderRegistry, settings: Settings
+) -> None:
+    from requisite.core.cost_limiter import CostLimiter, cost_per_token
+
+    # Budget already fully spent -- if stream() checked cost_limiter, this would raise.
+    limiter = CostLimiter(
+        budget_usd=0.0001,
+        cost_fn=cost_per_token(prompt_rate_per_1k=1000.0, completion_rate_per_1k=1000.0),
+    )
+    ai = AI(provider="fake", settings=settings, registry=registry_with_fake, cost_limiter=limiter)
+
+    result = "".join(ai.stream("hello"))
+
+    assert result == "fake stream"
+    assert limiter.spent_usd == 0.0  # streaming never records either

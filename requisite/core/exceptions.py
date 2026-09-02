@@ -129,6 +129,13 @@ class RateLimitException(AIException):
     """
 
 
+class CostLimitException(AIException):
+    """Raised when a :class:`~requisite.core.cost_limiter.CostLimiter`'s
+    ``budget_usd`` has already been reached or exceeded by recorded
+    spend, before allowing another call.
+    """
+
+
 class VectorStoreException(AIException):
     """Raised when a :class:`~requisite.rag.base.BaseVectorStore` operation
     (add/search/delete, or the underlying client/index setup) fails.

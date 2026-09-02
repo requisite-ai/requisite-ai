@@ -32,6 +32,7 @@ from requisite.ai import AI
 from requisite.capabilities.registry import CapabilityRegistry
 from requisite.capabilities import default_registry as default_capability_registry
 from requisite.config.settings import Settings
+from requisite.core.cost_limiter import CostLimiter
 from requisite.core.exceptions import AgentException, ConfigurationException, ToolException
 from requisite.core.interfaces import ChatResponse, Message
 from requisite.core.rate_limiter import RateLimiter
@@ -165,6 +166,14 @@ class Agent:
         incorrectly -- assuming they have the full quota to themselves.
         Forwarded to this agent's internal
         :class:`~requisite.ai.AI` instance.
+    cost_limiter:
+        A :class:`~requisite.core.cost_limiter.CostLimiter` capping real
+        dollar spend, independent of and composable with
+        ``rate_limiter`` (rate vs. cost are different axes). Pass the
+        same instance to every ``Agent`` sharing a budget, same pattern
+        as ``rate_limiter``. Forwarded to this agent's internal
+        :class:`~requisite.ai.AI` instance; only enforced on the
+        non-streaming calls this agent's tool-calling loop makes.
     max_iterations:
         Maximum number of tool-calling round-trips before
         :class:`~requisite.core.exceptions.AgentException` is raised,
@@ -215,6 +224,7 @@ class Agent:
         settings: Optional[Settings] = None,
         registry: Optional[ProviderRegistry] = None,
         rate_limiter: Optional[RateLimiter] = None,
+        cost_limiter: Optional[CostLimiter] = None,
         max_iterations: int = 5,
     ) -> None:
         self.name = name
@@ -243,6 +253,7 @@ class Agent:
             registry=registry,
             system_prompt=system_prompt,
             rate_limiter=rate_limiter,
+            cost_limiter=cost_limiter,
         )
 
         if requires:

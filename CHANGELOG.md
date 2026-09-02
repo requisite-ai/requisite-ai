@@ -7,6 +7,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.37.0] - 2026-09-01
+
+### Added
+
+- New `CostLimiter` for capping real dollar spend, independent of and
+  composable with the existing `RateLimiter` (one paces call rate, the
+  other caps call cost). Pricing comes from a caller-supplied `cost_fn=`
+  callable (`cost_per_token()` covers the common flat-rate case) -- no
+  price table is shipped or maintained by the framework. Reactive, not
+  proactive: `check()` raises once already-recorded spend has reached
+  `budget_usd`, `record()` updates spend after each call completes,
+  since completion-token cost isn't knowable before a call returns. A
+  fixed total budget with manual `reset()`, not a built-in calendar
+  period. Wired into `AI`/`Agent` via a new `cost_limiter=` constructor
+  argument on `chat_response`/`achat_response` only -- streaming calls
+  don't carry token usage data yet. A new `requisite.ai.cost` OTel
+  counter joins the existing request/token metrics. See
+  [ADR-0038](docs/adr/0038-cost-based-rate-limiting.md).
+
 ## [0.36.0] - 2026-09-01
 
 ### Added

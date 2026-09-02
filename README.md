@@ -334,6 +334,37 @@ research = Agent(name="Researcher", provider="gemini", rate_limiter=shared_limit
 writer = Agent(name="Writer", provider="gemini", rate_limiter=shared_limit)
 ```
 
+### Cost-based spend limiting
+
+`RateLimiter` paces call *rate*; `CostLimiter` caps real dollar
+*spend*, independent of and composable with it. Pricing is a
+caller-supplied function — no per-model price table is shipped or
+maintained by the framework, since prices go stale faster than a
+framework could realistically track them:
+
+```python
+from requisite import Agent, CostLimiter, cost_per_token
+
+budget = CostLimiter(
+    budget_usd=10.0,
+    cost_fn=cost_per_token(prompt_rate_per_1k=0.15, completion_rate_per_1k=0.60),
+)
+agent = Agent(name="Assistant", provider="openai", cost_limiter=budget)
+```
+
+Share the same `CostLimiter` instance across every `Agent`/`AI` drawing
+on one budget, the same sharing pattern `RateLimiter` uses. It's
+reactive, not proactive: completion-token cost only exists once the
+provider responds, so `budget_usd` can't be enforced strictly in
+advance the way request *rate* can. A call already in flight when the
+budget is reached is allowed to finish; every call after that raises
+`CostLimitException` immediately, before reaching the provider. The
+budget doesn't reset on its own — call `budget.reset()` on whatever
+schedule you want (daily, monthly, a cron job). Only enforced on
+`chat_response`/`achat_response` (and therefore `Agent.run`/`arun`'s
+tool-calling loop) — streaming calls don't carry token usage data yet.
+See [ADR-0038](docs/adr/0038-cost-based-rate-limiting.md).
+
 ### Skills
 
 A skill is a reusable, higher-level capability (vs. a tool, which is

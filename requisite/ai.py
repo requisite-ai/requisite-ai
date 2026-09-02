@@ -33,6 +33,7 @@ from typing import Any, Optional, TypeVar, Union
 from pydantic import BaseModel
 
 from requisite.config.settings import Settings
+from requisite.core.cost_limiter import CostLimiter
 from requisite.core.exceptions import ConfigurationException
 from requisite.core.interfaces import ChatResponse, Message, StreamChunk
 from requisite.core.rate_limiter import RateLimiter
@@ -51,6 +52,9 @@ _request_duration = _meter.create_histogram(
 )
 _token_counter = _meter.create_counter(
     "requisite.ai.tokens", description="Tokens used per AI facade call", unit="1"
+)
+_cost_counter = _meter.create_counter(
+    "requisite.ai.cost", description="Dollar cost recorded per AI facade call", unit="usd"
 )
 
 logger = logging.getLogger("requisite")
@@ -93,6 +97,20 @@ class AI:
         the same underlying API key. Defaults to ``None``; if unset and
         ``settings.rate_limit_rpm`` is configured, a private limiter is
         built from that instead (see :class:`~requisite.config.settings.Settings`).
+    cost_limiter:
+        A :class:`~requisite.core.cost_limiter.CostLimiter` that caps
+        real dollar spend, independent of and composable with
+        ``rate_limiter`` (one paces call *rate*, the other caps call
+        *cost*). Pass the same instance to several ``AI``/``Agent``
+        objects to share one budget, the same sharing pattern as
+        ``rate_limiter``. Only enforced on :meth:`chat_response`/
+        :meth:`achat_response` (and therefore ``Agent.run``/``arun``'s
+        tool-calling loop) -- streaming calls don't carry token usage
+        data yet, so ``cost_limiter`` has no effect on :meth:`stream`/
+        :meth:`astream`/:meth:`stream_response`/:meth:`astream_response`.
+        Unlike ``rate_limiter``, there is no ``Settings``-based
+        auto-build for this -- a pricing function can't come from a
+        scalar env var. Defaults to ``None`` (no cost limit).
 
     Examples
     --------
@@ -121,12 +139,14 @@ class AI:
         registry: Optional[ProviderRegistry] = None,
         system_prompt: Optional[str] = None,
         rate_limiter: Optional[RateLimiter] = None,
+        cost_limiter: Optional[CostLimiter] = None,
     ) -> None:
         self._settings = settings or Settings()
         self._registry = registry or default_registry
         self._system_prompt = system_prompt
         self._provider = self._resolve_provider(provider, model)
         self._rate_limiter = rate_limiter or self._build_default_rate_limiter()
+        self._cost_limiter = cost_limiter
 
     def _build_default_rate_limiter(self) -> Optional[RateLimiter]:
         if self._settings.rate_limit_rpm is None:
@@ -171,6 +191,12 @@ class AI:
         """The :class:`~requisite.core.rate_limiter.RateLimiter` every call waits
         on before reaching the provider, if one is configured."""
         return self._rate_limiter
+
+    @property
+    def cost_limiter(self) -> Optional[CostLimiter]:
+        """The :class:`~requisite.core.cost_limiter.CostLimiter` capping real
+        dollar spend on non-streaming calls, if one is configured."""
+        return self._cost_limiter
 
     def _build_messages(
         self, prompt: Union[str, Sequence[Message]], system_prompt: Optional[str]
@@ -265,6 +291,8 @@ class AI:
             temperature if temperature is not None else self._settings.temperature
         )
         resolved_tools = [resolve_tool_like(t) for t in tools] if tools else None
+        if self._cost_limiter is not None:
+            self._cost_limiter.check()
         if self._rate_limiter is not None:
             self._rate_limiter.acquire()
         attributes = {
@@ -297,6 +325,9 @@ class AI:
                 response.usage.completion_tokens,
                 {**attributes, "requisite.token_type": "completion"},
             )
+            if self._cost_limiter is not None:
+                cost = self._cost_limiter.record(response.usage, response.model)
+                _cost_counter.add(cost, attributes)
             return response
 
     async def achat(
@@ -341,6 +372,8 @@ class AI:
             temperature if temperature is not None else self._settings.temperature
         )
         resolved_tools = [resolve_tool_like(t) for t in tools] if tools else None
+        if self._cost_limiter is not None:
+            self._cost_limiter.check()
         if self._rate_limiter is not None:
             await self._rate_limiter.aacquire()
         attributes = {
@@ -373,6 +406,9 @@ class AI:
                 response.usage.completion_tokens,
                 {**attributes, "requisite.token_type": "completion"},
             )
+            if self._cost_limiter is not None:
+                cost = self._cost_limiter.record(response.usage, response.model)
+                _cost_counter.add(cost, attributes)
             return response
 
     def stream(
@@ -400,6 +436,11 @@ class AI:
         ------
         str
             Incremental text deltas, in order.
+
+        Notes
+        -----
+        A configured ``cost_limiter`` has no effect here -- streaming
+        responses don't carry token usage data yet.
         """
         messages = self._build_messages(prompt, system_prompt)
         effective_temperature = (
@@ -443,7 +484,11 @@ class AI:
         tools: Optional[Sequence[ToolLike]] = None,
         **kwargs: Any,
     ) -> AsyncIterator[str]:
-        """Async counterpart to :meth:`stream`."""
+        """Async counterpart to :meth:`stream`.
+
+        A configured ``cost_limiter`` has no effect here -- streaming
+        responses don't carry token usage data yet.
+        """
         messages = self._build_messages(prompt, system_prompt)
         effective_temperature = (
             temperature if temperature is not None else self._settings.temperature
@@ -494,6 +539,9 @@ class AI:
         :class:`~requisite.core.interfaces.StreamChunk`'s docstring for
         the exact completion contract; check ``chunk.has_tool_calls``
         rather than assuming any particular chunk carries them.
+
+        A configured ``cost_limiter`` has no effect here -- streaming
+        responses don't carry token usage data yet.
         """
         messages = self._build_messages(prompt, system_prompt)
         effective_temperature = (
@@ -535,7 +583,11 @@ class AI:
         tools: Optional[Sequence[ToolLike]] = None,
         **kwargs: Any,
     ) -> AsyncIterator[StreamChunk]:
-        """Async counterpart to :meth:`stream_response`."""
+        """Async counterpart to :meth:`stream_response`.
+
+        A configured ``cost_limiter`` has no effect here -- streaming
+        responses don't carry token usage data yet.
+        """
         messages = self._build_messages(prompt, system_prompt)
         effective_temperature = (
             temperature if temperature is not None else self._settings.temperature

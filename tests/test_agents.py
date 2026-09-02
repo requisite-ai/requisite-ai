@@ -569,6 +569,24 @@ def test_agent_forwards_rate_limiter_to_its_internal_ai(
     assert agent.ai.rate_limiter is shared_limiter
 
 
+def test_agent_forwards_cost_limiter_to_its_internal_ai(
+    registry_with_scripted: ProviderRegistry, settings: Settings
+) -> None:
+    from requisite.core.cost_limiter import CostLimiter, cost_per_token
+
+    shared_limiter = CostLimiter(
+        budget_usd=10.0, cost_fn=cost_per_token(prompt_rate_per_1k=1.0, completion_rate_per_1k=1.0)
+    )
+    agent = Agent(
+        name="Weather Agent",
+        provider="scripted",
+        settings=settings,
+        registry=registry_with_scripted,
+        cost_limiter=shared_limiter,
+    )
+    assert agent.ai.cost_limiter is shared_limiter
+
+
 def test_agent_registry_register_and_get(
     registry_with_scripted: ProviderRegistry, settings: Settings
 ) -> None:

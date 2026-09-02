@@ -22,6 +22,7 @@ Status legend: ✅ Shipped · 🚧 In progress · 📋 Planned · 💭 Under dis
 | `AIException` hierarchy | ✅ |
 | `py.typed` / PEP 561 typed distribution | ✅ |
 | Proactive rate limiting (`RateLimiter`, shareable across `Agent`/`AI` instances) | ✅ — see [ADR-0008](docs/adr/0008-rate-limiting.md) |
+| Cost-based dollar-spend limiting (`CostLimiter`, shareable across `Agent`/`AI` instances) | ✅ — caller-supplied `cost_fn=`, reactive (non-streaming calls only); see [ADR-0038](docs/adr/0038-cost-based-rate-limiting.md) |
 
 ## Providers
 

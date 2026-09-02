@@ -76,3 +76,4 @@ need one — `CONTRIBUTING.md` already covers those.
 | [0035](0035-langgraph-planner-strategy.md) | LangGraph backend: planner strategy | Accepted |
 | [0036](0036-reflexion-strategy.md) | Reflexion multi-agent strategy | Accepted |
 | [0037](0037-langgraph-reflexion-strategy.md) | LangGraph backend: reflexion strategy | Accepted |
+| [0038](0038-cost-based-rate-limiting.md) | Cost-based spend limiting: CostLimiter | Accepted |

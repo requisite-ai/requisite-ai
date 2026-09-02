@@ -326,6 +326,7 @@ and hybrid/BM25 retrieval + re-ranking (ADR-0010) are all shipped.
 | Reuse HTTP clients | ✅ | One client instance reused across calls on a given provider instance |
 | Support concurrency | ✅ | `Workflow`'s parallel strategy (`ThreadPoolExecutor` for sync, `asyncio.gather` for async) |
 | Proactive rate limiting for provider quotas | ✅ | `RateLimiter` (sliding-window log), opt-in via `Settings.rate_limit_rpm` or explicit `rate_limiter=` on `AI`/`Agent`; share one instance across agents that draw on the same API key — ADR-0008 |
+| Cost-based dollar-spend limiting | ✅ | `CostLimiter`, opt-in via explicit `cost_limiter=` on `AI`/`Agent`; caller-supplied `cost_fn=` (see `cost_per_token()` for the flat-rate case), reactive (checks before, records after — completion cost isn't knowable pre-call), non-streaming calls only — ADR-0038 |
 
 ## Security
 
