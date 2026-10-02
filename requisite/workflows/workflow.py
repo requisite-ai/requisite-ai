@@ -115,11 +115,11 @@ class Workflow:
         ``docs/adr/0037-langgraph-reflexion-strategy.md``.
     orchestrator:
         Execution backend: ``"native"`` (default, pure Python, no extra
-        dependency), ``"langgraph"``, ``"crewai"``, or ``"autogen"`` --
-        each supports a different strategy subset, see :meth:`use_langgraph`/
-        :meth:`use_crewai`/:meth:`use_autogen`. Change via those methods
-        (or :meth:`use_native`) instead of passing this directly, for
-        readability at the call site.
+        dependency), ``"langgraph"``, ``"crewai"``, ``"autogen"``, or
+        ``"adk"`` -- each supports a different strategy subset, see
+        :meth:`use_langgraph`/:meth:`use_crewai`/:meth:`use_autogen`/
+        :meth:`use_adk`. Change via those methods (or :meth:`use_native`)
+        instead of passing this directly, for readability at the call site.
     registry:
         The :class:`~requisite.orchestrators.factory.OrchestratorRegistry`
         used to resolve ``orchestrator``. Defaults to the framework's
@@ -417,6 +417,27 @@ class Workflow:
         provider (AutoGen handles coordination only, not LLM calls).
         """
         self._orchestrator_name = "autogen"
+        return self
+
+    def use_adk(self) -> "Workflow":
+        """Delegate coordination to Google's `Agent Development Kit
+        <https://github.com/google/adk-python>`_ (``google-adk``).
+
+        Requires ``pip install google-adk`` -- note this is a heavier
+        install than the other backends (it pulls in fastapi/uvicorn/
+        starlette/watchdog/graphviz, since ADK's dev-server/CLI tooling
+        ships in its core package, not behind extras). Returns ``self``
+        for chaining. Supports ``"sequential"`` (a custom ``BaseAgent``
+        that runs each step in order) and ``"supervisor"`` (a custom
+        ``BaseAgent`` reusing the same decision protocol
+        :meth:`use_autogen`'s supervisor already reuses from the native
+        backend) -- see ``docs/adr/0039-adk-orchestrator-backend.md``.
+        Every actual model call still goes through each agent's own
+        configured provider (ADK handles coordination only, not LLM
+        calls). Note: this is unrelated to ``google.adk.workflow.Workflow``,
+        an internal ADK class with the same name as this one.
+        """
+        self._orchestrator_name = "adk"
         return self
 
     def run(self, input: Optional[str] = None, **kwargs: Any) -> WorkflowResult:  # noqa: A002

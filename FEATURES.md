@@ -152,6 +152,7 @@ Status legend: ✅ Done · 🚧 Partial · 📋 Not started · N/A Deliberately 
 | LangChain | 📋 | Not currently planned as a distinct backend — evaluate if a real need emerges |
 | CrewAI | ✅ | `workflow.use_crewai()` — `sequential` strategy, coordination only (every model call proxies through the wrapped `Agent`'s own provider) — [ADR-0027](docs/adr/0027-crewai-autogen-orchestrator-backends.md) |
 | AutoGen | ✅ | `workflow.use_autogen()` — `sequential` + `supervisor` strategies, same coordination-only design — [ADR-0027](docs/adr/0027-crewai-autogen-orchestrator-backends.md) |
+| ADK | ✅ | `workflow.use_adk()` — `sequential` + `supervisor` strategies, same coordination-only design — [ADR-0039](docs/adr/0039-adk-orchestrator-backend.md) |
 | Public API stays identical across backends | ✅ | `Workflow.add()` / `.run()` unchanged regardless of `.use_*()` |
 
 ## Agentic mode

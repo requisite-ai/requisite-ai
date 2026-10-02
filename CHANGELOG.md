@@ -7,6 +7,30 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.38.0] - 2026-10-02
+
+### Added
+
+- ADK orchestrator backend -- see
+  [ADR-0039](docs/adr/0039-adk-orchestrator-backend.md) for the full
+  design. `workflow.use_adk()`: delegates coordination to Google's
+  Agent Development Kit (`google-adk`) -- `"sequential"` (a custom
+  `BaseAgent` running each step's `LlmAgent` in order -- not ADK's own
+  `SequentialAgent`, which is deprecated in favor of a newer, internal
+  `Workflow` system) and `"supervisor"` (a custom `BaseAgent` reusing
+  the native backend's exact `_SupervisorDecision` protocol, the same
+  way the `langgraph`/`autogen` backends' own supervisors already do).
+  Every actual model call still proxies through the wrapped `Agent`'s
+  own configured provider via a new `google.adk.models.base_llm.BaseLlm`
+  adapter, matching the same "third-party package coordinates,
+  Requisite's own Agent calls the model" design every other backend
+  already established. New `adk` optional extra (`pip install
+  requisite-ai[adk]`) -- deliberately **not** included in the `all`
+  extra: `google-adk`'s base install pulls in `fastapi`/`uvicorn`/
+  `starlette`/`watchdog`/`graphviz` (its dev-server/CLI tooling ships in
+  core, not behind extras), a materially heavier footprint than any
+  other optional backend.
+
 ## [0.37.0] - 2026-09-01
 
 ### Added

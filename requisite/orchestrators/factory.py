@@ -78,10 +78,16 @@ def _register_builtin_orchestrators(registry: OrchestratorRegistry) -> None:
 
         return AutoGenOrchestrator(**kwargs)
 
+    def _build_adk(**kwargs: Any) -> BaseOrchestrator:
+        from requisite.orchestrators.adk_orchestrator import AdkOrchestrator
+
+        return AdkOrchestrator(**kwargs)
+
     registry.register("native", _build_native)
     registry.register("langgraph", _build_langgraph)
     registry.register("crewai", _build_crewai)
     registry.register("autogen", _build_autogen)
+    registry.register("adk", _build_adk)
 
 
 default_registry = OrchestratorRegistry()

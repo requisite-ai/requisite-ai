@@ -563,6 +563,33 @@ def main() -> None:
     except Exception as exc:  # noqa: BLE001
         print(f"\nautogen backend not available: {exc}")
 
+    # Same idea on Google's ADK: sequential via a custom BaseAgent looping
+    # LlmAgent sub-agents (not ADK's own deprecated SequentialAgent).
+    # Requires: pip install google-adk
+    try:
+        adk_workflow = Workflow().sequential().use_adk()
+        adk_workflow.add(research).add(writer)
+        adk_result = adk_workflow.run("Research AI trends and write a short summary.")
+        print("\n--- sequential (adk) ---")
+        print(adk_result.content)
+    except Exception as exc:  # noqa: BLE001
+        print(f"\nadk backend not available: {exc}")
+
+    # ADK's supervisor strategy: a custom BaseAgent reusing the exact same
+    # delegation-decision protocol the native/langgraph/autogen supervisor
+    # already use -- just a fourth execution engine.
+    try:
+        adk_supervisor_workflow = supervisor_workflow.use_adk()
+        adk_supervisor_result = adk_supervisor_workflow.run(
+            "Research what Google's Agent Development Kit (ADK) for building AI "
+            "agents is and write a short summary."
+        )
+        print("\n--- supervisor (adk) ---")
+        print(adk_supervisor_result.content)
+        print(f"(delegated to: {[s.agent_name for s in adk_supervisor_result.steps]})")
+    except Exception as exc:  # noqa: BLE001
+        print(f"\nadk backend not available: {exc}")
+
 
 if __name__ == "__main__":
     main()

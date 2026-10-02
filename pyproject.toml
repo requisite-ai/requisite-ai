@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "requisite-ai"
-version = "0.37.0"
+version = "0.38.0"
 description = "A provider-agnostic, plugin-based framework for building AI applications and agents. Declare what you need -- providers, tools, capabilities -- not which SDK provides it."
 readme = "README.md"
 requires-python = ">=3.10"
@@ -64,6 +64,17 @@ otel = ["opentelemetry-api>=1.20"]
 # docs/adr/0027-crewai-autogen-orchestrator-backends.md.
 crewai = ["crewai>=1.15"]
 autogen = ["autogen-agentchat>=0.7", "autogen-core>=0.7"]
+# google-adk's BASE install (no extras) pulls in fastapi/uvicorn/starlette/
+# watchdog/graphviz/authlib/google-auth[pyopenssl] -- adk web/eval/deploy
+# CLI tooling ships in core, not behind extras. Confirmed via a real
+# `pip install google-adk`: it also force-upgraded this environment's
+# google-genai 2.11.0 -> 2.27.0 and google-auth 2.55.2 -> 2.59.1 (no hard
+# conflict -- our own `gemini` extra pins no upper bound -- just real
+# upgrade pressure; `pytest tests/ -k gemini` still passed 10/10
+# afterward). Deliberately NOT included in the `all` extra: not a hard
+# version conflict like crewai/mcp, but a real, heavier install-footprint
+# cost worth keeping opt-in. See docs/adr/0039-adk-orchestrator-backend.md.
+adk = ["google-adk>=2.11"]
 all = [
     "openai>=1.35",
     "google-genai>=1.0",

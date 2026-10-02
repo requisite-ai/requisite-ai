@@ -47,6 +47,7 @@ pip install "requisite-ai[rag]"           # RAG (embedding providers; in-memory 
 pip install "requisite-ai[langgraph]"     # native + langgraph orchestration
 pip install "requisite-ai[crewai]"        # native + CrewAI orchestration (sequential only)
 pip install "requisite-ai[autogen]"       # native + AutoGen orchestration (sequential + supervisor)
+pip install "requisite-ai[adk]"           # native + Google ADK orchestration (sequential + supervisor)
 ```
 
 > Quoting the package name (`"requisite-ai[all]"`) avoids shell globbing
@@ -77,6 +78,16 @@ pip install "requisite-ai[autogen]"       # native + AutoGen orchestration (sequ
 > `pip install "mcp>=2.0,<3.0"` afterward (and again any time you
 > reinstall/upgrade `crewai`), or keep them in separate environments.
 > See [ADR-0027](docs/adr/0027-crewai-autogen-orchestrator-backends.md).
+>
+> **Note on `google-adk`'s install weight:** unlike every other optional
+> backend, `google-adk`'s *base* install (no extras) pulls in `fastapi`,
+> `uvicorn`, `starlette`, `watchdog`, and `graphviz` — its `adk web`/
+> `adk eval`/deploy CLI tooling ships in the core package, not behind
+> extras. It also bumps `google-genai` to `>=2.19` (our own `gemini`
+> extra pins no upper bound, so this is upgrade pressure, not a hard
+> conflict). `requisite-ai[adk]` is a materially heavier install than
+> `langgraph`/`crewai`/`autogen` — see
+> [ADR-0039](docs/adr/0039-adk-orchestrator-backend.md).
 
 ## Configuration
 
@@ -245,16 +256,18 @@ result = workflow.run("Research AI trends and write a summary.")
 
 workflow.use_crewai()      # requires: pip install crewai -- "sequential" only
 workflow.use_autogen()     # requires: pip install autogen-agentchat autogen-core -- "sequential" + "supervisor"
+workflow.use_adk()         # requires: pip install google-adk -- "sequential" + "supervisor"
 
 workflow.use_native()      # back to the built-in, dependency-free engine
 ```
 
-`langgraph`/`crewai`/`autogen` are coordination-only backends — every
-actual model call still goes through each agent's own configured
+`langgraph`/`crewai`/`autogen`/`adk` are coordination-only backends —
+every actual model call still goes through each agent's own configured
 provider (rate limiting, tools, everything), never the third-party
 package's own LLM client. See
-[ADR-0027](docs/adr/0027-crewai-autogen-orchestrator-backends.md) for
-which strategy each backend supports and why.
+[ADR-0027](docs/adr/0027-crewai-autogen-orchestrator-backends.md) and
+[ADR-0039](docs/adr/0039-adk-orchestrator-backend.md) for which
+strategy each backend supports and why.
 
 Let a supervisor agent delegate to a team of workers, addressed by name,
 deciding when the task is done:
@@ -842,8 +855,8 @@ structured logging plus OpenTelemetry tracing/metrics, agents +
 registry, multi-agent workflows (sequential, parallel, reflection,
 planner, supervisor, critic, consensus, debate, map-reduce,
 hierarchical, tree-of-thoughts, reflexion, and graph -- all thirteen
-run on both the native and langgraph backends; sequential on CrewAI and
-AutoGen, supervisor also on AutoGen), entry-point plugin discovery, an
+run on both the native and langgraph backends; sequential on CrewAI,
+AutoGen, and ADK, supervisor also on AutoGen and ADK), entry-point plugin discovery, an
 official plugin directory (`PLUGINS.md`).
 
 See [`ROADMAP.md`](ROADMAP.md) for the full, per-layer status table
