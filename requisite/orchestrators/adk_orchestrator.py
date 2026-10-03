@@ -53,12 +53,12 @@ loop. See ``docs/adr/0039-adk-orchestrator-backend.md``.
 
 from __future__ import annotations
 
-import asyncio
 import logging
 from collections.abc import Sequence
 from typing import TYPE_CHECKING, Any, Optional
 
 from requisite.core.exceptions import AgentException, ConfigurationException
+from requisite.core.sync_bridge import run_sync
 from requisite.orchestrators.base import BaseOrchestrator, WorkflowResult
 from requisite.orchestrators.native import (
     NativeOrchestrator,
@@ -282,9 +282,11 @@ class AdkOrchestrator(BaseOrchestrator):
         # ADK's Runner requires an async session-creation call with no
         # non-deprecated sync counterpart (InMemorySessionService's own
         # create_session_sync logs a deprecation warning on every call,
-        # confirmed directly in its source) -- asyncio.run() here matches
-        # AutoGenOrchestrator.run()'s own reasoning for the same shape.
-        return asyncio.run(self.arun(steps, input, strategy=strategy, **kwargs))
+        # confirmed directly in its source) -- so the sync path drives the
+        # async one via run_sync(), which keeps one event loop alive across
+        # calls (a fresh loop per asyncio.run() breaks reused agents' cached
+        # async clients: "Event loop is closed").
+        return run_sync(self.arun(steps, input, strategy=strategy, **kwargs))
 
     async def arun(
         self,

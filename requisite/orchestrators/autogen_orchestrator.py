@@ -42,12 +42,12 @@ group-chat idiom. See ``docs/adr/0027-crewai-autogen-orchestrator-backends.md``.
 
 from __future__ import annotations
 
-import asyncio
 import logging
 from collections.abc import Sequence
 from typing import TYPE_CHECKING, Any, Optional
 
 from requisite.core.exceptions import AgentException, ConfigurationException
+from requisite.core.sync_bridge import run_sync
 from requisite.orchestrators.base import BaseOrchestrator, WorkflowResult
 from requisite.orchestrators.native import (
     NativeOrchestrator,
@@ -367,9 +367,11 @@ class AutoGenOrchestrator(BaseOrchestrator):
         # autogen-agentchat's teams (Team.run()/RoundRobinGroupChat/
         # SelectorGroupChat) are async-only -- no sync-native equivalent
         # exists on the SDK side (confirmed directly: only run()/run_stream(),
-        # both async). asyncio.run() here matches every other orchestrator's
-        # sync entry point (MCPClient.discover_tools(), Tool.execute(), ...).
-        return asyncio.run(self.arun(steps, input, strategy=strategy, **kwargs))
+        # both async). The sync path therefore drives the async one via
+        # run_sync(), which keeps one event loop alive across calls -- a
+        # fresh loop per asyncio.run() breaks reused agents' cached async
+        # clients ("Event loop is closed").
+        return run_sync(self.arun(steps, input, strategy=strategy, **kwargs))
 
     async def arun(
         self,
