@@ -83,11 +83,31 @@ def _register_builtin_orchestrators(registry: OrchestratorRegistry) -> None:
 
         return AdkOrchestrator(**kwargs)
 
+    def _build_openai_agents(**kwargs: Any) -> BaseOrchestrator:
+        from requisite.orchestrators.openai_agents_orchestrator import OpenAIAgentsOrchestrator
+
+        return OpenAIAgentsOrchestrator(**kwargs)
+
+    def _build_strands(**kwargs: Any) -> BaseOrchestrator:
+        from requisite.orchestrators.strands_orchestrator import StrandsOrchestrator
+
+        return StrandsOrchestrator(**kwargs)
+
+    def _build_agent_framework(**kwargs: Any) -> BaseOrchestrator:
+        from requisite.orchestrators.agent_framework_orchestrator import (
+            AgentFrameworkOrchestrator,
+        )
+
+        return AgentFrameworkOrchestrator(**kwargs)
+
     registry.register("native", _build_native)
     registry.register("langgraph", _build_langgraph)
     registry.register("crewai", _build_crewai)
     registry.register("autogen", _build_autogen)
     registry.register("adk", _build_adk)
+    registry.register("openai_agents", _build_openai_agents)
+    registry.register("strands", _build_strands)
+    registry.register("agent_framework", _build_agent_framework)
 
 
 default_registry = OrchestratorRegistry()

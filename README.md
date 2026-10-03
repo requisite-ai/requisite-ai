@@ -48,6 +48,9 @@ pip install "requisite-ai[langgraph]"     # native + langgraph orchestration
 pip install "requisite-ai[crewai]"        # native + CrewAI orchestration (sequential only)
 pip install "requisite-ai[autogen]"       # native + AutoGen orchestration (sequential + supervisor)
 pip install "requisite-ai[adk]"           # native + Google ADK orchestration (sequential + supervisor)
+pip install "requisite-ai[openai_agents]" # native + OpenAI Agents SDK orchestration (sequential + supervisor)
+pip install "requisite-ai[strands]"       # native + AWS Strands Agents orchestration (sequential + supervisor)
+pip install "requisite-ai[agent_framework]"  # native + Microsoft Agent Framework orchestration (sequential + supervisor)
 ```
 
 > Quoting the package name (`"requisite-ai[all]"`) avoids shell globbing
@@ -257,17 +260,26 @@ result = workflow.run("Research AI trends and write a summary.")
 workflow.use_crewai()      # requires: pip install crewai -- "sequential" only
 workflow.use_autogen()     # requires: pip install autogen-agentchat autogen-core -- "sequential" + "supervisor"
 workflow.use_adk()         # requires: pip install google-adk -- "sequential" + "supervisor"
+workflow.use_openai_agents()   # requires: pip install openai-agents -- "sequential" + "supervisor"
+workflow.use_strands()         # requires: pip install strands-agents -- "sequential" + "supervisor"
+workflow.use_agent_framework() # requires: pip install agent-framework-core -- "sequential" + "supervisor"
 
 workflow.use_native()      # back to the built-in, dependency-free engine
 ```
 
-`langgraph`/`crewai`/`autogen`/`adk` are coordination-only backends —
-every actual model call still goes through each agent's own configured
-provider (rate limiting, tools, everything), never the third-party
-package's own LLM client. See
-[ADR-0027](docs/adr/0027-crewai-autogen-orchestrator-backends.md) and
-[ADR-0039](docs/adr/0039-adk-orchestrator-backend.md) for which
-strategy each backend supports and why.
+`langgraph`/`crewai`/`autogen`/`adk`/`openai_agents`/`strands`/`agent_framework`
+are coordination-only backends — every actual model call still goes
+through each agent's own configured provider (rate limiting, tools,
+everything), never the third-party package's own LLM client. So
+`use_openai_agents()` never calls OpenAI and `use_strands()` never calls
+Bedrock: a Gemini or Ollama agent stays a Gemini or Ollama agent. See
+[ADR-0027](docs/adr/0027-crewai-autogen-orchestrator-backends.md),
+[ADR-0039](docs/adr/0039-adk-orchestrator-backend.md) and
+[ADR-0040](docs/adr/0040-agent-sdk-orchestrator-backends.md) for which
+strategy each backend supports and why. The Claude Agent SDK is
+deliberately not one of them — it runs the Claude Code CLI as a
+subprocess and has no model hook to put Requisite's providers under
+(Anthropic is still a fully supported *provider*).
 
 Let a supervisor agent delegate to a team of workers, addressed by name,
 deciding when the task is done:
@@ -856,7 +868,9 @@ registry, multi-agent workflows (sequential, parallel, reflection,
 planner, supervisor, critic, consensus, debate, map-reduce,
 hierarchical, tree-of-thoughts, reflexion, and graph -- all thirteen
 run on both the native and langgraph backends; sequential on CrewAI,
-AutoGen, and ADK, supervisor also on AutoGen and ADK), entry-point plugin discovery, an
+AutoGen, ADK, the OpenAI Agents SDK, Strands, and Microsoft Agent
+Framework, supervisor also on every one of those except CrewAI),
+entry-point plugin discovery, an
 official plugin directory (`PLUGINS.md`).
 
 See [`ROADMAP.md`](ROADMAP.md) for the full, per-layer status table

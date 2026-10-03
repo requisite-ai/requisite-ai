@@ -75,6 +75,18 @@ autogen = ["autogen-agentchat>=0.7", "autogen-core>=0.7"]
 # version conflict like crewai/mcp, but a real, heavier install-footprint
 # cost worth keeping opt-in. See docs/adr/0039-adk-orchestrator-backend.md.
 adk = ["google-adk>=2.11"]
+# The three agent-SDK backends below are also opt-in and excluded from
+# `all`: each pulls in a separate vendor SDK's own dependency tree (40-50
+# packages for openai-agents/strands-agents, the latter including boto3),
+# and nothing in `all` needs them. They do NOT conflict with each other or
+# with adk -- a `pip install --dry-run` of all four together resolves --
+# so this is about footprint, not a pin clash like crewai/mcp.
+# agent_framework depends on agent-framework-core, deliberately NOT the
+# `agent-framework` umbrella package, which installs every connector for
+# 120+ packages (core: 12). See docs/adr/0040-agent-sdk-orchestrator-backends.md.
+openai_agents = ["openai-agents>=0.23"]
+strands = ["strands-agents>=1.57"]
+agent_framework = ["agent-framework-core>=1.20"]
 all = [
     "openai>=1.35",
     "google-genai>=1.0",
@@ -152,14 +164,24 @@ module = ["crewai.*", "numpy.*", "chromadb.*"]
 follow_imports = "skip"
 ignore_missing_imports = true
 
-# google.adk.* is skipped for a different reason: it's an opt-in extra
-# excluded from `all`, so CI's mypy job doesn't have it installed while a
-# dev machine usually does. Treated as Any in both cases, the
-# `# type: ignore[misc]` on each `class X(BaseLlm/BaseAgent)` in
-# adk_orchestrator.py is always needed -- without the skip, it's required
-# in CI (missing => Any) but reported as unused locally (installed =>
-# real types), and the two can't both be satisfied.
+# The opt-in agent-SDK backends (adk, openai_agents, strands,
+# agent_framework) are skipped for a different reason: they're excluded
+# from `all`, so CI's mypy job doesn't have them installed while a dev
+# machine usually does. Treated as Any in both cases, the
+# `# type: ignore[misc]` on each `class X(SdkBase)` in their orchestrator
+# modules is always needed -- without the skip, it's required in CI
+# (missing => Any) but reported as unused locally (installed => real
+# types), and the two can't both be satisfied.
 [[tool.mypy.overrides]]
-module = ["google.adk", "google.adk.*"]
+module = [
+    "google.adk",
+    "google.adk.*",
+    "agents",
+    "agents.*",
+    "strands",
+    "strands.*",
+    "agent_framework",
+    "agent_framework.*",
+]
 follow_imports = "skip"
 ignore_missing_imports = true

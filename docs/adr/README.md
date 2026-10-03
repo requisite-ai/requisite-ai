@@ -78,3 +78,4 @@ need one — `CONTRIBUTING.md` already covers those.
 | [0037](0037-langgraph-reflexion-strategy.md) | LangGraph backend: reflexion strategy | Accepted |
 | [0038](0038-cost-based-rate-limiting.md) | Cost-based spend limiting: CostLimiter | Accepted |
 | [0039](0039-adk-orchestrator-backend.md) | ADK orchestrator backend | Accepted |
+| [0040](0040-agent-sdk-orchestrator-backends.md) | OpenAI Agents SDK, Strands, and Microsoft Agent Framework orchestrator backends | Accepted |

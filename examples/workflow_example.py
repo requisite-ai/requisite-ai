@@ -590,6 +590,33 @@ def main() -> None:
     except Exception as exc:  # noqa: BLE001
         print(f"\nadk backend not available: {exc}")
 
+    # The same two strategies on three more vendors' agent SDKs. Each one
+    # coordinates only -- every model call still goes through each agent's own
+    # Gemini provider and the shared rate limiter above, never the SDK's own
+    # LLM client. ("sequential" is a real Strands Graph / Microsoft Workflow /
+    # chained OpenAI Runner.run; "supervisor" is the native delegation loop.)
+    # Requires: pip install openai-agents / strands-agents / agent-framework-core
+    for backend, use_backend in (
+        ("openai_agents", "use_openai_agents"),
+        ("strands", "use_strands"),
+        ("agent_framework", "use_agent_framework"),
+    ):
+        try:
+            sdk_workflow = getattr(Workflow().sequential(), use_backend)()
+            sdk_workflow.add(research).add(writer)
+            sdk_result = sdk_workflow.run("Research AI trends and write a short summary.")
+            print(f"\n--- sequential ({backend}) ---")
+            print(sdk_result.content)
+
+            sdk_supervisor_result = getattr(supervisor_workflow, use_backend)().run(
+                "Research what an AI agent framework is and write a short summary."
+            )
+            print(f"\n--- supervisor ({backend}) ---")
+            print(sdk_supervisor_result.content)
+            print(f"(delegated to: {[s.agent_name for s in sdk_supervisor_result.steps]})")
+        except Exception as exc:  # noqa: BLE001
+            print(f"\n{backend} backend not available: {exc}")
+
 
 if __name__ == "__main__":
     main()

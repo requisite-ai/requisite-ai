@@ -153,6 +153,10 @@ Status legend: ✅ Done · 🚧 Partial · 📋 Not started · N/A Deliberately 
 | CrewAI | ✅ | `workflow.use_crewai()` — `sequential` strategy, coordination only (every model call proxies through the wrapped `Agent`'s own provider) — [ADR-0027](docs/adr/0027-crewai-autogen-orchestrator-backends.md) |
 | AutoGen | ✅ | `workflow.use_autogen()` — `sequential` + `supervisor` strategies, same coordination-only design — [ADR-0027](docs/adr/0027-crewai-autogen-orchestrator-backends.md) |
 | ADK | ✅ | `workflow.use_adk()` — `sequential` + `supervisor` strategies, same coordination-only design — [ADR-0039](docs/adr/0039-adk-orchestrator-backend.md) |
+| OpenAI Agents SDK | ✅ | `workflow.use_openai_agents()` — `sequential` (chained `Runner.run`) + `supervisor`, same coordination-only design; SDK trace upload to OpenAI disabled — [ADR-0040](docs/adr/0040-agent-sdk-orchestrator-backends.md) |
+| Strands Agents (AWS) | ✅ | `workflow.use_strands()` — `sequential` (a real Strands `Graph`) + `supervisor`, same coordination-only design — [ADR-0040](docs/adr/0040-agent-sdk-orchestrator-backends.md) |
+| Microsoft Agent Framework | ✅ | `workflow.use_agent_framework()` — `sequential` (a real `WorkflowBuilder` workflow) + `supervisor`, same coordination-only design; depends on `agent-framework-core` only — [ADR-0040](docs/adr/0040-agent-sdk-orchestrator-backends.md) |
+| Claude Agent SDK | N/A | Deliberately not added: it spawns the Claude Code CLI and has no model-adapter hook, so it can't be coordination-only over Requisite's providers — see [ADR-0040](docs/adr/0040-agent-sdk-orchestrator-backends.md) |
 | Public API stays identical across backends | ✅ | `Workflow.add()` / `.run()` unchanged regardless of `.use_*()` |
 
 ## Agentic mode

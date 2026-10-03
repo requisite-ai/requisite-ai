@@ -31,8 +31,47 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   core, not behind extras), a materially heavier footprint than any
   other optional backend.
 
+- OpenAI Agents SDK, Strands Agents, and Microsoft Agent Framework
+  orchestrator backends -- see
+  [ADR-0040](docs/adr/0040-agent-sdk-orchestrator-backends.md).
+  `workflow.use_openai_agents()`, `workflow.use_strands()` and
+  `workflow.use_agent_framework()` each support `"sequential"` and
+  `"supervisor"`, with the same coordination-only design as every other
+  backend: every model call still proxies through the wrapped `Agent`'s own
+  configured provider via the SDK's own model hook (`Model.get_response`,
+  `Model.stream`, `BaseChatClient._inner_get_response`), so these never
+  call OpenAI/Bedrock/Azure. `"sequential"` runs on each SDK's real
+  primitive (chained `Runner.run`, a Strands `Graph`, a `WorkflowBuilder`
+  workflow); `"supervisor"` is one shared implementation, the native
+  delegation loop, so `max_rounds` and unknown-worker behaviour are
+  identical everywhere. The OpenAI SDK's default upload of traces
+  (prompts and outputs) to OpenAI's platform is explicitly disabled --
+  verified by counting span exports, not assumed. New opt-in extras
+  `openai_agents`, `strands` and `agent_framework` (the last depends on
+  `agent-framework-core`, not the 120+-package `agent-framework`
+  umbrella); none is in `all`. Considered and deliberately **not**
+  added: the Claude Agent SDK, which spawns the Claude Code CLI and has no
+  model hook to proxy through.
+
 ### Fixed
 
+- The synchronous `run()` of every async-only orchestrator backend
+  (AutoGen, ADK, and the three new ones) failed with `RuntimeError: Event
+  loop is closed` on the second call whenever agents were reused. Each
+  `asyncio.run()` made and closed a new event loop while the provider's
+  cached async HTTP client stayed bound to the first. Reproducible with
+  the bare Gemini provider on an httpx-only `google-genai` install (the
+  project's own dev environment has `aiohttp`, which hid it, including
+  from the earlier ADK live check). A new `requisite.core.sync_bridge.
+  run_sync` runs these on one long-lived event loop instead, and also
+  works from inside an already-running loop. See ADR-0040.
+- CI's type-check job failed on the ADK backend (tests and lint were
+  green): `class X(BaseLlm)` subclasses `Any` when the opt-in SDK isn't
+  installed, which strict mypy rejects, and the `type: ignore[misc]`
+  that handles it had been dropped because it looked unused on a machine
+  with `google-adk` installed. The opt-in SDK modules are now skipped by
+  mypy so they are `Any` in both environments. Also: `requisite.__version__`
+  now matches `pyproject.toml` (it was left at 0.37.0 by the ADK commit).
 - `GeminiProvider` and `OllamaProvider` accepted `max_retries` but never
   honored it, so a single dropped connection (e.g. an `httpx.ReadError`
   from Windows `WinError 10053`, "connection aborted") failed an entire

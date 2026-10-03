@@ -115,11 +115,14 @@ class Workflow:
         ``docs/adr/0037-langgraph-reflexion-strategy.md``.
     orchestrator:
         Execution backend: ``"native"`` (default, pure Python, no extra
-        dependency), ``"langgraph"``, ``"crewai"``, ``"autogen"``, or
-        ``"adk"`` -- each supports a different strategy subset, see
-        :meth:`use_langgraph`/:meth:`use_crewai`/:meth:`use_autogen`/
-        :meth:`use_adk`. Change via those methods (or :meth:`use_native`)
-        instead of passing this directly, for readability at the call site.
+        dependency), ``"langgraph"``, ``"crewai"``, ``"autogen"``,
+        ``"adk"``, ``"openai_agents"``, ``"strands"``, or
+        ``"agent_framework"`` -- each supports a different strategy
+        subset, see :meth:`use_langgraph`/:meth:`use_crewai`/
+        :meth:`use_autogen`/:meth:`use_adk`/:meth:`use_openai_agents`/
+        :meth:`use_strands`/:meth:`use_agent_framework`. Change via those
+        methods (or :meth:`use_native`) instead of passing this directly,
+        for readability at the call site.
     registry:
         The :class:`~requisite.orchestrators.factory.OrchestratorRegistry`
         used to resolve ``orchestrator``. Defaults to the framework's
@@ -438,6 +441,54 @@ class Workflow:
         an internal ADK class with the same name as this one.
         """
         self._orchestrator_name = "adk"
+        return self
+
+    def use_openai_agents(self) -> "Workflow":
+        """Delegate coordination to the `OpenAI Agents SDK
+        <https://github.com/openai/openai-agents-python>`_ (``openai-agents``).
+
+        Requires ``pip install openai-agents``. Returns ``self`` for
+        chaining. Supports ``"sequential"`` (chained ``Runner.run`` calls)
+        and ``"supervisor"`` (the native backend's delegation loop, each
+        worker run through ``Runner.run``) -- see
+        ``docs/adr/0040-agent-sdk-orchestrator-backends.md``. Despite the
+        name this never calls OpenAI: every actual model call still goes
+        through each agent's own configured provider, and the SDK's
+        default trace upload to OpenAI's platform is switched off.
+        """
+        self._orchestrator_name = "openai_agents"
+        return self
+
+    def use_strands(self) -> "Workflow":
+        """Delegate coordination to `Strands Agents
+        <https://github.com/strands-agents/sdk-python>`_ (``strands-agents``).
+
+        Requires ``pip install strands-agents``. Returns ``self`` for
+        chaining. Supports ``"sequential"`` (a real Strands ``Graph``) and
+        ``"supervisor"`` (the native backend's delegation loop, each worker
+        run as a Strands ``Agent``) -- see
+        ``docs/adr/0040-agent-sdk-orchestrator-backends.md``. Despite its
+        AWS origin this never calls Bedrock: every actual model call still
+        goes through each agent's own configured provider.
+        """
+        self._orchestrator_name = "strands"
+        return self
+
+    def use_agent_framework(self) -> "Workflow":
+        """Delegate coordination to Microsoft's `Agent Framework
+        <https://github.com/microsoft/agent-framework>`_.
+
+        Requires ``pip install agent-framework-core`` (not the
+        ``agent-framework`` umbrella package, which pulls in 120+
+        packages). Returns ``self`` for chaining. Supports
+        ``"sequential"`` (a real ``WorkflowBuilder`` workflow) and
+        ``"supervisor"`` (the native backend's delegation loop, each
+        worker run as an ``agent_framework.Agent``) -- see
+        ``docs/adr/0040-agent-sdk-orchestrator-backends.md``. Every actual
+        model call still goes through each agent's own configured
+        provider.
+        """
+        self._orchestrator_name = "agent_framework"
         return self
 
     def run(self, input: Optional[str] = None, **kwargs: Any) -> WorkflowResult:  # noqa: A002
