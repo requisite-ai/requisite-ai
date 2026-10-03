@@ -13,10 +13,13 @@ changes to any other part of the framework are needed.
 
 from __future__ import annotations
 
+import asyncio
 import logging
+import random
+import time
 from abc import ABC, abstractmethod
-from collections.abc import AsyncIterator, Iterator, Sequence
-from typing import TYPE_CHECKING, Any, Optional
+from collections.abc import AsyncIterator, Awaitable, Callable, Iterator, Sequence
+from typing import TYPE_CHECKING, Any, Optional, TypeVar
 
 from pydantic import BaseModel
 
@@ -26,6 +29,25 @@ if TYPE_CHECKING:
     from requisite.tools.base import Tool
 
 logger = logging.getLogger("requisite.providers")
+
+_T = TypeVar("_T")
+
+
+def network_errors() -> tuple[type[BaseException], ...]:
+    """Connection-level exceptions worth retrying: dropped/aborted/reset
+    connections and timeouts, for providers whose SDK is httpx-based.
+
+    ``httpx.TransportError`` covers ``ReadError``, ``ConnectError``,
+    ``RemoteProtocolError`` and the timeout family -- notably wider than
+    ``google-genai``'s own transient list, which only has
+    ``TimeoutException``/``ConnectError`` and so misses a mid-request
+    ``ReadError`` (e.g. Windows ``WinError 10053``).
+    """
+    try:
+        import httpx
+    except ImportError:  # pragma: no cover - httpx ships with every httpx-based SDK
+        return (ConnectionError, TimeoutError)
+    return (httpx.TransportError, ConnectionError, TimeoutError)
 
 
 class BaseProvider(ABC):
@@ -44,7 +66,10 @@ class BaseProvider(ABC):
     max_retries:
         Number of retries for transient failures (rate limits,
         connection errors). Concrete implementations should delegate
-        this to the underlying SDK's own retry mechanism when possible.
+        this to the underlying SDK's own retry mechanism when possible;
+        when the SDK has none (or its own misses real connection
+        errors), override :meth:`_transient_errors` and wrap the raw SDK
+        call in :meth:`_call_with_retries`/:meth:`_acall_with_retries`.
     **kwargs:
         Additional provider-specific options (e.g. ``base_url`` for
         self-hosted or proxy endpoints).
@@ -184,6 +209,67 @@ class BaseProvider(ABC):
         **kwargs: Any,
     ) -> AsyncIterator[StreamChunk]:
         """Asynchronous counterpart to :meth:`stream`. Same parameters and behavior."""
+
+    def _transient_errors(self) -> tuple[type[BaseException], ...]:
+        """Exception types :meth:`_call_with_retries` should retry.
+
+        Empty by default, i.e. no retry: providers whose SDK already
+        retries internally (OpenAI, Anthropic and everything wire-compatible
+        with them) must keep it that way, or retries would multiply.
+        """
+        return ()
+
+    def _retry_delay(self, attempt: int) -> float:
+        """Exponential backoff with jitter: ~0.5s, 1s, 2s, ... capped at 8s."""
+        return float(min(0.5 * 2**attempt, 8.0) * (0.5 + random.random() / 2))
+
+    def _call_with_retries(self, call: Callable[[], _T]) -> _T:
+        """Run ``call``, retrying up to ``max_retries`` times on
+        :meth:`_transient_errors` with exponential backoff. Anything else,
+        and the final failure once retries are exhausted, propagates
+        unchanged. Wrap only the raw SDK call -- not response conversion.
+        """
+        attempt = 0
+        while True:
+            try:
+                return call()
+            except self._transient_errors() as exc:
+                if attempt >= self._max_retries:
+                    raise
+                delay = self._retry_delay(attempt)
+                attempt += 1
+                logger.warning(
+                    "%s: transient error (%s: %s); retry %d/%d in %.1fs",
+                    self.name,
+                    type(exc).__name__,
+                    exc,
+                    attempt,
+                    self._max_retries,
+                    delay,
+                )
+                time.sleep(delay)
+
+    async def _acall_with_retries(self, call: Callable[[], Awaitable[_T]]) -> _T:
+        """Asynchronous counterpart to :meth:`_call_with_retries`."""
+        attempt = 0
+        while True:
+            try:
+                return await call()
+            except self._transient_errors() as exc:
+                if attempt >= self._max_retries:
+                    raise
+                delay = self._retry_delay(attempt)
+                attempt += 1
+                logger.warning(
+                    "%s: transient error (%s: %s); retry %d/%d in %.1fs",
+                    self.name,
+                    type(exc).__name__,
+                    exc,
+                    attempt,
+                    self._max_retries,
+                    delay,
+                )
+                await asyncio.sleep(delay)
 
     def validate_config(self) -> None:
         """Raise :class:`~requisite.core.exceptions.ConfigurationException`

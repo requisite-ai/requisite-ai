@@ -31,6 +31,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   core, not behind extras), a materially heavier footprint than any
   other optional backend.
 
+### Fixed
+
+- `GeminiProvider` and `OllamaProvider` accepted `max_retries` but never
+  honored it, so a single dropped connection (e.g. an `httpx.ReadError`
+  from Windows `WinError 10053`, "connection aborted") failed an entire
+  multi-call run -- surfaced by long, call-heavy strategies such as
+  `debate`, whose logic itself was sound (6/6 clean runs in isolation on
+  both backends). `google-genai`'s own client defaults to never retrying,
+  and even its opt-in retry list covers only `TimeoutException`/
+  `ConnectError`, not `ReadError`, so delegating to it would not have
+  helped. Both providers now retry connection-level errors on
+  `chat`/`achat` with exponential backoff and jitter (~0.5s, 1s, 2s,
+  capped at 8s), up to `max_retries` (default 2); `max_retries=0` turns
+  it off. Non-transient errors still fail immediately, streaming is not
+  retried (it would replay chunks already yielded), and OpenAI/Anthropic
+  (and everything wire-compatible with them) are unchanged -- their SDKs
+  already retry, and a second layer would multiply attempts. Shared via
+  new `BaseProvider._call_with_retries`/`_acall_with_retries` helpers any
+  future SDK-without-retry provider can opt into by overriding
+  `_transient_errors()`.
+
 ## [0.37.0] - 2026-09-01
 
 ### Added

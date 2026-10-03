@@ -20,7 +20,7 @@ from pydantic import BaseModel
 
 from requisite.core.exceptions import ConfigurationException, ProviderException
 from requisite.core.interfaces import ChatResponse, Message, Role, StreamChunk, ToolCall, Usage
-from requisite.providers.base import BaseProvider
+from requisite.providers.base import BaseProvider, network_errors
 from requisite.tools.base import Tool
 
 logger = logging.getLogger("requisite.providers.gemini")
@@ -70,9 +70,13 @@ class GeminiProvider(BaseProvider):
     timeout:
         Per-request timeout, in seconds.
     max_retries:
-        Number of retries for transient failures. Currently informational;
-        surfaced for interface symmetry with other providers and for
-        future use once the SDK exposes granular retry configuration.
+        Number of retries, with exponential backoff, for transient
+        connection errors (dropped/aborted/reset connections, timeouts)
+        on ``chat``/``achat``. Handled here rather than delegated to
+        ``google-genai``: its client defaults to never retrying, and even
+        its opt-in retry list misses a mid-request ``httpx.ReadError``.
+        Streaming calls are not retried -- a retry mid-stream would
+        replay chunks already yielded to the caller.
 
     Examples
     --------
@@ -99,6 +103,9 @@ class GeminiProvider(BaseProvider):
     @property
     def name(self) -> str:
         return "gemini"
+
+    def _transient_errors(self) -> tuple[type[BaseException], ...]:
+        return network_errors()
 
     def _get_client(self) -> Any:
         """Lazily construct (and cache) the ``google-genai`` client.
@@ -243,10 +250,12 @@ class GeminiProvider(BaseProvider):
             kwargs=kwargs,
         )
         try:
-            response = client.models.generate_content(
-                model=resolved_model,
-                contents=contents,
-                config=config,
+            response = self._call_with_retries(
+                lambda: client.models.generate_content(
+                    model=resolved_model,
+                    contents=contents,
+                    config=config,
+                )
             )
         except Exception as exc:  # noqa: BLE001
             raise ProviderException(
@@ -278,10 +287,12 @@ class GeminiProvider(BaseProvider):
             kwargs=kwargs,
         )
         try:
-            response = await client.aio.models.generate_content(
-                model=resolved_model,
-                contents=contents,
-                config=config,
+            response = await self._acall_with_retries(
+                lambda: client.aio.models.generate_content(
+                    model=resolved_model,
+                    contents=contents,
+                    config=config,
+                )
             )
         except Exception as exc:  # noqa: BLE001
             raise ProviderException(

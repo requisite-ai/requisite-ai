@@ -1219,3 +1219,164 @@ def test_ollama_provider_does_not_require_api_key() -> None:
 
     provider = OllamaProvider(model="llama3.2")
     provider.validate_config()  # must not raise, unlike the BaseProvider default
+
+
+# ---------------------------------------------------------------------------
+# Transient-error retry (BaseProvider._call_with_retries)
+#
+# Found via a real run: a mid-request httpx.ReadError (Windows WinError
+# 10053, "connection aborted") killed a whole multi-round debate, because
+# Gemini/Ollama accepted max_retries but never honored it, and
+# google-genai's own retry list doesn't cover ReadError even when enabled.
+# ---------------------------------------------------------------------------
+
+
+def _read_error() -> Exception:
+    import httpx
+
+    return httpx.ReadError("[WinError 10053] connection aborted")
+
+
+class _FlakyGeminiModels:
+    """Fails with ``error`` for the first ``failures`` calls, then succeeds."""
+
+    def __init__(self, *, failures: int, error: Exception) -> None:
+        self.failures = failures
+        self.error = error
+        self.calls = 0
+
+    def _respond(self) -> _FakeGeminiResponse:
+        self.calls += 1
+        if self.calls <= self.failures:
+            raise self.error
+        return _FakeGeminiResponse([_FakePart.from_text("recovered")])
+
+    def generate_content(self, *, model: str, contents: list[Any], config: Any) -> Any:
+        return self._respond()
+
+
+class _AsyncFlakyGeminiModels(_FlakyGeminiModels):
+    async def generate_content(  # type: ignore[override]
+        self, *, model: str, contents: list[Any], config: Any
+    ) -> Any:
+        return self._respond()
+
+
+def _flaky_gemini(models: _FlakyGeminiModels, *, max_retries: int = 2) -> Any:
+    from requisite.providers.gemini_provider import GeminiProvider
+
+    provider = GeminiProvider(api_key="g-test", model="gemini-2.5-flash", max_retries=max_retries)
+    provider._client = types.SimpleNamespace(
+        models=models, aio=types.SimpleNamespace(models=models)
+    )
+    provider._retry_delay = lambda attempt: 0.0  # type: ignore[method-assign]
+    return provider
+
+
+def test_gemini_provider_retries_a_transient_read_error_then_succeeds(
+    fake_genai_module: types.ModuleType,
+) -> None:
+    models = _FlakyGeminiModels(failures=2, error=_read_error())
+    provider = _flaky_gemini(models)
+
+    response = provider.chat([Message.user("hi")])
+
+    assert response.content == "recovered"
+    assert models.calls == 3  # two transient failures, then success
+
+
+def test_gemini_provider_raises_after_exhausting_retries(
+    fake_genai_module: types.ModuleType,
+) -> None:
+    models = _FlakyGeminiModels(failures=10, error=_read_error())
+    provider = _flaky_gemini(models, max_retries=2)
+
+    with pytest.raises(ProviderException) as exc_info:
+        provider.chat([Message.user("hi")])
+
+    assert models.calls == 3  # the first attempt plus max_retries retries, no more
+    assert type(exc_info.value.original_error).__name__ == "ReadError"
+
+
+def test_gemini_provider_does_not_retry_a_non_transient_error(
+    fake_genai_module: types.ModuleType,
+) -> None:
+    models = _FlakyGeminiModels(failures=10, error=ValueError("bad request"))
+    provider = _flaky_gemini(models)
+
+    with pytest.raises(ProviderException):
+        provider.chat([Message.user("hi")])
+
+    assert models.calls == 1
+
+
+def test_gemini_provider_max_retries_zero_never_retries(
+    fake_genai_module: types.ModuleType,
+) -> None:
+    models = _FlakyGeminiModels(failures=1, error=_read_error())
+    provider = _flaky_gemini(models, max_retries=0)
+
+    with pytest.raises(ProviderException):
+        provider.chat([Message.user("hi")])
+
+    assert models.calls == 1
+
+
+@pytest.mark.asyncio
+async def test_gemini_provider_achat_retries_a_transient_read_error_then_succeeds(
+    fake_genai_module: types.ModuleType,
+) -> None:
+    models = _AsyncFlakyGeminiModels(failures=2, error=_read_error())
+    provider = _flaky_gemini(models)
+
+    response = await provider.achat([Message.user("hi")])
+
+    assert response.content == "recovered"
+    assert models.calls == 3
+
+
+def test_ollama_provider_retries_a_transient_connection_error_then_succeeds(
+    fake_ollama_module: types.ModuleType,
+) -> None:
+    calls = {"n": 0}
+
+    class _FlakyOllamaClient(_FakeOllamaClient):
+        def chat(self, *, model, messages, stream=False, **kwargs):  # noqa: ANN001
+            calls["n"] += 1
+            if calls["n"] <= 2:
+                raise ConnectionError("Failed to connect to Ollama")
+            return _FakeOllamaChatResponse("recovered")
+
+    fake_ollama_module.Client = _FlakyOllamaClient  # type: ignore[attr-defined]
+
+    from requisite.providers.ollama_provider import OllamaProvider
+
+    provider = OllamaProvider(model="llama3.2")
+    provider._retry_delay = lambda attempt: 0.0  # type: ignore[method-assign]
+
+    assert provider.chat([Message.user("hi")]).content == "recovered"
+    assert calls["n"] == 3
+
+
+def test_provider_without_transient_errors_never_retries() -> None:
+    """The default (SDK-handles-it-itself providers like OpenAI/Anthropic)
+    must stay a single attempt, or retries would multiply with the SDK's own."""
+    provider = DummyProvider(api_key="k", model="m", max_retries=5)
+    calls = {"n": 0}
+
+    def _boom() -> None:
+        calls["n"] += 1
+        raise ConnectionError("down")
+
+    assert provider._transient_errors() == ()
+    with pytest.raises(ConnectionError):
+        provider._call_with_retries(_boom)
+    assert calls["n"] == 1
+
+
+def test_retry_delay_backs_off_exponentially_with_a_cap() -> None:
+    provider = DummyProvider(api_key="k", model="m")
+
+    assert 0.25 <= provider._retry_delay(0) <= 0.5
+    assert 0.5 <= provider._retry_delay(1) <= 1.0
+    assert provider._retry_delay(20) <= 8.0

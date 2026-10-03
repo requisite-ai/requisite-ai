@@ -22,7 +22,7 @@ from pydantic import BaseModel
 
 from requisite.core.exceptions import ConfigurationException, ProviderException
 from requisite.core.interfaces import ChatResponse, Message, Role, StreamChunk, ToolCall, Usage
-from requisite.providers.base import BaseProvider
+from requisite.providers.base import BaseProvider, network_errors
 from requisite.tools.base import Tool
 
 logger = logging.getLogger("requisite.providers.ollama")
@@ -111,9 +111,12 @@ class OllamaProvider(BaseProvider):
     timeout:
         Per-request timeout, in seconds.
     max_retries:
-        Accepted for interface symmetry with other providers; the
-        underlying ``ollama`` client has no built-in retry mechanism to
-        delegate to, so this is currently informational only.
+        Number of retries, with exponential backoff, for transient
+        connection errors (dropped/refused/reset connections, timeouts)
+        on ``chat``/``achat``. The underlying ``ollama`` client has no
+        built-in retry mechanism to delegate to, so it's handled here.
+        Streaming calls are not retried -- a retry mid-stream would
+        replay chunks already yielded to the caller.
 
     Examples
     --------
@@ -141,6 +144,9 @@ class OllamaProvider(BaseProvider):
     @property
     def name(self) -> str:
         return "ollama"
+
+    def _transient_errors(self) -> tuple[type[BaseException], ...]:
+        return network_errors()
 
     def validate_config(self) -> None:
         """Ollama needs no API key for a local server -- override the
@@ -184,12 +190,16 @@ class OllamaProvider(BaseProvider):
         client = self._get_client()
         resolved_model = model or self._model
         try:
-            response = client.chat(
-                model=resolved_model,
-                messages=_to_ollama_messages(messages),
-                tools=_to_ollama_tools(tools) if tools else None,
-                format=response_model.model_json_schema() if response_model is not None else None,
-                options=self._options(temperature, kwargs),
+            response = self._call_with_retries(
+                lambda: client.chat(
+                    model=resolved_model,
+                    messages=_to_ollama_messages(messages),
+                    tools=_to_ollama_tools(tools) if tools else None,
+                    format=response_model.model_json_schema()
+                    if response_model is not None
+                    else None,
+                    options=self._options(temperature, kwargs),
+                )
             )
         except Exception as exc:  # noqa: BLE001
             raise ProviderException(
@@ -213,12 +223,16 @@ class OllamaProvider(BaseProvider):
         client = self._get_async_client()
         resolved_model = model or self._model
         try:
-            response = await client.chat(
-                model=resolved_model,
-                messages=_to_ollama_messages(messages),
-                tools=_to_ollama_tools(tools) if tools else None,
-                format=response_model.model_json_schema() if response_model is not None else None,
-                options=self._options(temperature, kwargs),
+            response = await self._acall_with_retries(
+                lambda: client.chat(
+                    model=resolved_model,
+                    messages=_to_ollama_messages(messages),
+                    tools=_to_ollama_tools(tools) if tools else None,
+                    format=response_model.model_json_schema()
+                    if response_model is not None
+                    else None,
+                    options=self._options(temperature, kwargs),
+                )
             )
         except Exception as exc:  # noqa: BLE001
             raise ProviderException(
