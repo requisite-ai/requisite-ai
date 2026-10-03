@@ -39,7 +39,12 @@ from requisite.core.interfaces import ChatResponse, Message, StreamChunk
 from requisite.core.rate_limiter import RateLimiter
 from requisite.providers.base import BaseProvider
 from requisite.providers.factory import ProviderRegistry, default_registry
-from requisite.telemetry.otel import get_meter, get_tracer
+from requisite.telemetry.otel import (
+    genai_request_attributes,
+    get_meter,
+    get_tracer,
+    set_genai_response_attributes,
+)
 from requisite.tools.registry import ToolLike, resolve_tool_like
 
 _tracer = get_tracer("requisite.ai")
@@ -299,7 +304,15 @@ class AI:
             "requisite.provider": self._provider.name,
             "requisite.model": model or self._settings.model,
         }
-        with _tracer.start_as_current_span("requisite.ai.chat_response", attributes=attributes):
+        with _tracer.start_as_current_span(
+            "requisite.ai.chat_response",
+            attributes={
+                **attributes,
+                **genai_request_attributes(
+                    attributes["requisite.provider"], attributes["requisite.model"]
+                ),
+            },
+        ) as span:
             start = time.monotonic()
             try:
                 response = self._provider.chat(
@@ -316,6 +329,7 @@ class AI:
                 # out of this `with` block -- only the metric needs recording here.
                 _request_counter.add(1, {**attributes, "requisite.status": "error"})
                 raise
+            set_genai_response_attributes(span, response)
             _request_duration.record(time.monotonic() - start, attributes)
             _request_counter.add(1, {**attributes, "requisite.status": "success"})
             _token_counter.add(
@@ -380,7 +394,15 @@ class AI:
             "requisite.provider": self._provider.name,
             "requisite.model": model or self._settings.model,
         }
-        with _tracer.start_as_current_span("requisite.ai.achat_response", attributes=attributes):
+        with _tracer.start_as_current_span(
+            "requisite.ai.achat_response",
+            attributes={
+                **attributes,
+                **genai_request_attributes(
+                    attributes["requisite.provider"], attributes["requisite.model"]
+                ),
+            },
+        ) as span:
             start = time.monotonic()
             try:
                 response = await self._provider.achat(
@@ -397,6 +419,7 @@ class AI:
                 # out of this `with` block -- only the metric needs recording here.
                 _request_counter.add(1, {**attributes, "requisite.status": "error"})
                 raise
+            set_genai_response_attributes(span, response)
             _request_duration.record(time.monotonic() - start, attributes)
             _request_counter.add(1, {**attributes, "requisite.status": "success"})
             _token_counter.add(
@@ -453,7 +476,15 @@ class AI:
             "requisite.provider": self._provider.name,
             "requisite.model": model or self._settings.model,
         }
-        with _tracer.start_as_current_span("requisite.ai.stream", attributes=attributes):
+        with _tracer.start_as_current_span(
+            "requisite.ai.stream",
+            attributes={
+                **attributes,
+                **genai_request_attributes(
+                    attributes["requisite.provider"], attributes["requisite.model"]
+                ),
+            },
+        ):
             start = time.monotonic()
             try:
                 for chunk in self._provider.stream(
@@ -500,7 +531,15 @@ class AI:
             "requisite.provider": self._provider.name,
             "requisite.model": model or self._settings.model,
         }
-        with _tracer.start_as_current_span("requisite.ai.astream", attributes=attributes):
+        with _tracer.start_as_current_span(
+            "requisite.ai.astream",
+            attributes={
+                **attributes,
+                **genai_request_attributes(
+                    attributes["requisite.provider"], attributes["requisite.model"]
+                ),
+            },
+        ):
             start = time.monotonic()
             try:
                 async for chunk in self._provider.astream(
@@ -554,7 +593,15 @@ class AI:
             "requisite.provider": self._provider.name,
             "requisite.model": model or self._settings.model,
         }
-        with _tracer.start_as_current_span("requisite.ai.stream_response", attributes=attributes):
+        with _tracer.start_as_current_span(
+            "requisite.ai.stream_response",
+            attributes={
+                **attributes,
+                **genai_request_attributes(
+                    attributes["requisite.provider"], attributes["requisite.model"]
+                ),
+            },
+        ):
             start = time.monotonic()
             try:
                 yield from self._provider.stream(
@@ -599,7 +646,15 @@ class AI:
             "requisite.provider": self._provider.name,
             "requisite.model": model or self._settings.model,
         }
-        with _tracer.start_as_current_span("requisite.ai.astream_response", attributes=attributes):
+        with _tracer.start_as_current_span(
+            "requisite.ai.astream_response",
+            attributes={
+                **attributes,
+                **genai_request_attributes(
+                    attributes["requisite.provider"], attributes["requisite.model"]
+                ),
+            },
+        ):
             start = time.monotonic()
             try:
                 async for chunk in self._provider.astream(

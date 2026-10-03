@@ -16,6 +16,7 @@ budgeting, not an oversight -- see docs/adr/0038-cost-based-rate-limiting.md.
 
 from __future__ import annotations
 
+import math
 import threading
 from typing import TYPE_CHECKING, Callable
 
@@ -27,6 +28,13 @@ if TYPE_CHECKING:
 #: ``(usage, model) -> dollars`` for one completed call. Callers own
 #: pricing -- see :func:`cost_per_token` for the common flat-rate case.
 CostFn = Callable[["Usage", str], float]
+
+
+def _format_usd(amount: float) -> str:
+    """Format dollars so a sub-cent budget stays readable (two significant digits)."""
+    if amount <= 0 or amount >= 0.01:
+        return f"{amount:.4f}"
+    return f"{amount:.{1 - math.floor(math.log10(amount))}f}"
 
 
 def cost_per_token(*, prompt_rate_per_1k: float, completion_rate_per_1k: float) -> CostFn:
@@ -113,7 +121,7 @@ class CostLimiter:
             spent, budget = self._spent_usd, self._budget_usd
         if spent >= budget:
             raise CostLimitException(
-                f"Cost budget exhausted: spent ${spent:.4f} of ${budget:.4f}.",
+                f"Cost budget exhausted: spent ${_format_usd(spent)} of ${_format_usd(budget)}.",
             )
 
     def record(self, usage: "Usage", model: str) -> float:

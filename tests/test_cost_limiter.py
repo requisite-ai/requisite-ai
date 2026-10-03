@@ -108,3 +108,13 @@ def test_cost_limiter_shared_across_threads_tracks_spend_correctly() -> None:
         thread.join(timeout=10)
 
     assert limiter.spent_usd == pytest.approx(10 * 200 * 1.0)
+
+
+def test_cost_limit_message_keeps_precision_for_sub_cent_budgets() -> None:
+    limiter = CostLimiter(budget_usd=0.00005, cost_fn=lambda usage, model: 0.00007)
+    limiter.record(Usage(), "m")
+
+    with pytest.raises(CostLimitException) as excinfo:
+        limiter.check()
+
+    assert "spent $0.000070 of $0.000050" in str(excinfo.value)

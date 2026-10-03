@@ -75,6 +75,38 @@ class _NoOpMeter:
         return _NoOpHistogram()
 
 
+# OpenTelemetry GenAI semantic conventions (status: Development upstream, so
+# attribute names may still change). Every name lives in this block so a rename
+# is a one-place edit. Span-only: metric attributes are left untouched to keep
+# metric cardinality unchanged.
+GEN_AI_OPERATION_NAME = "gen_ai.operation.name"
+GEN_AI_PROVIDER_NAME = "gen_ai.provider.name"
+GEN_AI_REQUEST_MODEL = "gen_ai.request.model"
+GEN_AI_RESPONSE_MODEL = "gen_ai.response.model"
+GEN_AI_USAGE_INPUT_TOKENS = "gen_ai.usage.input_tokens"
+GEN_AI_USAGE_OUTPUT_TOKENS = "gen_ai.usage.output_tokens"
+
+# Requisite provider name -> the convention's well-known gen_ai.provider.name
+# value. Names with no well-known value pass through unchanged.
+_GENAI_PROVIDER_NAMES = {"gemini": "gcp.gemini"}
+
+
+def genai_request_attributes(provider: str, model: str) -> dict[str, str]:
+    """Span attributes known before a chat call is made."""
+    return {
+        GEN_AI_OPERATION_NAME: "chat",
+        GEN_AI_PROVIDER_NAME: _GENAI_PROVIDER_NAMES.get(provider, provider),
+        GEN_AI_REQUEST_MODEL: model,
+    }
+
+
+def set_genai_response_attributes(span: Any, response: Any) -> None:
+    """Record the model that answered and its token usage on ``span``."""
+    span.set_attribute(GEN_AI_RESPONSE_MODEL, response.model)
+    span.set_attribute(GEN_AI_USAGE_INPUT_TOKENS, response.usage.prompt_tokens)
+    span.set_attribute(GEN_AI_USAGE_OUTPUT_TOKENS, response.usage.completion_tokens)
+
+
 def get_tracer(name: str) -> Any:
     """Return an OpenTelemetry tracer for ``name``, or a safe no-op stand-in.
 

@@ -411,3 +411,70 @@ def test_agent_run_increments_run_and_tool_call_metrics(
 
     assert after_runs - before_runs == 1
     assert after_tool_calls - before_tool_calls == 1
+
+
+# ---------------------------------------------------------------------------
+# GenAI semantic-convention attributes
+# ---------------------------------------------------------------------------
+
+
+def test_ai_chat_response_span_carries_genai_attributes(
+    span_exporter: InMemorySpanExporter,
+) -> None:
+    span_exporter.clear()
+    make_ai(FakeProvider).chat_response("hi")
+
+    attrs = _spans_by_name(span_exporter, "requisite.ai.chat_response")[0].attributes
+    assert attrs["gen_ai.operation.name"] == "chat"
+    assert attrs["gen_ai.provider.name"] == "fake"
+    assert attrs["gen_ai.request.model"] == "fake-model"
+    assert attrs["gen_ai.response.model"] == "fake-model"
+    assert attrs["gen_ai.usage.input_tokens"] == 1
+    assert attrs["gen_ai.usage.output_tokens"] == 2
+
+
+@pytest.mark.asyncio
+async def test_ai_achat_response_span_carries_genai_attributes(
+    span_exporter: InMemorySpanExporter,
+) -> None:
+    span_exporter.clear()
+    await make_ai(FakeProvider).achat_response("hi")
+
+    attrs = _spans_by_name(span_exporter, "requisite.ai.achat_response")[0].attributes
+    assert attrs["gen_ai.usage.input_tokens"] == 1
+    assert attrs["gen_ai.usage.output_tokens"] == 2
+
+
+def test_ai_stream_span_has_request_attributes_but_no_usage(
+    span_exporter: InMemorySpanExporter,
+) -> None:
+    span_exporter.clear()
+    list(make_ai(FakeProvider).stream("hi"))
+
+    attrs = _spans_by_name(span_exporter, "requisite.ai.stream")[0].attributes
+    assert attrs["gen_ai.request.model"] == "fake-model"
+    assert "gen_ai.usage.input_tokens" not in attrs
+
+
+def test_failed_call_span_has_request_but_no_response_attributes(
+    span_exporter: InMemorySpanExporter,
+) -> None:
+    span_exporter.clear()
+    with pytest.raises(ProviderException):
+        make_ai(FailingProvider, name="failing").chat_response("hi")
+
+    attrs = _spans_by_name(span_exporter, "requisite.ai.chat_response")[0].attributes
+    assert attrs["gen_ai.provider.name"] == "failing"
+    assert "gen_ai.response.model" not in attrs
+
+
+def test_gemini_provider_maps_to_well_known_genai_name() -> None:
+    attrs = otel_module.genai_request_attributes("gemini", "gemini-x")
+    assert attrs["gen_ai.provider.name"] == "gcp.gemini"
+
+
+def test_genai_response_attributes_noop_span_does_not_raise() -> None:
+    span = otel_module._NoOpSpan()
+    otel_module.set_genai_response_attributes(
+        span, ChatResponse(content="x", model="m", provider="p")
+    )

@@ -7,6 +7,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.39.0] - 2026-10-03
+
+### Added
+
+- OpenTelemetry GenAI semantic-convention attributes on every `AI` span
+  (`requisite.ai.chat_response`, `achat_response`, `stream`, `astream`,
+  `stream_response`, `astream_response`): `gen_ai.operation.name`,
+  `gen_ai.provider.name` (the Gemini provider reports the well-known
+  `gcp.gemini`), and `gen_ai.request.model`. Non-streaming calls also record
+  `gen_ai.response.model`, `gen_ai.usage.input_tokens` and
+  `gen_ai.usage.output_tokens`; streaming spans carry no usage because
+  streamed responses don't report it yet. Span-only: metric attributes are
+  unchanged. The conventions are still in Development upstream, so every
+  attribute name is defined in one place in `requisite.telemetry.otel`.
+
+### Fixed
+
+- `CostLimitException` now formats sub-cent amounts with two significant
+  digits (`spent $0.000070 of $0.000050`) instead of rounding both to
+  `$0.0001`. Amounts of a cent or more are unchanged.
+
 ## [0.38.0] - 2026-10-03
 
 ### Added
