@@ -151,3 +151,15 @@ ignore_missing_imports = true
 module = ["crewai.*", "numpy.*", "chromadb.*"]
 follow_imports = "skip"
 ignore_missing_imports = true
+
+# google.adk.* is skipped for a different reason: it's an opt-in extra
+# excluded from `all`, so CI's mypy job doesn't have it installed while a
+# dev machine usually does. Treated as Any in both cases, the
+# `# type: ignore[misc]` on each `class X(BaseLlm/BaseAgent)` in
+# adk_orchestrator.py is always needed -- without the skip, it's required
+# in CI (missing => Any) but reported as unused locally (installed =>
+# real types), and the two can't both be satisfied.
+[[tool.mypy.overrides]]
+module = ["google.adk", "google.adk.*"]
+follow_imports = "skip"
+ignore_missing_imports = true

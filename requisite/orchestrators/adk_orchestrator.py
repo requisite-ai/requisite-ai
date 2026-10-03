@@ -114,7 +114,7 @@ class AdkOrchestrator(BaseOrchestrator):
 
         from pydantic import PrivateAttr
 
-        class _RequisiteLlm(BaseLlm):
+        class _RequisiteLlm(BaseLlm):  # type: ignore[misc]
             """Proxies every ADK model call back to one wrapped Requisite ``Agent``.
 
             ADK's own ``tools``/function-calling protocol is deliberately
@@ -146,7 +146,7 @@ class AdkOrchestrator(BaseOrchestrator):
                     ),
                 )
 
-        class _RequisiteSequentialAgent(BaseAgent):
+        class _RequisiteSequentialAgent(BaseAgent):  # type: ignore[misc]
             """Runs ``sub_agents`` (each an ``LlmAgent`` wrapping a
             ``_RequisiteLlm``) in order.
 
@@ -163,7 +163,7 @@ class AdkOrchestrator(BaseOrchestrator):
                     async for event in sub_agent.run_async(ctx):
                         yield event
 
-        class _RequisiteSupervisorAgent(BaseAgent):
+        class _RequisiteSupervisorAgent(BaseAgent):  # type: ignore[misc]
             """Reuses Native's supervisor decision protocol directly inside
             ``_run_async_impl`` -- no ``_RequisiteLlm``/``LlmAgent``
             involved. See module docstring.
