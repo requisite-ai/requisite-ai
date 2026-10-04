@@ -140,9 +140,17 @@ class AdkOrchestrator(BaseOrchestrator):
                 task_text = _extract_task_text(llm_request.contents)
                 result = await self._requisite_agent.arun(task_text)
                 self._collected_results.append(result)
+                usage = result.usage
                 yield LlmResponse(
                     content=genai_types.Content(
                         role="model", parts=[genai_types.Part(text=str(result.content))]
+                    ),
+                    # Lets ADK's own spans/accounting see real counts instead of
+                    # "missing token usage metadata". Sums the whole Agent run.
+                    usage_metadata=genai_types.GenerateContentResponseUsageMetadata(
+                        prompt_token_count=usage.prompt_tokens,
+                        candidates_token_count=usage.completion_tokens,
+                        total_token_count=usage.total_tokens,
                     ),
                 )
 

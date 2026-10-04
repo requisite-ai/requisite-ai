@@ -23,12 +23,13 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from collections.abc import AsyncIterator
-from contextlib import AsyncExitStack, asynccontextmanager
-from typing import TYPE_CHECKING, Any, Optional
+from collections.abc import AsyncIterator, Callable, Coroutine
+from contextlib import asynccontextmanager
+from typing import TYPE_CHECKING, Any, Optional, TypeVar
 
 from requisite.core.exceptions import ConfigurationException, MCPException
 from requisite.core.interfaces import Message, Role
+from requisite.core.sync_bridge import is_bridge_loop, run_sync
 from requisite.mcp.base import BaseMCPClient, MCPPrompt, MCPPromptArgument, MCPResource
 from requisite.tools.base import Tool
 
@@ -36,6 +37,8 @@ if TYPE_CHECKING:
     from mcp import ClientSession as MCPClientSession
 
 logger = logging.getLogger("requisite.mcp.client")
+
+_T = TypeVar("_T")
 
 # Shared by both transports -- bounds a single request/response round
 # trip (including the initial `session.initialize()` handshake). Without
@@ -93,16 +96,18 @@ class MCPClient(BaseMCPClient):
     (``adiscover_tools``, tool calls, ``adiscover_resources``,
     ``aread_resource``, ``adiscover_prompts``, ``aget_prompt``)
     transparently reuses the open session instead of reconnecting.
-    Persistent mode is **async-only**: the sync methods
-    (:meth:`discover_tools`, :meth:`read_resource`, :meth:`get_prompt`,
-    and a discovered tool's synchronous :meth:`~requisite.tools.base.Tool.execute`)
-    each open their own fresh event loop per call (``asyncio.run``), which
-    cannot safely reuse a session opened on a different loop -- calling
-    any of them while connected raises
+    From synchronous code, use :meth:`connect` / :meth:`close` or
+    ``with client:`` instead: the session is opened on the shared sync-bridge
+    loop, and the sync methods (:meth:`discover_tools`,
+    :meth:`read_resource`, :meth:`get_prompt`, ...) and a discovered tool's
+    :meth:`~requisite.tools.base.Tool.execute` reuse it. A session is bound
+    to the event loop it was opened on: a sync method called while connected
+    via :meth:`aconnect` (a user loop) raises
     :class:`~requisite.core.exceptions.ConfigurationException` immediately
-    rather than risk a hang. Use the ``a``-prefixed async methods (or
-    :meth:`~requisite.tools.base.Tool.aexecute` for a discovered tool)
-    while connected.
+    rather than risk a hang -- use the ``a``-prefixed methods there. See
+    ``docs/adr/0041-agent-owned-persistent-mcp-sessions.md``; an
+    :class:`~requisite.agents.agent.Agent` can also own the lifecycle via
+    ``Agent(mcp_clients=[...])``.
 
     If the underlying connection dies on its own while persistent
     (subprocess crash, network drop -- anything other than an explicit
@@ -164,7 +169,12 @@ class MCPClient(BaseMCPClient):
 
         self._persistent_session: Optional["MCPClientSession"] = None
         self._persistent_loop: Optional[asyncio.AbstractEventLoop] = None
-        self._exit_stack: Optional[AsyncExitStack] = None
+        # One dedicated task owns the open connection for its whole life:
+        # anyio cancel scopes (inside stdio_client/ClientSession) must be
+        # entered and exited in the *same* task, and connect()/close() -- or
+        # an Agent opening and later closing a client -- run in different ones.
+        self._owner_task: Optional["asyncio.Task[None]"] = None
+        self._stop_event: Optional[asyncio.Event] = None
 
     @classmethod
     def stdio(
@@ -342,15 +352,32 @@ class MCPClient(BaseMCPClient):
                 f"MCPClient '{self.name}' is already connected. Call aclose() "
                 "first, or avoid nested aconnect() calls.",
             )
-        stack = AsyncExitStack()
+        loop = asyncio.get_running_loop()
+        ready: asyncio.Future[MCPClientSession] = loop.create_future()
+        stop = asyncio.Event()
+
+        async def _own_connection() -> None:
+            try:
+                async with self._connect() as session:
+                    ready.set_result(session)
+                    await stop.wait()
+            except BaseException as exc:
+                if not ready.done():
+                    ready.set_exception(exc)
+                    return
+                raise
+
+        task = loop.create_task(_own_connection())
         try:
-            session = await stack.enter_async_context(self._connect())
+            session = await ready
         except BaseException:
-            await stack.aclose()
+            task.cancel()
+            await asyncio.gather(task, return_exceptions=True)
             raise
-        self._exit_stack = stack
+        self._owner_task = task
+        self._stop_event = stop
         self._persistent_session = session
-        self._persistent_loop = asyncio.get_running_loop()
+        self._persistent_loop = loop
 
     async def aclose(self) -> None:
         """Close a persistent session opened by :meth:`aconnect`. No-op if
@@ -379,11 +406,13 @@ class MCPClient(BaseMCPClient):
                 "already exited, its subprocess/connection cannot be closed "
                 "cleanly from here.",
             )
-        stack, self._exit_stack = self._exit_stack, None
+        task, stop = self._owner_task, self._stop_event
+        self._owner_task = self._stop_event = None
         self._persistent_session = None
         self._persistent_loop = None
-        if stack is not None:
-            await stack.aclose()
+        if task is not None and stop is not None:
+            stop.set()
+            await task
 
     async def __aenter__(self) -> "MCPClient":
         await self.aconnect()
@@ -392,19 +421,62 @@ class MCPClient(BaseMCPClient):
     async def __aexit__(self, exc_type: Any, exc: Any, tb: Any) -> None:
         await self.aclose()
 
-    def _reject_sync_when_connected(self, method_name: str) -> None:
-        """Fail fast, before ever spinning up ``asyncio.run()``, when a
-        sync method is called while a persistent session is open --
-        rather than let it silently attempt (and potentially deadlock)
-        a fresh event loop against a session bound to a different one."""
-        if self._persistent_session is not None:
+    def connect(self) -> None:
+        """Open a persistent session usable from **synchronous** code.
+
+        The session is opened on the shared sync-bridge loop
+        (:func:`~requisite.core.sync_bridge.run_sync`), a single long-lived
+        background loop, so it stays valid across any number of sync calls:
+        :meth:`discover_tools`, the other sync methods, and a discovered
+        tool's :meth:`~requisite.tools.base.Tool.execute` all reuse it
+        instead of reconnecting. Pair with :meth:`close`, or use
+        ``with client:``. A session opened this way is **not** usable from
+        the async methods running on another loop -- use :meth:`aconnect`
+        there. See ``docs/adr/0041-agent-owned-persistent-mcp-sessions.md``.
+        """
+        run_sync(self.aconnect())
+
+    def close(self) -> None:
+        """Close a session opened by :meth:`connect`. No-op if not connected."""
+        if self._persistent_session is None:
+            return
+        if not is_bridge_loop(self._persistent_loop):
             raise ConfigurationException(
-                f"MCPClient '{self.name}' has a persistent session open -- use "
-                f"'a{method_name}' instead of '{method_name}' while connected. "
-                "Synchronous methods open a new event loop per call "
-                "(asyncio.run), which cannot safely reuse a session opened on "
-                "a different loop.",
+                f"MCPClient '{self.name}' was connected with aconnect() on its own "
+                "event loop; close it with 'await client.aclose()' from that loop, "
+                "not close().",
             )
+        run_sync(self.aclose())
+
+    def __enter__(self) -> "MCPClient":
+        self.connect()
+        return self
+
+    def __exit__(self, exc_type: Any, exc: Any, tb: Any) -> None:
+        self.close()
+
+    def _run_sync(
+        self, method_name: str, make_coroutine: Callable[[], Coroutine[Any, Any, _T]]
+    ) -> _T:
+        """Run one async method from sync code.
+
+        Not connected: a fresh loop per call (``asyncio.run``), as before.
+        Connected via :meth:`connect` (session lives on the sync-bridge
+        loop): run on that same loop so the session is reused. Connected via
+        :meth:`aconnect` on some other loop: fail fast, before any new event
+        loop is created, rather than risk a hang.
+        """
+        if self._persistent_session is None:
+            return asyncio.run(make_coroutine())
+        if is_bridge_loop(self._persistent_loop):
+            return run_sync(make_coroutine())
+        raise ConfigurationException(
+            f"MCPClient '{self.name}' has a persistent session open on its own event "
+            f"loop -- use 'a{method_name}' instead of '{method_name}' while connected "
+            "via aconnect(), or open the session with connect() to use the sync "
+            "methods. Synchronous methods cannot safely reuse a session opened on a "
+            "different loop.",
+        )
 
     async def adiscover_tools(self) -> list[Tool]:
         try:
@@ -421,8 +493,7 @@ class MCPClient(BaseMCPClient):
         return [self._to_tool(mcp_tool) for mcp_tool in result.tools]
 
     def discover_tools(self) -> list[Tool]:
-        self._reject_sync_when_connected("discover_tools")
-        return asyncio.run(self.adiscover_tools())
+        return self._run_sync("discover_tools", self.adiscover_tools)
 
     def _to_tool(self, mcp_tool: Any) -> Tool:
         """Wrap one MCP-discovered tool as a :class:`Tool` whose ``execute``
@@ -500,8 +571,7 @@ class MCPClient(BaseMCPClient):
         ]
 
     def discover_resources(self) -> list[MCPResource]:
-        self._reject_sync_when_connected("discover_resources")
-        return asyncio.run(self.adiscover_resources())
+        return self._run_sync("discover_resources", self.adiscover_resources)
 
     async def aread_resource(self, uri: str) -> str:
         try:
@@ -526,8 +596,7 @@ class MCPClient(BaseMCPClient):
         return "\n".join(parts)
 
     def read_resource(self, uri: str) -> str:
-        self._reject_sync_when_connected("read_resource")
-        return asyncio.run(self.aread_resource(uri))
+        return self._run_sync("read_resource", lambda: self.aread_resource(uri))
 
     async def adiscover_prompts(self) -> list[MCPPrompt]:
         try:
@@ -559,8 +628,7 @@ class MCPClient(BaseMCPClient):
         ]
 
     def discover_prompts(self) -> list[MCPPrompt]:
-        self._reject_sync_when_connected("discover_prompts")
-        return asyncio.run(self.adiscover_prompts())
+        return self._run_sync("discover_prompts", self.adiscover_prompts)
 
     async def aget_prompt(
         self, name: str, arguments: Optional[dict[str, str]] = None
@@ -590,5 +658,4 @@ class MCPClient(BaseMCPClient):
         return messages
 
     def get_prompt(self, name: str, arguments: Optional[dict[str, str]] = None) -> list[Message]:
-        self._reject_sync_when_connected("get_prompt")
-        return asyncio.run(self.aget_prompt(name, arguments))
+        return self._run_sync("get_prompt", lambda: self.aget_prompt(name, arguments))

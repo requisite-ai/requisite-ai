@@ -7,6 +7,35 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.40.0] - 2026-10-04
+
+### Added
+
+- `Agent(mcp_clients=[...])`: the agent opens a persistent session to each
+  `MCPClient` on first use (or `with agent:` / `async with agent:`),
+  registers the discovered tools and reuses the connections for every tool
+  call; `Agent.close()` / `aclose()` end them. Measured against a real stdio
+  server, 20 tool calls dropped from 23.5 s (reconnect per call) to 1.0 s,
+  and `initialize` plus the SDK's per-call `tools/list` run once instead of
+  once per call. Works under every orchestrator backend. See
+  [ADR-0041](docs/adr/0041-agent-owned-persistent-mcp-sessions.md).
+- Persistent MCP sessions from synchronous code: `MCPClient.connect()` /
+  `close()` / `with client:`. The sync methods and a discovered tool's
+  `execute()` reuse the session.
+- `AgentResult.usage`: token usage summed across every model round-trip in a
+  run, tool-calling loops included.
+
+### Fixed
+
+- The ADK backend now passes token usage back to ADK
+  (`LlmResponse.usage_metadata`), so ADK's own spans and logs show real counts
+  instead of "missing token usage metadata".
+- `Tool.execute()` runs coroutine tools on one long-lived loop instead of a
+  new `asyncio.run` loop per call, so loop-bound state (cached async
+  clients, a persistent MCP session) stays valid across calls.
+- `MCPClient.aconnect()` / `aclose()` may now be called from different asyncio
+  tasks (the connection is held by one dedicated owner task).
+
 ## [0.39.0] - 2026-10-03
 
 ### Added

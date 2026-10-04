@@ -136,3 +136,24 @@ async def test_tool_aexecute() -> None:
     built = Tool.from_function(sample_search)
     result = await built.aexecute(city="Tokyo")
     assert result == "Tokyo:1:None"
+
+
+def test_tool_execute_runs_coroutine_tools_on_one_reused_loop() -> None:
+    """Loop-bound state (a cached async client, a persistent MCP session) must
+    survive repeated sync execute() calls -- asyncio.run would hand each call a
+    fresh, then closed, loop."""
+    import asyncio
+
+    seen: list[asyncio.AbstractEventLoop] = []
+
+    async def where_am_i() -> str:
+        """Report the running loop."""
+        seen.append(asyncio.get_running_loop())
+        return "ok"
+
+    built = Tool.from_function(where_am_i)
+    assert built.execute() == "ok"
+    assert built.execute() == "ok"
+
+    assert seen[0] is seen[1]
+    assert not seen[0].is_closed()

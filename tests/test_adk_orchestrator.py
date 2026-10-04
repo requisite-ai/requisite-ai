@@ -152,3 +152,45 @@ def test_adk_orchestrator_requires_input() -> None:
     orchestrator = AdkOrchestrator()
     with pytest.raises(ConfigurationException, match="input"):
         orchestrator.run([make_agent("A", "a")], None)
+
+
+class _UsageProvider(EchoProvider):
+    """Echo provider that reports fixed token usage on every call."""
+
+    def chat(self, messages, **kwargs):  # type: ignore[no-untyped-def]
+        from requisite.core.interfaces import Usage
+
+        response = super().chat(messages, **kwargs)
+        return response.model_copy(
+            update={"usage": Usage(prompt_tokens=7, completion_tokens=3, total_tokens=10)}
+        )
+
+    async def achat(self, messages, **kwargs):  # type: ignore[no-untyped-def]
+        return self.chat(messages)
+
+
+@pytest.mark.asyncio
+async def test_adk_llm_response_carries_usage_metadata() -> None:
+    pytest.importorskip("google.adk")
+
+    agent = make_agent_with_provider("Counter", _UsageProvider())
+    parts = AdkOrchestrator()._require_adk()
+    llm = parts["RequisiteLlm"](agent)
+    genai_types = parts["genai_types"]
+    request = type(
+        "Req",
+        (),
+        {
+            "contents": [
+                genai_types.Content(role="user", parts=[genai_types.Part(text="hello")]),
+            ]
+        },
+    )()
+
+    responses = [r async for r in llm.generate_content_async(request)]
+
+    assert len(responses) == 1
+    usage = responses[0].usage_metadata
+    assert usage.prompt_token_count == 7
+    assert usage.candidates_token_count == 3
+    assert usage.total_token_count == 10

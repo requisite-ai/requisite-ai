@@ -1,6 +1,6 @@
 # 0030. MCP client persistent-session mode
 
-Status: Accepted
+Status: Accepted (its rejection of the background-thread bridge and its async-only scope are superseded by [ADR-0041](0041-agent-owned-persistent-mcp-sessions.md))
 Date: 2026-08-23
 
 ## Context

@@ -24,17 +24,18 @@ import asyncio
 import logging
 import time
 from collections.abc import Callable, Sequence
-from typing import Any, Optional, Union
+from typing import TYPE_CHECKING, Any, Optional, Union
 
 from pydantic import BaseModel, ConfigDict
 
+from requisite.agents._mcp_sessions import McpSessions, build as _build_mcp_sessions
 from requisite.ai import AI
 from requisite.capabilities.registry import CapabilityRegistry
 from requisite.capabilities import default_registry as default_capability_registry
 from requisite.config.settings import Settings
 from requisite.core.cost_limiter import CostLimiter
 from requisite.core.exceptions import AgentException, ConfigurationException, ToolException
-from requisite.core.interfaces import ChatResponse, Message
+from requisite.core.interfaces import ChatResponse, Message, Usage
 from requisite.core.rate_limiter import RateLimiter
 from requisite.memory.base import BaseMemory
 from requisite.memory.policies import BaseConversationPolicy
@@ -44,6 +45,9 @@ from requisite.skills.base import BaseSkill
 from requisite.telemetry.otel import get_meter, get_tracer
 from requisite.tools.base import Tool
 from requisite.tools.registry import ToolRegistry
+
+if TYPE_CHECKING:
+    from requisite.mcp.client import MCPClient
 
 logger = logging.getLogger("requisite.agents")
 
@@ -62,6 +66,14 @@ _tool_call_counter = _meter.create_counter(
 ToolLike = Union[Tool, Callable[..., Any]]
 
 
+def _add_usage(total: Usage, extra: Usage) -> Usage:
+    return Usage(
+        prompt_tokens=total.prompt_tokens + extra.prompt_tokens,
+        completion_tokens=total.completion_tokens + extra.completion_tokens,
+        total_tokens=total.total_tokens + extra.total_tokens,
+    )
+
+
 class AgentResult(BaseModel):
     """The outcome of an :meth:`Agent.run` (or :meth:`Agent.arun`) call.
 
@@ -78,6 +90,10 @@ class AgentResult(BaseModel):
         Names of the tools that were invoked along the way, in order.
     raw_response:
         The final :class:`~requisite.core.interfaces.ChatResponse`.
+    usage:
+        Token usage summed across every model round-trip in the run (the
+        tool-calling loops included), not just the final one. Zeros when
+        the provider reports no usage.
     """
 
     model_config = ConfigDict(arbitrary_types_allowed=True)
@@ -87,6 +103,7 @@ class AgentResult(BaseModel):
     iterations: int
     tool_calls_executed: list[str] = []
     raw_response: Optional[ChatResponse] = None
+    usage: Usage = Usage()
 
     def __str__(self) -> str:  # pragma: no cover - trivial
         return self.content
@@ -174,6 +191,20 @@ class Agent:
         as ``rate_limiter``. Forwarded to this agent's internal
         :class:`~requisite.ai.AI` instance; only enforced on the
         non-streaming calls this agent's tool-calling loop makes.
+    mcp_clients:
+        :class:`~requisite.mcp.client.MCPClient` instances whose tools this
+        agent should use. The agent opens a *persistent* session to each on
+        its first ``run()`` / ``arun()`` (or on entering ``with agent:`` /
+        ``async with agent:``), registers the discovered tools, and reuses
+        the open connections for every later tool call -- instead of
+        spawning a server and running ``initialize`` per call. Close with
+        :meth:`close` / :meth:`aclose` or the context managers. Sessions are
+        bound to the event loop they were opened on: use either ``run()``
+        or ``arun()`` on one agent, not both. A tool passed explicitly via
+        ``tools=`` wins over an MCP tool of the same name; two MCP clients
+        exposing the same name raise
+        :class:`~requisite.core.exceptions.ConfigurationException`. See
+        ``docs/adr/0041-agent-owned-persistent-mcp-sessions.md``.
     max_iterations:
         Maximum number of tool-calling round-trips before
         :class:`~requisite.core.exceptions.AgentException` is raised,
@@ -226,6 +257,7 @@ class Agent:
         rate_limiter: Optional[RateLimiter] = None,
         cost_limiter: Optional[CostLimiter] = None,
         max_iterations: int = 5,
+        mcp_clients: Optional[Sequence["MCPClient"]] = None,
     ) -> None:
         self.name = name
         self.max_iterations = max_iterations
@@ -245,6 +277,8 @@ class Agent:
             self._tool_registry.register(tool_like)
         for skill in skills or []:
             self._tool_registry.register(skill.as_tool())
+
+        self._mcp: McpSessions = _build_mcp_sessions(name, mcp_clients, self._tool_registry)
 
         self._ai = AI(
             provider=provider,
@@ -278,6 +312,32 @@ class Agent:
     def conversation_policy(self) -> Optional[BaseConversationPolicy]:
         """The retention policy applied to message history before each run, if any."""
         return self._conversation_policy
+
+    def close(self) -> None:
+        """Close the persistent MCP sessions this agent opened from sync code.
+
+        No-op when the agent has no ``mcp_clients`` or nothing is open.
+        Idempotent. Sessions opened by ``arun()`` need :meth:`aclose`.
+        """
+        self._mcp.close()
+
+    async def aclose(self) -> None:
+        """Async counterpart to :meth:`close`; call it on the loop ``arun()`` used."""
+        await self._mcp.aclose()
+
+    def __enter__(self) -> "Agent":
+        self._mcp.open_sync()
+        return self
+
+    def __exit__(self, exc_type: Any, exc: Any, tb: Any) -> None:
+        self.close()
+
+    async def __aenter__(self) -> "Agent":
+        await self._mcp.aopen()
+        return self
+
+    async def __aexit__(self, exc_type: Any, exc: Any, tb: Any) -> None:
+        await self.aclose()
 
     def as_tool(self) -> Tool:
         """Expose this agent as a single :class:`~requisite.tools.base.Tool`
@@ -400,8 +460,10 @@ class Agent:
         if self._conversation_policy is not None:
             messages = self._conversation_policy.apply(messages)
 
+        self._mcp.open_sync()
         available_tools = self._tool_registry.all() or None
         tools_executed: list[str] = []
+        total_usage = Usage()
 
         run_attributes = {"requisite.agent_name": self.name}
         with _tracer.start_as_current_span("requisite.agent.run", attributes=run_attributes):
@@ -410,6 +472,7 @@ class Agent:
             try:
                 for iteration in range(1, self.max_iterations + 1):
                     response = self._ai.chat_response(messages, tools=available_tools, **kwargs)
+                    total_usage = _add_usage(total_usage, response.usage)
 
                     if not response.has_tool_calls:
                         if self._memory is not None and user_text is not None:
@@ -427,6 +490,7 @@ class Agent:
                             iterations=iteration,
                             tool_calls_executed=tools_executed,
                             raw_response=response,
+                            usage=total_usage,
                         )
 
                     messages.append(
@@ -477,8 +541,10 @@ class Agent:
         if self._conversation_policy is not None:
             messages = await self._conversation_policy.aapply(messages)
 
+        await self._mcp.aopen()
         available_tools = self._tool_registry.all() or None
         tools_executed: list[str] = []
+        total_usage = Usage()
 
         run_attributes = {"requisite.agent_name": self.name}
         with _tracer.start_as_current_span("requisite.agent.run", attributes=run_attributes):
@@ -489,6 +555,7 @@ class Agent:
                     response = await self._ai.achat_response(
                         messages, tools=available_tools, **kwargs
                     )
+                    total_usage = _add_usage(total_usage, response.usage)
 
                     if not response.has_tool_calls:
                         if self._memory is not None and user_text is not None:
@@ -504,6 +571,7 @@ class Agent:
                             iterations=iteration,
                             tool_calls_executed=tools_executed,
                             raw_response=response,
+                            usage=total_usage,
                         )
 
                     messages.append(

@@ -525,12 +525,28 @@ async with MCPClient.stdio(name="filesystem", command="npx", args=["-y", "@model
     # ... as many more calls as you like, all reusing the same session ...
 ```
 
-Persistent mode is async-only (`aconnect`/`aclose`/`async with`, plus the
-existing `a`-prefixed methods) — the sync methods raise immediately if
-called while connected, rather than risk a hang crossing an
-`asyncio.run()` boundary. See
-[ADR-0030](docs/adr/0030-mcp-persistent-session-mode.md) for the full
-design and the real deadlock risk it was built to avoid.
+Sync code can do the same with `with client:` (or `client.connect()` /
+`client.close()`), which opens the session on a shared background loop so
+`discover_tools()`, the other sync methods and a discovered tool's
+`execute()` all reuse it. A session is bound to the loop it was opened on;
+using it from a different loop raises instead of risking a hang — see
+[ADR-0030](docs/adr/0030-mcp-persistent-session-mode.md) for the real
+deadlock risk and [ADR-0041](docs/adr/0041-agent-owned-persistent-mcp-sessions.md)
+for the sync support.
+
+Or let the agent own the lifecycle — it connects on first use, reuses the
+connections for every tool call, and closes them on `close()` / `with`:
+
+```python
+agent = Agent(name="Assistant", provider="gemini", mcp_clients=[filesystem])
+with agent:                      # or: async with agent:
+    agent.run("List the files in /tmp")
+    agent.run("Now read the newest one")   # same server process, no reconnect
+```
+
+Measured against a real stdio server: 20 tool calls took 23.5 s with
+per-call reconnect and 1.0 s agent-owned. Use either `run()` or `arun()` on
+one agent, not both.
 
 ### Expose Requisite as an MCP server
 

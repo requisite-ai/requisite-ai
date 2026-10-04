@@ -675,3 +675,59 @@ async def test_agent_as_tool_aexecute_runs_the_agent() -> None:
 
     tool = agent.as_tool()
     assert await tool.aexecute(prompt="hi") == "answer to: hi"
+
+
+def test_agent_result_usage_sums_every_round_trip_in_a_tool_loop() -> None:
+    class LoopingProvider(BaseProvider):
+        def __init__(self, **kwargs: Any) -> None:
+            super().__init__(api_key="k", model="m")
+            self.calls = 0
+
+        @property
+        def name(self) -> str:
+            return "looping"
+
+        def chat(self, messages, **kwargs):  # type: ignore[no-untyped-def]
+            self.calls += 1
+            usage = Usage(prompt_tokens=10, completion_tokens=2, total_tokens=12)
+            if self.calls == 1:
+                return ChatResponse(
+                    content="",
+                    model="m",
+                    provider="looping",
+                    usage=usage,
+                    tool_calls=[ToolCall(id="1", name="ping", arguments={})],
+                )
+            return ChatResponse(content="done", model="m", provider="looping", usage=usage)
+
+        async def achat(self, messages, **kwargs):  # type: ignore[no-untyped-def]
+            return self.chat(messages)
+
+        def stream(self, messages, **kwargs):  # type: ignore[no-untyped-def]
+            raise NotImplementedError
+
+        async def astream(self, messages, **kwargs):  # type: ignore[no-untyped-def]
+            raise NotImplementedError
+            yield
+
+    @tool
+    def ping() -> str:
+        """Ping."""
+        return "pong"
+
+    registry = ProviderRegistry()
+    registry.register("looping", LoopingProvider)
+    agent = Agent(
+        name="A",
+        provider="looping",
+        settings=Settings(default_provider="looping", model="m"),
+        registry=registry,
+        tools=[ping],
+    )
+
+    result = agent.run("go")
+
+    assert result.iterations == 2
+    assert result.usage.prompt_tokens == 20
+    assert result.usage.completion_tokens == 4
+    assert result.usage.total_tokens == 24

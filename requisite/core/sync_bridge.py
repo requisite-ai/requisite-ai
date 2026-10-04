@@ -49,6 +49,15 @@ def _ensure_loop() -> asyncio.AbstractEventLoop:
         return _loop
 
 
+def is_bridge_loop(loop: Optional[asyncio.AbstractEventLoop]) -> bool:
+    """Whether ``loop`` is the long-lived loop :func:`run_sync` runs coroutines on.
+
+    Lets loop-bound resources (a persistent MCP session) tell whether the
+    synchronous API can safely reach them. Never starts the loop.
+    """
+    return loop is not None and loop is _loop
+
+
 def run_sync(coroutine: Coroutine[Any, Any, _T]) -> _T:
     """Run ``coroutine`` to completion and return its result (or raise its exception).
 

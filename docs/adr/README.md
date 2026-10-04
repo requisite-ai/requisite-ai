@@ -79,3 +79,4 @@ need one — `CONTRIBUTING.md` already covers those.
 | [0038](0038-cost-based-rate-limiting.md) | Cost-based spend limiting: CostLimiter | Accepted |
 | [0039](0039-adk-orchestrator-backend.md) | ADK orchestrator backend | Accepted |
 | [0040](0040-agent-sdk-orchestrator-backends.md) | OpenAI Agents SDK, Strands, and Microsoft Agent Framework orchestrator backends | Accepted |
+| [0041](0041-agent-owned-persistent-mcp-sessions.md) | Agent-owned persistent MCP sessions, usable from sync code | Accepted |

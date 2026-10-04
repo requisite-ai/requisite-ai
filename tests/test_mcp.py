@@ -1074,3 +1074,149 @@ def test_mcp_server_missing_sdk_raises_configuration_exception(
     server = MCPServer(name="demo", tools=[add])
     with pytest.raises(ConfigurationException):
         server._build_server()
+
+
+# ---------------------------------------------------------------------------
+# Sync persistent sessions (connect/close/with) -- opened on the sync-bridge loop
+# ---------------------------------------------------------------------------
+
+
+def test_sync_connect_serves_sync_methods_and_tool_execute_from_one_session(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    client = MCPClient.stdio(name="fs", command="python", args=["server.py"])
+    mcp_tool = _FakeMCPTool("add", "Add", {"type": "object", "properties": {}})
+    session = _FakeSession([mcp_tool], {"add": _FakeCallToolResult(structured={"result": 3})})
+    track_calls: list[int] = []
+    _patch_connect(monkeypatch, client, session, track_calls=track_calls)
+
+    with client:
+        tool = client.discover_tools()[0]
+        assert tool.execute(a=1, b=2) == {"result": 3}
+        assert tool.execute(a=2, b=3) == {"result": 3}
+        client.discover_resources()
+
+    assert track_calls == [1]  # one connection for every call above
+    assert client._persistent_session is None
+
+
+def test_sync_connect_close_is_idempotent_and_reconnectable(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    client = MCPClient.stdio(name="fs", command="python", args=["server.py"])
+    track_calls: list[int] = []
+    _patch_connect(monkeypatch, client, _FakeSession([], {}), track_calls=track_calls)
+
+    client.close()  # not connected: no-op
+    client.connect()
+    client.close()
+    client.close()
+    client.connect()
+    client.close()
+
+    assert track_calls == [1, 1]
+
+
+def test_sync_close_rejects_session_opened_on_a_user_loop(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    client = MCPClient.stdio(name="fs", command="python", args=["server.py"])
+    _patch_connect(monkeypatch, client, _FakeSession([], {}))
+    asyncio.run(client.aconnect())
+
+    with pytest.raises(ConfigurationException, match="aclose"):
+        client.close()
+
+
+def test_aclose_works_from_a_different_task_than_aconnect(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """anyio cancel scopes must exit in the task that entered them; the owner
+    task makes connect-in-one-task, close-in-another safe."""
+    client = MCPClient.stdio(name="fs", command="python", args=["server.py"])
+
+    @asynccontextmanager
+    async def _task_bound_connect():
+        task = asyncio.current_task()
+        try:
+            yield _FakeSession([], {})
+        finally:
+            assert asyncio.current_task() is task
+
+    monkeypatch.setattr(client, "_connect", _task_bound_connect)
+
+    async def scenario() -> None:
+        await asyncio.create_task(client.aconnect())
+        await asyncio.create_task(client.aclose())
+
+    asyncio.run(scenario())
+    assert client._persistent_session is None
+
+
+def test_aconnect_failure_leaves_no_state_and_no_pending_task(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    client = MCPClient.stdio(name="fs", command="python", args=["server.py"])
+
+    @asynccontextmanager
+    async def _failing_connect():
+        raise ConnectionError("server did not start")
+        yield  # pragma: no cover
+
+    monkeypatch.setattr(client, "_connect", _failing_connect)
+
+    async def scenario() -> None:
+        with pytest.raises(ConnectionError):
+            await client.aconnect()
+        assert client._persistent_session is None
+        assert client._owner_task is None
+
+    asyncio.run(scenario())
+
+
+# Real subprocess: the property the whole feature exists for.
+_SERVER = str(__import__("pathlib").Path(__file__).parent / "mcp_counting_server.py")
+
+
+def _real_client(spawn_log: Any) -> MCPClient:
+    import os
+    import sys
+
+    return MCPClient.stdio(
+        name="counting",
+        command=sys.executable,
+        args=[_SERVER],
+        env={**os.environ, "MCP_SPAWN_LOG": str(spawn_log)},
+    )
+
+
+def _spawns(spawn_log: Any) -> int:
+    return len(spawn_log.read_text(encoding="utf-8").splitlines())
+
+
+def test_real_stdio_default_respawns_per_call(tmp_path: Any) -> None:
+    pytest.importorskip("mcp")
+    log = tmp_path / "spawns.txt"
+    log.write_text("")
+    client = _real_client(log)
+
+    tool = client.discover_tools()[0]
+    assert tool.execute(a=1, b=2) == {"result": 3}
+    assert tool.execute(a=2, b=2) == {"result": 4}
+
+    assert _spawns(log) == 3  # discover + 2 calls
+
+
+def test_real_stdio_sync_connect_spawns_once(tmp_path: Any) -> None:
+    pytest.importorskip("mcp")
+    log = tmp_path / "spawns.txt"
+    log.write_text("")
+    client = _real_client(log)
+
+    with client:
+        tool = client.discover_tools()[0]
+        for i in range(3):
+            assert tool.execute(a=i, b=1) == {"result": i + 1}
+
+    assert _spawns(log) == 1
+    assert client._persistent_session is None

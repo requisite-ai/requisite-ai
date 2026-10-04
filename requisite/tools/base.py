@@ -16,6 +16,7 @@ from typing import Any, Callable
 from pydantic import BaseModel, ConfigDict, Field
 
 from requisite.core.exceptions import ToolException
+from requisite.core.sync_bridge import run_sync
 from requisite.tools.schema import function_to_parameters_schema
 
 logger = logging.getLogger("requisite.tools")
@@ -83,8 +84,10 @@ class Tool(BaseModel):
         """Synchronously execute the tool with the given arguments.
 
         If the wrapped function is a coroutine function, it is run to
-        completion via ``asyncio.run`` -- prefer :meth:`aexecute` from
-        async contexts to avoid nested event loop issues.
+        completion on the shared sync-bridge loop
+        (:func:`~requisite.core.sync_bridge.run_sync`), so loop-bound state
+        (cached async HTTP clients, a persistent MCP session) stays valid
+        across calls -- prefer :meth:`aexecute` from async contexts.
 
         Raises
         ------
@@ -93,7 +96,7 @@ class Tool(BaseModel):
         """
         try:
             if inspect.iscoroutinefunction(self.func):
-                return asyncio.run(self.func(**kwargs))
+                return run_sync(self.func(**kwargs))
             return self.func(**kwargs)
         except Exception as exc:  # noqa: BLE001
             raise ToolException(
