@@ -33,6 +33,7 @@ from requisite.ai import AI
 from requisite.capabilities.registry import CapabilityRegistry
 from requisite.capabilities import default_registry as default_capability_registry
 from requisite.config.settings import Settings
+from requisite.core.context import RequestContext, current_context, request_context
 from requisite.core.cost_limiter import CostLimiter
 from requisite.core.exceptions import AgentException, ConfigurationException, ToolException
 from requisite.core.interfaces import ChatResponse, Message, Usage
@@ -64,6 +65,14 @@ _tool_call_counter = _meter.create_counter(
 )
 
 ToolLike = Union[Tool, Callable[..., Any]]
+
+
+def _trace_attributes() -> dict[str, str]:
+    """Span-only attributes from the request context (correlation id; never user/tenant)."""
+    context = current_context()
+    if context is not None and context.correlation_id:
+        return {"requisite.correlation_id": context.correlation_id}
+    return {}
 
 
 def _add_usage(total: Usage, extra: Usage) -> Usage:
@@ -419,13 +428,25 @@ class Agent:
             )
         return prompt
 
-    def run(self, prompt: Union[str, Sequence[Message]], **kwargs: Any) -> AgentResult:
+    def run(
+        self,
+        prompt: Union[str, Sequence[Message]],
+        *,
+        context: Optional[RequestContext] = None,
+        **kwargs: Any,
+    ) -> AgentResult:
         """Run the agent on a task, looping through tool calls until a final answer.
 
         Parameters
         ----------
         prompt:
             The task, as a string or an existing conversation history.
+        context:
+            Request-scoped data (user, tenant, correlation id) made available to
+            every tool and provider call in this run via
+            :func:`~requisite.core.context.current_context`, or injected into a
+            tool parameter annotated ``RequestContext``. Never shown to the model
+            and never forwarded to the provider as an argument.
         **kwargs:
             Passed through to each underlying ``chat_response`` call
             (e.g. ``temperature``, ``model``).
@@ -447,6 +468,10 @@ class Agent:
         # Agent has no cycle of its own to detect -- this pop only
         # exists to stop the internal kwarg from reaching the provider
         # SDK call below, which would raise on an unrecognized kwarg.
+        if context is not None:
+            with request_context(context):
+                return self.run(prompt, **kwargs)
+
         kwargs.pop("_delegation_chain", None)
 
         if self._memory is not None:
@@ -466,7 +491,9 @@ class Agent:
         total_usage = Usage()
 
         run_attributes = {"requisite.agent_name": self.name}
-        with _tracer.start_as_current_span("requisite.agent.run", attributes=run_attributes):
+        with _tracer.start_as_current_span(
+            "requisite.agent.run", attributes={**run_attributes, **_trace_attributes()}
+        ):
             run_start = time.monotonic()
             run_status = "error"
             try:
@@ -526,8 +553,18 @@ class Agent:
                 _run_duration.record(time.monotonic() - run_start, run_attributes)
                 _run_counter.add(1, {**run_attributes, "requisite.status": run_status})
 
-    async def arun(self, prompt: Union[str, Sequence[Message]], **kwargs: Any) -> AgentResult:
+    async def arun(
+        self,
+        prompt: Union[str, Sequence[Message]],
+        *,
+        context: Optional[RequestContext] = None,
+        **kwargs: Any,
+    ) -> AgentResult:
         """Async counterpart to :meth:`run`."""
+        if context is not None:
+            with request_context(context):
+                return await self.arun(prompt, **kwargs)
+
         kwargs.pop("_delegation_chain", None)  # see the matching comment in run()
 
         if self._memory is not None:
@@ -547,7 +584,9 @@ class Agent:
         total_usage = Usage()
 
         run_attributes = {"requisite.agent_name": self.name}
-        with _tracer.start_as_current_span("requisite.agent.run", attributes=run_attributes):
+        with _tracer.start_as_current_span(
+            "requisite.agent.run", attributes={**run_attributes, **_trace_attributes()}
+        ):
             run_start = time.monotonic()
             run_status = "error"
             try:

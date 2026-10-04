@@ -228,6 +228,45 @@ print(result.tool_calls_executed)  # ["get_weather"]
 tool calls the model requests, feeds results back, and repeats (up to
 `max_iterations`) until it has a final answer.
 
+### Request-scoped context: who is this run for?
+
+Serving many users at once? Pass a `RequestContext` to `run()` / `arun()` (on
+an `Agent` or a `Workflow`) and every tool and provider call in that run can
+read it, so concurrent requests for different users stay isolated:
+
+```python
+from requisite import Agent, RequestContext, tool
+
+@tool
+def close_ticket(ctx: RequestContext, ticket_id: str) -> str:   # ctx is hidden from the model
+    """Close a support ticket."""
+    audit.record(operator=ctx.user, tenant=ctx.tenant, ticket=ticket_id)
+    return "closed"
+
+agent = Agent(name="resolver", provider="gemini", tools=[close_ticket])
+agent.run("Close ticket T-100",
+          context=RequestContext(user="alice", tenant="acme", correlation_id="req-7"))
+```
+
+- A tool parameter annotated `RequestContext` (or `Optional[RequestContext]`)
+  is injected for you and never shown to the model. Whatever the model sends
+  under that name is discarded, so it cannot claim to be someone else. Any
+  tool or provider can also call `current_context()` instead.
+- It works the same for `run()` and `arun()`, under every orchestrator
+  backend, and across the sync bridge. A provider (for example a tenant-aware
+  gateway) reads `current_context()` in `chat()`; no wrapper needs to carry the
+  tenant.
+- The context is trusted, application-supplied data, not authorization: decide
+  what a user may do from it, never from message text.
+- It follows Python's context chain. A thread you start yourself starts empty;
+  hand it over with `submit_with_context(executor, fn, ...)` (or
+  `contextvars.copy_context().run`). Another process, such as an MCP server,
+  does not see it.
+- `correlation_id` is added to the `requisite.agent.run` span. User and tenant
+  are not put on spans.
+
+See [ADR-0043](docs/adr/0043-request-scoped-context.md).
+
 ### Multi-agent workflows
 
 ```python

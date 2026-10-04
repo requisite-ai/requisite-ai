@@ -27,6 +27,7 @@ from typing import TYPE_CHECKING, Any, Literal, Optional
 
 from pydantic import BaseModel, Field
 
+from requisite.core.context import submit_with_context
 from requisite.core.exceptions import AgentException, ConfigurationException
 from requisite.orchestrators.base import (
     END,
@@ -574,7 +575,7 @@ class NativeOrchestrator(BaseOrchestrator):
         **kwargs: Any,  # noqa: A002
     ) -> WorkflowResult:
         with ThreadPoolExecutor(max_workers=max(len(steps), 1)) as executor:
-            futures = [executor.submit(agent.run, input, **kwargs) for agent in steps]
+            futures = [submit_with_context(executor, agent.run, input, **kwargs) for agent in steps]
             results = [future.result() for future in futures]
         combined = "\n\n".join(f"[{r.agent_name}]\n{r.content}" for r in results)
         return WorkflowResult(
@@ -1144,7 +1145,7 @@ class NativeOrchestrator(BaseOrchestrator):
 
         with ThreadPoolExecutor(max_workers=max(len(participants), 1)) as executor:
             futures = [
-                executor.submit(participant.run, input, **kwargs)
+                submit_with_context(executor, participant.run, input, **kwargs)
                 for participant in participants.values()
             ]
             results = [future.result() for future in futures]
@@ -1198,7 +1199,8 @@ class NativeOrchestrator(BaseOrchestrator):
         for round_num in range(max_rounds):
             with ThreadPoolExecutor(max_workers=max(len(debaters), 1)) as executor:
                 futures = {
-                    name: executor.submit(
+                    name: submit_with_context(
+                        executor,
                         debater.run,
                         _debate_prompt(
                             input, debater_names, transcript, agent_name=name, round_num=round_num
@@ -1281,8 +1283,11 @@ class NativeOrchestrator(BaseOrchestrator):
 
         with ThreadPoolExecutor(max_workers=max(len(map_items), 1)) as executor:
             futures = [
-                executor.submit(
-                    mapper_list[i % len(mapper_list)].run, _map_prompt(input, item), **kwargs
+                submit_with_context(
+                    executor,
+                    mapper_list[i % len(mapper_list)].run,
+                    _map_prompt(input, item),
+                    **kwargs,
                 )
                 for i, item in enumerate(map_items)
             ]
@@ -1352,7 +1357,8 @@ class NativeOrchestrator(BaseOrchestrator):
             tasks = [path for path in paths for _ in range(breadth)]
             with ThreadPoolExecutor(max_workers=max(len(tasks), 1)) as executor:
                 futures = [
-                    executor.submit(
+                    submit_with_context(
+                        executor,
                         thinker_list[i % len(thinker_list)].run,
                         _tot_thinker_prompt(input, path),
                         **kwargs,

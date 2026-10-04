@@ -118,6 +118,7 @@ Status legend: ✅ Done · 🚧 Partial · 📋 Not started · N/A Deliberately 
 |---|---|---|
 | `Agent(name=..., provider=..., tools=..., skills=...)` | ✅ | |
 | `agent.run("...")` | ✅ | Returns `AgentResult` |
+| Request-scoped context | ✅ | `run(..., context=RequestContext(user, tenant, correlation_id, attributes))` on `Agent` and `Workflow`; tools get it via a `RequestContext`-annotated parameter (hidden from the model, model-supplied values discarded) or `current_context()`; providers read `current_context()`. Isolated per concurrent request; works across the sync bridge and every orchestrator backend; `submit_with_context` for hand-made thread pools — ADR-0043 |
 
 ## Agent registry
 

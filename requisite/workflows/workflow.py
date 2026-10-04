@@ -29,6 +29,7 @@ import logging
 from collections.abc import Callable
 from typing import Any, Optional
 
+from requisite.core.context import RequestContext, request_context
 from requisite.core.exceptions import ConfigurationException
 from requisite.orchestrators.base import END, WorkflowResult
 from requisite.orchestrators.factory import OrchestratorRegistry
@@ -491,7 +492,13 @@ class Workflow:
         self._orchestrator_name = "agent_framework"
         return self
 
-    def run(self, input: Optional[str] = None, **kwargs: Any) -> WorkflowResult:  # noqa: A002
+    def run(
+        self,
+        input: Optional[str] = None,  # noqa: A002
+        *,
+        context: Optional[RequestContext] = None,
+        **kwargs: Any,
+    ) -> WorkflowResult:
         """Execute the workflow.
 
         Parameters
@@ -500,6 +507,11 @@ class Workflow:
             The initial task/prompt handed to the first agent (or to
             every agent, under the ``"parallel"`` strategy). Still
             required under ``"map_reduce"`` -- see :meth:`map_reduce`.
+        context:
+            Request-scoped data (user, tenant, correlation id) made available
+            to every agent, tool and provider call in the workflow, whichever
+            orchestrator backend runs it. See
+            :class:`~requisite.core.context.RequestContext`.
         **kwargs:
             Passed through to each agent's ``run``/``arun`` call, except
             strategy-specific keywords a strategy consumes itself
@@ -518,6 +530,10 @@ class Workflow:
             cycle of other ``Workflow``\\ s) -- see
             ``docs/adr/0031-code-review-fixes.md``.
         """
+        if context is not None:
+            with request_context(context):
+                return self.run(input, **kwargs)
+
         if self._strategy not in _KNOWN_STRATEGIES:
             raise ConfigurationException(
                 f"Unknown strategy '{self._strategy}'. Supported: {sorted(_KNOWN_STRATEGIES)}",
@@ -530,8 +546,17 @@ class Workflow:
         orchestrator_instance = self._registry.create(self._orchestrator_name)
         return orchestrator_instance.run(self._steps, input, strategy=self._strategy, **kwargs)
 
-    async def arun(self, input: Optional[str] = None, **kwargs: Any) -> WorkflowResult:  # noqa: A002
+    async def arun(
+        self,
+        input: Optional[str] = None,  # noqa: A002
+        *,
+        context: Optional[RequestContext] = None,
+        **kwargs: Any,
+    ) -> WorkflowResult:
         """Async counterpart to :meth:`run`."""
+        if context is not None:
+            with request_context(context):
+                return await self.arun(input, **kwargs)
         if self._strategy not in _KNOWN_STRATEGIES:
             raise ConfigurationException(
                 f"Unknown strategy '{self._strategy}'. Supported: {sorted(_KNOWN_STRATEGIES)}",

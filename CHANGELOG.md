@@ -7,6 +7,30 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.42.0] - 2026-10-04
+
+### Added
+
+- Request-scoped context. `Agent.run/arun(..., context=RequestContext(...))`
+  and `Workflow.run/arun(..., context=...)` make a `RequestContext` (`user`,
+  `tenant`, `correlation_id`, `attributes`) available to every tool and
+  provider call in the run, isolated per concurrent request. A tool parameter
+  annotated `RequestContext` (or `Optional[RequestContext]`) is injected and
+  hidden from the model's schema; a model-supplied value under that name is
+  discarded. `current_context()`, `require_context()`, `request_context()` and
+  `submit_with_context()` are exported from `requisite`. The
+  `requisite.agent.run` span gets `requisite.correlation_id` when set. See
+  [ADR-0043](docs/adr/0043-request-scoped-context.md).
+
+### Fixed
+
+- The native orchestrator's threaded strategies (`parallel`, `consensus`,
+  `debate`, `map_reduce`, `tree_of_thoughts`) and the sync bridge's
+  helper-thread fallback started worker threads with an empty `contextvars`
+  context, so anything an application had set (a request id, a user) was
+  invisible to agents run there. They now run in a copy of the caller's
+  context.
+
 ## [0.41.0] - 2026-10-04
 
 ### Added

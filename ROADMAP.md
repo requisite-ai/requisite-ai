@@ -72,6 +72,7 @@ construction (each lives in its own module, imported lazily).
 |---|---|
 | `Agent` — tool-calling loop, sync + async, `max_iterations` guard | ✅ |
 | `AgentRegistry` | ✅ |
+| Request-scoped context (`run(context=...)` reaching tools and providers, per concurrent request) | ✅ |
 | `Workflow` — `.add()` / `.run()` / `.arun()` | ✅ |
 | Native orchestrator: sequential strategy | ✅ |
 | Native orchestrator: parallel strategy | ✅ — also runs on the `langgraph` backend; see [ADR-0032](docs/adr/0032-langgraph-parallel-consensus-map-reduce-strategies.md) |

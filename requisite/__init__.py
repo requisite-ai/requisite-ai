@@ -124,6 +124,13 @@ from requisite.ai import AI
 from requisite.capabilities import default_registry as default_capability_registry
 from requisite.capabilities.registry import CapabilityProvider, CapabilityRegistry
 from requisite.config.settings import Settings
+from requisite.core.context import (
+    RequestContext,
+    current_context,
+    request_context,
+    require_context,
+    submit_with_context,
+)
 from requisite.core.cost_limiter import CostLimiter, cost_per_token
 from requisite.core.exceptions import (
     AgentException,
@@ -256,7 +263,12 @@ __all__ = [
     "SkillException",
     "SkillRegistry",
     "SummarizingPolicy",
+    "RequestContext",
     "Tool",
+    "current_context",
+    "request_context",
+    "require_context",
+    "submit_with_context",
     "ToolCall",
     "ToolException",
     "ToolRegistry",
@@ -280,4 +292,4 @@ __all__ = [
     "tool",
 ]
 
-__version__ = "0.41.0"
+__version__ = "0.42.0"

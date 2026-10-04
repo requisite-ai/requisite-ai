@@ -27,7 +27,9 @@ import asyncio
 import threading
 from collections.abc import Coroutine
 from concurrent.futures import ThreadPoolExecutor
-from typing import Any, Optional, TypeVar
+from typing import Any, Optional, TypeVar, cast
+
+from requisite.core.context import submit_with_context
 
 _T = TypeVar("_T")
 
@@ -72,7 +74,7 @@ def run_sync(coroutine: Coroutine[Any, Any, _T]) -> _T:
         # future scheduled on its own loop would deadlock, so run the
         # coroutine on a throwaway loop in a helper thread instead.
         with ThreadPoolExecutor(max_workers=1) as executor:
-            return executor.submit(asyncio.run, coroutine).result()
+            return cast(_T, submit_with_context(executor, asyncio.run, coroutine).result())
 
     future = asyncio.run_coroutine_threadsafe(coroutine, loop)
     try:

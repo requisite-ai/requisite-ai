@@ -15,9 +15,10 @@ from typing import Any, Callable
 
 from pydantic import BaseModel, ConfigDict, Field
 
+from requisite.core.context import current_context
 from requisite.core.exceptions import ToolException
 from requisite.core.sync_bridge import run_sync
-from requisite.tools.schema import function_to_parameters_schema
+from requisite.tools.schema import context_parameter, function_to_parameters_schema
 
 logger = logging.getLogger("requisite.tools")
 
@@ -39,6 +40,10 @@ class Tool(BaseModel):
         :func:`requisite.tools.schema.function_to_parameters_schema`.
     func:
         The underlying Python callable. May be sync or async.
+    context_param:
+        Name of a parameter annotated ``RequestContext``, if the function has one.
+        It is hidden from ``parameters_schema`` and filled from the request context
+        in :meth:`execute` / :meth:`aexecute`, overwriting anything the model sent.
 
     Examples
     --------
@@ -56,6 +61,8 @@ class Tool(BaseModel):
     description: str = ""
     parameters_schema: dict[str, Any] = Field(default_factory=dict)
     func: Callable[..., Any]
+    context_param: str | None = None
+    context_when_missing: str = "error"
 
     @classmethod
     def from_function(
@@ -73,12 +80,37 @@ class Tool(BaseModel):
         description:
             Overrides the tool description (defaults to ``func.__doc__``).
         """
+        injected = context_parameter(func)
         return cls(
             name=name or func.__name__,
             description=(description or inspect.getdoc(func) or "").strip(),
             parameters_schema=function_to_parameters_schema(func),
             func=func,
+            context_param=injected[0] if injected else None,
+            context_when_missing=injected[1] if injected else "error",
         )
+
+    def _with_context(self, kwargs: dict[str, Any]) -> dict[str, Any]:
+        """Return ``kwargs`` with the request context injected (if this tool wants it).
+
+        Whatever the model sent under the context parameter's name is discarded
+        first, so a model can never claim to be another user.
+        """
+        if self.context_param is None:
+            return kwargs
+        kwargs = {k: v for k, v in kwargs.items() if k != self.context_param}
+        context = current_context()
+        if context is not None:
+            kwargs[self.context_param] = context
+        elif self.context_when_missing == "error":
+            raise ToolException(
+                f"Tool '{self.name}' needs a request context but none is in scope. "
+                "Pass context=RequestContext(...) to Agent.run()/arun() or Workflow.run()/arun().",
+                details={"tool": self.name},
+            )
+        elif self.context_when_missing == "none":
+            kwargs[self.context_param] = None
+        return kwargs
 
     def execute(self, **kwargs: Any) -> Any:
         """Synchronously execute the tool with the given arguments.
@@ -94,6 +126,7 @@ class Tool(BaseModel):
         requisite.core.exceptions.ToolException
             If the underlying function raises.
         """
+        kwargs = self._with_context(kwargs)
         try:
             if inspect.iscoroutinefunction(self.func):
                 return run_sync(self.func(**kwargs))
@@ -106,6 +139,7 @@ class Tool(BaseModel):
 
     async def aexecute(self, **kwargs: Any) -> Any:
         """Asynchronously execute the tool with the given arguments."""
+        kwargs = self._with_context(kwargs)
         try:
             if inspect.iscoroutinefunction(self.func):
                 return await self.func(**kwargs)

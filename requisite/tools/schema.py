@@ -16,7 +16,7 @@ from __future__ import annotations
 
 import inspect
 import typing
-from typing import Any, Callable, get_args, get_origin
+from typing import Any, Callable, Optional, Union, get_args, get_origin
 
 _TYPE_MAP: dict[type, str] = {
     str: "string",
@@ -26,6 +26,60 @@ _TYPE_MAP: dict[type, str] = {
     list: "array",
     dict: "object",
 }
+
+
+_CONTEXT_ANNOTATION_STRINGS = {
+    "RequestContext",
+    "Optional[RequestContext]",
+    "RequestContext|None",
+    "None|RequestContext",
+}
+
+
+def _is_context_annotation(annotation: Any) -> bool:
+    """Whether ``annotation`` is ``RequestContext`` or ``Optional[RequestContext]``."""
+    from requisite.core.context import RequestContext
+
+    if annotation is RequestContext:
+        return True
+    if isinstance(annotation, str):
+        return annotation.replace(" ", "") in _CONTEXT_ANNOTATION_STRINGS
+    origin = get_origin(annotation)
+    if origin is Union or (origin is not None and getattr(origin, "__name__", "") == "UnionType"):
+        args = [a for a in get_args(annotation) if a is not type(None)]
+        return len(args) == 1 and args[0] is RequestContext
+    return False
+
+
+def _resolved_hints(func: Callable[..., Any]) -> dict[str, Any]:
+    try:
+        return typing.get_type_hints(func)
+    except Exception:  # noqa: BLE001 - see function_to_parameters_schema
+        return dict(getattr(func, "__annotations__", {}))
+
+
+def context_parameter(func: Callable[..., Any]) -> Optional[tuple[str, str]]:
+    """Find the parameter, if any, that wants the request context injected.
+
+    Returns ``(name, when_missing)`` where ``when_missing`` is what to do if no
+    context is in scope: ``"error"`` (required, raise), ``"none"`` (Optional with
+    no default, pass ``None``) or ``"default"`` (has a default, leave it out).
+    """
+    hints = _resolved_hints(func)
+    for name, param in inspect.signature(func).parameters.items():
+        if param.kind in (inspect.Parameter.VAR_POSITIONAL, inspect.Parameter.VAR_KEYWORD):
+            continue
+        if not _is_context_annotation(hints.get(name, param.annotation)):
+            continue
+        if param.default is not inspect.Signature.empty:
+            return name, "default"
+        optional = (
+            get_origin(hints.get(name)) is Union
+            or isinstance(hints.get(name), str)
+            and ("Optional" in str(hints.get(name)) or "None" in str(hints.get(name)))
+        )
+        return name, "none" if optional else "error"
+    return None
 
 
 def _json_type_for(annotation: Any) -> dict[str, Any]:
@@ -111,6 +165,8 @@ def function_to_parameters_schema(func: Callable[..., Any]) -> dict[str, Any]:
             continue
 
         annotation = type_hints.get(param_name, param.annotation)
+        if _is_context_annotation(annotation):
+            continue  # injected from the request context; never shown to the model
         properties[param_name] = _json_type_for(annotation)
 
         if param.default is inspect.Signature.empty:

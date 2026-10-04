@@ -81,3 +81,4 @@ need one — `CONTRIBUTING.md` already covers those.
 | [0040](0040-agent-sdk-orchestrator-backends.md) | OpenAI Agents SDK, Strands, and Microsoft Agent Framework orchestrator backends | Accepted |
 | [0041](0041-agent-owned-persistent-mcp-sessions.md) | Agent-owned persistent MCP sessions, usable from sync code | Accepted |
 | [0042](0042-access-controlled-retrieval.md) | Access-controlled retrieval: filters on retrievers, a safe hybrid search, stable chunk ids | Accepted |
+| [0043](0043-request-scoped-context.md) | Request-scoped context for tools and providers | Accepted |
