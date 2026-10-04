@@ -16,7 +16,13 @@ import threading
 from collections.abc import Sequence
 from typing import Any, Optional
 
-from requisite.rag.base import BaseVectorStore, Chunk, ScoredChunk, matches_filter
+from requisite.rag.base import (
+    BaseVectorStore,
+    Chunk,
+    ScoredChunk,
+    matches_filter,
+    validate_filter,
+)
 
 
 def _cosine_similarity(a: Sequence[float], b: Sequence[float]) -> float:
@@ -60,6 +66,7 @@ class InMemoryVectorStore(BaseVectorStore):
         top_k: int = 5,
         filter: Optional[dict[str, Any]] = None,  # noqa: A002
     ) -> list[ScoredChunk]:
+        validate_filter(filter)
         if top_k <= 0:
             return []
 

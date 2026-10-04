@@ -11,11 +11,9 @@ every other kind of capability rather than adding a fourth one. See
 
 from __future__ import annotations
 
-import uuid
 from collections.abc import Sequence
 from typing import Any, Optional
 
-from requisite.core.exceptions import ConfigurationException
 from requisite.rag.base import (
     BaseEmbeddingProvider,
     BaseRetriever,
@@ -23,7 +21,7 @@ from requisite.rag.base import (
     Chunk,
     ScoredChunk,
 )
-from requisite.rag.chunking import chunk_text
+from requisite.rag._ingest import format_results, prepare_chunks
 from requisite.tools.base import Tool
 
 
@@ -76,6 +74,7 @@ class Retriever(BaseRetriever):
         metadatas: Optional[Sequence[dict[str, Any]]] = None,
         chunk_size: int = 1000,
         chunk_overlap: int = 200,
+        doc_ids: Optional[Sequence[str]] = None,
     ) -> list[str]:
         """Chunk, embed, and store each text. Returns the stored chunk ids.
 
@@ -89,23 +88,26 @@ class Retriever(BaseRetriever):
             ``texts`` if given.
         chunk_size, chunk_overlap:
             Passed to :func:`~requisite.rag.chunking.chunk_text`.
+        doc_ids:
+            Optional stable ids, one per text (unique within the call). Chunk ids
+            become ``"<doc_id>:<n>"`` -- so re-ingesting a document overwrites its
+            chunks instead of duplicating them -- and each chunk's metadata gains
+            ``doc_id`` and ``chunk_index``, which is what a citation points at.
+            If a re-ingested document got shorter, its old trailing chunks stay:
+            delete the previously returned ids first.
         """
-        if metadatas is not None and len(metadatas) != len(texts):
-            raise ConfigurationException("metadatas must be the same length as texts.")
-
-        all_pieces: list[str] = []
-        piece_metadata: list[dict[str, Any]] = []
-        for index, text in enumerate(texts):
-            pieces = chunk_text(text, chunk_size=chunk_size, chunk_overlap=chunk_overlap)
-            all_pieces.extend(pieces)
-            metadata = dict(metadatas[index]) if metadatas is not None else {}
-            piece_metadata.extend([metadata] * len(pieces))
+        chunk_ids, all_pieces, piece_metadata = prepare_chunks(
+            texts,
+            metadatas=metadatas,
+            doc_ids=doc_ids,
+            chunk_size=chunk_size,
+            chunk_overlap=chunk_overlap,
+        )
 
         if not all_pieces:
             return []
 
         embeddings = self.embedding_provider.embed(all_pieces)
-        chunk_ids = [str(uuid.uuid4()) for _ in all_pieces]
         chunks = [
             Chunk(id=chunk_id, text=piece, metadata=metadata, embedding=embedding)
             for chunk_id, piece, metadata, embedding in zip(
@@ -122,24 +124,21 @@ class Retriever(BaseRetriever):
         metadatas: Optional[Sequence[dict[str, Any]]] = None,
         chunk_size: int = 1000,
         chunk_overlap: int = 200,
+        doc_ids: Optional[Sequence[str]] = None,
     ) -> list[str]:
         """Async counterpart to :meth:`add_texts`."""
-        if metadatas is not None and len(metadatas) != len(texts):
-            raise ConfigurationException("metadatas must be the same length as texts.")
-
-        all_pieces: list[str] = []
-        piece_metadata: list[dict[str, Any]] = []
-        for index, text in enumerate(texts):
-            pieces = chunk_text(text, chunk_size=chunk_size, chunk_overlap=chunk_overlap)
-            all_pieces.extend(pieces)
-            metadata = dict(metadatas[index]) if metadatas is not None else {}
-            piece_metadata.extend([metadata] * len(pieces))
+        chunk_ids, all_pieces, piece_metadata = prepare_chunks(
+            texts,
+            metadatas=metadatas,
+            doc_ids=doc_ids,
+            chunk_size=chunk_size,
+            chunk_overlap=chunk_overlap,
+        )
 
         if not all_pieces:
             return []
 
         embeddings = await self.embedding_provider.aembed(all_pieces)
-        chunk_ids = [str(uuid.uuid4()) for _ in all_pieces]
         chunks = [
             Chunk(id=chunk_id, text=piece, metadata=metadata, embedding=embedding)
             for chunk_id, piece, metadata, embedding in zip(
@@ -149,15 +148,31 @@ class Retriever(BaseRetriever):
         await self.vector_store.aadd(chunks)
         return chunk_ids
 
-    def retrieve(self, query: str, *, top_k: Optional[int] = None) -> list[ScoredChunk]:
+    def retrieve(
+        self,
+        query: str,
+        *,
+        top_k: Optional[int] = None,
+        filter: Optional[dict[str, Any]] = None,  # noqa: A002
+    ) -> list[ScoredChunk]:
+        """Return the chunks most similar to ``query``, restricted to those whose
+        metadata matches ``filter`` (see :func:`~requisite.rag.base.matches_filter`).
+        """
         query_embedding = self.embedding_provider.embed_one(query)
         resolved_top_k = top_k if top_k is not None else self.top_k
-        return self.vector_store.search(query_embedding, top_k=resolved_top_k)
+        return self.vector_store.search(query_embedding, top_k=resolved_top_k, filter=filter)
 
-    async def aretrieve(self, query: str, *, top_k: Optional[int] = None) -> list[ScoredChunk]:
+    async def aretrieve(
+        self,
+        query: str,
+        *,
+        top_k: Optional[int] = None,
+        filter: Optional[dict[str, Any]] = None,  # noqa: A002
+    ) -> list[ScoredChunk]:
+        """Async counterpart to :meth:`retrieve`."""
         query_embedding = await self.embedding_provider.aembed_one(query)
         resolved_top_k = top_k if top_k is not None else self.top_k
-        return await self.vector_store.asearch(query_embedding, top_k=resolved_top_k)
+        return await self.vector_store.asearch(query_embedding, top_k=resolved_top_k, filter=filter)
 
     def as_tool(
         self,
@@ -165,20 +180,28 @@ class Retriever(BaseRetriever):
         name: str = "knowledge_base",
         description: str = "Search the knowledge base for information relevant to a query.",
         top_k: Optional[int] = None,
+        filter: Optional[dict[str, Any]] = None,  # noqa: A002
+        source_key: Optional[str] = None,
     ) -> Tool:
         """Expose this retriever as a :class:`~requisite.tools.base.Tool`.
 
         The returned tool is what typically gets registered as a
         capability (``capabilities.register("knowledge_base", retriever.as_tool())``)
         so ``agent.requires("knowledge_base")`` resolves to it.
+
+        ``filter`` is bound when the tool is created and applied to every
+        search. It is not a tool parameter, so the model can neither see nor
+        change it -- build one tool per user/request for access-controlled
+        corpora. ``source_key`` (e.g. ``"doc_id"``) adds each chunk's source to
+        the output so answers can cite it: ``[score=0.812 source=handbook-3#2] ...``.
         """
         resolved_top_k = top_k if top_k is not None else self.top_k
 
         def _search(query: str) -> str:
             """Search the knowledge base for information relevant to a query."""
-            results = self.retrieve(query, top_k=resolved_top_k)
+            results = self.retrieve(query, top_k=resolved_top_k, filter=filter)
             if not results:
                 return "No relevant information found."
-            return "\n\n".join(f"[score={r.score:.3f}] {r.chunk.text}" for r in results)
+            return format_results(results, source_key)
 
         return Tool.from_function(_search, name=name, description=description)

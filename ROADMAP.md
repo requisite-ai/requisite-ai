@@ -145,6 +145,7 @@ original interface design).
 | Chunking (character-based, with overlap) | ✅ | `chunk_text()` — token-aware chunking is a follow-up, not this phase |
 | `BaseRetriever` interface | ✅ | Independent of embeddings/vector store at the interface level, by design |
 | Dense retriever (`Retriever`) | ✅ | Composes an embedding provider + vector store |
+| Access-controlled retrieval (metadata filters on retrievers, safe hybrid search, stable chunk ids, citations) | ✅ | Shipped in 0.41.0 — see [ADR-0042](docs/adr/0042-access-controlled-retrieval.md) |
 | Hybrid / BM25 retriever | ✅ | `BM25Retriever` (keyword-only), `HybridRetriever` (dense + BM25, fused via Reciprocal Rank Fusion) — see [ADR-0010](docs/adr/0010-hybrid-bm25-retrieval-and-reranking.md) |
 | Retriever exposed as a `CapabilityProvider` (`agent.requires("knowledge_base")`) | ✅ | `Retriever.as_tool()` |
 | Re-ranking | ✅ | `BaseReranker` + `LLMReranker` (listwise, via `AI.chat_response(response_model=...)`) — see [ADR-0010](docs/adr/0010-hybrid-bm25-retrieval-and-reranking.md) |

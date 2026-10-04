@@ -7,6 +7,42 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.41.0] - 2026-10-04
+
+### Added
+
+- `filter=` on `retrieve` / `aretrieve` / `as_tool` for `Retriever`,
+  `HybridRetriever` and `BM25Retriever` (and on the `BaseRetriever`
+  contract). The filter grammar gains `{"$in": [...]}` (any-of; overlaps when
+  the chunk's value is a list) next to plain equality. It fails closed: a
+  missing key never matches, an empty list matches nothing, an unsupported
+  operator raises. `as_tool(filter=...)` binds the filter so the model cannot
+  see or change it. See
+  [ADR-0042](docs/adr/0042-access-controlled-retrieval.md).
+- Opt-in `doc_ids=` on `add_texts` / `aadd_texts`: deterministic chunk ids
+  (`"<doc_id>:<n>"`, so re-ingesting overwrites) and `doc_id` / `chunk_index`
+  metadata for stable citations.
+- `as_tool(source_key=...)` adds each chunk's source to the tool output
+  (`[score=0.812 source=handbook-3#2] ...`). Default output unchanged.
+- README "Access control" section: filtering is the application's job, and
+  citation checks are not authorization.
+
+### Fixed
+
+- **Security:** `HybridRetriever`'s BM25 side had no way to filter, so a
+  metadata filter could never have restricted keyword matches. `BM25Index`
+  now filters the corpus before scoring, and `HybridRetriever` applies the
+  same filter to both sides before fusion. A restricted chunk can no longer
+  be returned, nor influence the scores of allowed chunks, through any path.
+
+### Changed
+
+- `BaseRetriever.retrieve` / `aretrieve` take an optional `filter`. A custom
+  retriever that does not accept it fails when called with one, rather than
+  silently ignoring it.
+- The chunking/ingest loop shared by the three retrievers now lives in one
+  place (`requisite/rag/_ingest.py`).
+
 ## [0.40.0] - 2026-10-04
 
 ### Added

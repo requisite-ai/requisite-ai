@@ -31,6 +31,8 @@ from typing import Any, Optional
 
 from pydantic import BaseModel, Field
 
+from requisite.core.exceptions import ConfigurationException
+
 
 class Chunk(BaseModel):
     """One retrievable unit of text.
@@ -97,8 +99,65 @@ class BaseEmbeddingProvider(ABC):
         return (await self.aembed([text]))[0]
 
 
+_SUPPORTED_FILTER_OPERATORS = ("$in",)
+_SEQUENCE_TYPES = (list, tuple, set, frozenset)
+
+
+def _operator_expression(value: Any) -> Optional[dict[str, Any]]:
+    """``value`` if it is a filter operator expression (a non-empty dict whose
+    keys all start with ``$``), else ``None`` (it is a plain equality value)."""
+    if (
+        isinstance(value, dict)
+        and value
+        and all(isinstance(key, str) and key.startswith("$") for key in value)
+    ):
+        return value
+    return None
+
+
+def validate_filter(filter: Optional[dict[str, Any]]) -> None:  # noqa: A002
+    """Raise :class:`~requisite.core.exceptions.ConfigurationException` for a
+    malformed filter: an unsupported ``$`` operator, or ``$in`` without a list.
+
+    Called up front by every consumer of :func:`matches_filter`, so a bad
+    filter fails the same way whether or not the store has any chunks --
+    it can never silently match everything.
+    """
+    for key, expected in (filter or {}).items():
+        expression = _operator_expression(expected)
+        if expression is None:
+            continue
+        for operator, argument in expression.items():
+            if operator not in _SUPPORTED_FILTER_OPERATORS:
+                raise ConfigurationException(
+                    f"Unsupported filter operator '{operator}' for key '{key}'. "
+                    f"Supported operators: {', '.join(_SUPPORTED_FILTER_OPERATORS)}.",
+                )
+            if not isinstance(argument, _SEQUENCE_TYPES):
+                raise ConfigurationException(
+                    f"Filter operator '$in' for key '{key}' needs a list of values, "
+                    f"got {type(argument).__name__}.",
+                )
+
+
+def _in(actual: Any, allowed: Any) -> bool:
+    candidates = list(allowed)
+    if isinstance(actual, _SEQUENCE_TYPES):
+        return any(item in candidates for item in actual)
+    return actual in candidates
+
+
 def matches_filter(metadata: dict[str, Any], filter: Optional[dict[str, Any]]) -> bool:  # noqa: A002
-    """Whether ``metadata`` satisfies every key/value pair in ``filter`` (exact equality).
+    """Whether ``metadata`` satisfies every key in ``filter`` (keys are ANDed).
+
+    A plain value means exact equality. ``{"$in": [...]}`` means "any of":
+    the chunk's value is in the list, or -- when the chunk's value is itself
+    a list/tuple/set, e.g. the groups allowed to read it -- the two overlap.
+    ``$in`` fails closed: a key missing from ``metadata`` never matches, and
+    an empty list matches nothing. Any other ``$`` operator, or ``$in``
+    without a list, raises
+    :class:`~requisite.core.exceptions.ConfigurationException` (see
+    :func:`validate_filter`).
 
     ``filter=None`` (or empty) always matches. Shared by
     :class:`~requisite.rag.vectorstores.in_memory.InMemoryVectorStore` and
@@ -110,7 +169,15 @@ def matches_filter(metadata: dict[str, Any], filter: Optional[dict[str, Any]]) -
     """
     if not filter:
         return True
-    return all(metadata.get(key) == value for key, value in filter.items())
+    validate_filter(filter)
+    for key, expected in filter.items():
+        expression = _operator_expression(expected)
+        if expression is None:
+            if metadata.get(key) != expected:
+                return False
+        elif key not in metadata or not _in(metadata[key], expression["$in"]):
+            return False
+    return True
 
 
 class BaseVectorStore(ABC):
@@ -136,9 +203,9 @@ class BaseVectorStore(ABC):
         """Return the ``top_k`` chunks most similar to ``query_embedding``, best first.
 
         ``filter``, if given, restricts candidates to chunks whose
-        ``metadata`` matches every key/value pair (exact equality).
-        ``None`` (default) searches the whole store -- unchanged behavior
-        from before this parameter existed.
+        ``metadata`` matches every key (plain values mean exact equality;
+        ``{"$in": [...]}`` means any-of -- see :func:`matches_filter`).
+        ``None`` (default) searches the whole store.
         """
 
     @abstractmethod
@@ -176,12 +243,31 @@ class BaseRetriever(ABC):
     """
 
     @abstractmethod
-    def retrieve(self, query: str, *, top_k: int = 5) -> list[ScoredChunk]:
-        """Return the ``top_k`` chunks most relevant to ``query``, best first."""
+    def retrieve(
+        self,
+        query: str,
+        *,
+        top_k: int = 5,
+        filter: Optional[dict[str, Any]] = None,  # noqa: A002
+    ) -> list[ScoredChunk]:
+        """Return the ``top_k`` chunks most relevant to ``query``, best first.
 
-    async def aretrieve(self, query: str, *, top_k: int = 5) -> list[ScoredChunk]:
+        ``filter`` restricts candidates by chunk metadata (grammar:
+        :func:`matches_filter`). Implementations serving access-controlled
+        data must apply it to *every* retrieval path they run, before any
+        scoring or fusion, and must accept the keyword even if they ignore it
+        otherwise.
+        """
+
+    async def aretrieve(
+        self,
+        query: str,
+        *,
+        top_k: int = 5,
+        filter: Optional[dict[str, Any]] = None,  # noqa: A002
+    ) -> list[ScoredChunk]:
         """Async counterpart to :meth:`retrieve`. Default: thread-wrapped."""
-        return await asyncio.to_thread(self.retrieve, query, top_k=top_k)
+        return await asyncio.to_thread(self.retrieve, query, top_k=top_k, filter=filter)
 
 
 class BaseReranker(ABC):

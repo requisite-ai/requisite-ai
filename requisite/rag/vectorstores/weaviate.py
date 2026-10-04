@@ -25,7 +25,13 @@ from collections.abc import Sequence
 from typing import Any, Optional
 
 from requisite.core.exceptions import ConfigurationException, VectorStoreException
-from requisite.rag.base import BaseVectorStore, Chunk, ScoredChunk, matches_filter
+from requisite.rag.base import (
+    BaseVectorStore,
+    Chunk,
+    ScoredChunk,
+    matches_filter,
+    validate_filter,
+)
 
 _UUID_NAMESPACE = uuid.UUID("f4f339a6-3e21-4b8e-9f7d-3a2a9f0f9f10")
 
@@ -183,6 +189,7 @@ class WeaviateVectorStore(BaseVectorStore):
         top_k: int = 5,
         filter: Optional[dict[str, Any]] = None,  # noqa: A002
     ) -> list[ScoredChunk]:
+        validate_filter(filter)
         if top_k <= 0:
             return []
 

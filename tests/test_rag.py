@@ -1253,3 +1253,42 @@ def test_weaviate_vector_store_missing_sdk_raises(monkeypatch: pytest.MonkeyPatc
     store = WeaviateVectorStore()
     with pytest.raises(ConfigurationException):
         store.add([Chunk(id="1", text="cats", embedding=[1.0, 0.0])])
+
+
+def test_pinecone_passes_in_filter_through_to_the_index_untouched(
+    fake_pinecone_module: types.ModuleType, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Pinecone filters natively and understands ``$in``, so Requisite must hand the
+    filter over unmodified rather than translating or dropping it."""
+    from requisite.rag.vectorstores.pinecone import PineconeVectorStore
+
+    seen: list[Any] = []
+    original = _FakePineconeIndex.query
+
+    def spy(self: _FakePineconeIndex, **kwargs: Any) -> Any:
+        seen.append(kwargs.get("filter"))
+        return types.SimpleNamespace(matches=[])
+
+    monkeypatch.setattr(_FakePineconeIndex, "query", spy)
+    store = PineconeVectorStore(api_key="pc-test", index_name="demo", dimension=2)
+    wanted = {"groups": {"$in": ["eng", "all"]}}
+    store.search([1.0, 0.0], top_k=3, filter=wanted)
+
+    assert seen == [wanted]
+    monkeypatch.setattr(_FakePineconeIndex, "query", original)
+
+
+def test_weaviate_vector_store_search_supports_in_filter(
+    fake_weaviate_module: types.ModuleType,
+) -> None:
+    from requisite.rag.vectorstores.weaviate import WeaviateVectorStore
+
+    store = WeaviateVectorStore(url="https://example.weaviate.network", api_key="w-test")
+    store.add(
+        [
+            Chunk(id="1", text="a", embedding=[1.0, 0.0], metadata={"groups": ["all"]}),
+            Chunk(id="2", text="b", embedding=[1.0, 0.0], metadata={"groups": ["exec"]}),
+        ]
+    )
+    results = store.search([1.0, 0.0], top_k=5, filter={"groups": {"$in": ["all"]}})
+    assert [r.chunk.id for r in results] == ["1"]

@@ -632,6 +632,44 @@ decomposition (embeddings / vector stores / retrievers are three
 independent extension points) and why the in-memory default was chosen
 over requiring a real vector DB from day one.
 
+#### Access control
+
+If different users may read different documents, **filtering is your
+application's job**: Requisite gives you the mechanism, you decide who may
+see what. Stamp each chunk with who can read it, then pass a `filter` on
+every retrieval that serves that user:
+
+```python
+retriever = HybridRetriever(embedding_provider=..., vector_store=InMemoryVectorStore())
+retriever.add_texts(
+    [handbook, layoff_plan],
+    metadatas=[{"groups": ["all"]}, {"groups": ["exec"]}],
+    doc_ids=["handbook", "layoffs"],          # stable ids: "handbook:0", "layoffs:0", ...
+)
+
+mine = {"groups": {"$in": user_groups}}       # any-of: the chunk's groups overlap the user's
+hits = retriever.retrieve("annual leave", filter=mine)
+
+# For an agent, bind the filter into the tool. It is not a tool parameter,
+# so the model can neither see nor change it -- build one tool per user.
+tool = retriever.as_tool(filter=mine, source_key="doc_id")   # "[score=0.03 source=handbook#0] ..."
+```
+
+- The filter is applied to **every** retrieval path, including the keyword
+  side of `HybridRetriever`, before scoring and fusion, so a restricted
+  chunk cannot come back through any of them (and cannot influence the
+  scores of allowed ones).
+- Plain values mean exact equality; `{"$in": [...]}` means any-of. A missing
+  key never matches and an empty list matches nothing; an unsupported
+  operator raises instead of matching everything.
+- **A call without `filter` sees everything.** Grounding or citation checks
+  are not authorization: a retriever with no filter can pass every citation
+  check while leaking restricted documents.
+- Re-ingesting a document with the same `doc_id` overwrites its chunks; if it
+  got shorter, delete the previously returned ids first.
+
+See [ADR-0042](docs/adr/0042-access-controlled-retrieval.md).
+
 ### Memory: conversation history across separate calls
 
 ```python

@@ -19,14 +19,12 @@ from __future__ import annotations
 import math
 import re
 import threading
-import uuid
 from collections import Counter
 from collections.abc import Sequence
 from typing import Any, Optional
 
-from requisite.core.exceptions import ConfigurationException
-from requisite.rag.base import BaseRetriever, Chunk, ScoredChunk
-from requisite.rag.chunking import chunk_text
+from requisite.rag.base import BaseRetriever, Chunk, ScoredChunk, matches_filter, validate_filter
+from requisite.rag._ingest import format_results, prepare_chunks
 from requisite.tools.base import Tool
 
 _TOKEN_PATTERN = re.compile(r"\w+")
@@ -74,12 +72,30 @@ class BM25Index:
                 self._chunks.pop(chunk_id, None)
                 self._tokens.pop(chunk_id, None)
 
-    def search(self, query: str, *, top_k: int = 5) -> list[ScoredChunk]:
+    def search(
+        self,
+        query: str,
+        *,
+        top_k: int = 5,
+        filter: Optional[dict[str, Any]] = None,  # noqa: A002
+    ) -> list[ScoredChunk]:
+        """Score the corpus against ``query``, best first.
+
+        ``filter`` (same grammar as
+        :func:`~requisite.rag.base.matches_filter`) restricts the corpus
+        **before** scoring, so document frequencies and average length
+        are computed over the permitted chunks only -- a chunk the filter
+        excludes can neither be returned nor influence the scores of those
+        that are.
+        """
+        validate_filter(filter)
         if top_k <= 0:
             return []
 
         with self._lock:
-            chunk_ids = list(self._tokens)
+            chunk_ids = [
+                cid for cid in self._tokens if matches_filter(self._chunks[cid].metadata, filter)
+            ]
             doc_tokens = {cid: self._tokens[cid] for cid in chunk_ids}
             chunks = dict(self._chunks)
 
@@ -159,23 +175,20 @@ class BM25Retriever(BaseRetriever):
         metadatas: Optional[Sequence[dict[str, Any]]] = None,
         chunk_size: int = 1000,
         chunk_overlap: int = 200,
+        doc_ids: Optional[Sequence[str]] = None,
     ) -> list[str]:
         """Chunk and index each text. Returns the stored chunk ids."""
-        if metadatas is not None and len(metadatas) != len(texts):
-            raise ConfigurationException("metadatas must be the same length as texts.")
-
-        all_pieces: list[str] = []
-        piece_metadata: list[dict[str, Any]] = []
-        for index, text in enumerate(texts):
-            pieces = chunk_text(text, chunk_size=chunk_size, chunk_overlap=chunk_overlap)
-            all_pieces.extend(pieces)
-            metadata = dict(metadatas[index]) if metadatas is not None else {}
-            piece_metadata.extend([metadata] * len(pieces))
+        chunk_ids, all_pieces, piece_metadata = prepare_chunks(
+            texts,
+            metadatas=metadatas,
+            doc_ids=doc_ids,
+            chunk_size=chunk_size,
+            chunk_overlap=chunk_overlap,
+        )
 
         if not all_pieces:
             return []
 
-        chunk_ids = [str(uuid.uuid4()) for _ in all_pieces]
         chunks = [
             Chunk(id=chunk_id, text=piece, metadata=metadata)
             for chunk_id, piece, metadata in zip(chunk_ids, all_pieces, piece_metadata, strict=True)
@@ -190,19 +203,37 @@ class BM25Retriever(BaseRetriever):
         metadatas: Optional[Sequence[dict[str, Any]]] = None,
         chunk_size: int = 1000,
         chunk_overlap: int = 200,
+        doc_ids: Optional[Sequence[str]] = None,
     ) -> list[str]:
         """Async counterpart to :meth:`add_texts`. Pure CPU work, no I/O to offload."""
         return self.add_texts(
-            texts, metadatas=metadatas, chunk_size=chunk_size, chunk_overlap=chunk_overlap
+            texts,
+            metadatas=metadatas,
+            chunk_size=chunk_size,
+            chunk_overlap=chunk_overlap,
+            doc_ids=doc_ids,
         )
 
-    def retrieve(self, query: str, *, top_k: Optional[int] = None) -> list[ScoredChunk]:
+    def retrieve(
+        self,
+        query: str,
+        *,
+        top_k: Optional[int] = None,
+        filter: Optional[dict[str, Any]] = None,  # noqa: A002
+    ) -> list[ScoredChunk]:
+        """Keyword results, restricted to chunks matching ``filter`` before scoring."""
         resolved_top_k = top_k if top_k is not None else self.top_k
-        return self._index.search(query, top_k=resolved_top_k)
+        return self._index.search(query, top_k=resolved_top_k, filter=filter)
 
-    async def aretrieve(self, query: str, *, top_k: Optional[int] = None) -> list[ScoredChunk]:
+    async def aretrieve(
+        self,
+        query: str,
+        *,
+        top_k: Optional[int] = None,
+        filter: Optional[dict[str, Any]] = None,  # noqa: A002
+    ) -> list[ScoredChunk]:
         """Async counterpart to :meth:`retrieve`. Pure CPU work, no I/O to offload."""
-        return self.retrieve(query, top_k=top_k)
+        return self.retrieve(query, top_k=top_k, filter=filter)
 
     def delete(self, chunk_ids: Sequence[str]) -> None:
         """Remove chunks by id. No-op for any id that doesn't exist."""
@@ -214,15 +245,17 @@ class BM25Retriever(BaseRetriever):
         name: str = "knowledge_base",
         description: str = "Search the knowledge base for information relevant to a query.",
         top_k: Optional[int] = None,
+        filter: Optional[dict[str, Any]] = None,  # noqa: A002
+        source_key: Optional[str] = None,
     ) -> Tool:
         """Expose this retriever as a :class:`~requisite.tools.base.Tool`."""
         resolved_top_k = top_k if top_k is not None else self.top_k
 
         def _search(query: str) -> str:
             """Search the knowledge base for information relevant to a query."""
-            results = self.retrieve(query, top_k=resolved_top_k)
+            results = self.retrieve(query, top_k=resolved_top_k, filter=filter)
             if not results:
                 return "No relevant information found."
-            return "\n\n".join(f"[score={r.score:.3f}] {r.chunk.text}" for r in results)
+            return format_results(results, source_key)
 
         return Tool.from_function(_search, name=name, description=description)

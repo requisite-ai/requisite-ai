@@ -211,6 +211,7 @@ and hybrid/BM25 retrieval + re-ranking (ADR-0010) are all shipped.
 | Chunking | ✅ | `chunk_text()` — character-based with overlap; token-aware chunking is a follow-up |
 | Retrievers | ✅ | `Retriever` (dense), `BM25Retriever` (keyword, zero deps), `HybridRetriever` (dense + BM25 fused via Reciprocal Rank Fusion); each exposed as a `CapabilityProvider` via `.as_tool()` — `agent.requires("knowledge_base")`, not a new `Agent` constructor parameter |
 | Hybrid search | ✅ | `HybridRetriever` — see [ADR-0010](docs/adr/0010-hybrid-bm25-retrieval-and-reranking.md) |
+| Access-controlled retrieval | ✅ | `filter=` on every retriever's `retrieve`/`aretrieve`/`as_tool` (equality plus `{"$in": [...]}` any-of), applied to the dense *and* BM25 sides of hybrid search before fusion; opt-in `doc_ids` for stable chunk ids (`"<doc_id>:<n>"`) with `doc_id`/`chunk_index` metadata; `as_tool(source_key=...)` cites sources. Filtering policy stays the application's job — ADR-0042 |
 | Re-ranking | ✅ | `BaseReranker` + `LLMReranker` (listwise, reuses `AI`/`response_model=` — no new ML dependency) |
 | Context compression | ✅ | `BaseCompressor` + `LLMContextCompressor` (listwise, reuses `AI`/`response_model=` — no new ML dependency) — [ADR-0024](docs/adr/0024-rag-context-compression.md) |
 
